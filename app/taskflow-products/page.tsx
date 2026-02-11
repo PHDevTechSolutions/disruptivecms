@@ -1,14 +1,18 @@
 'use client'
 
+import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-sidebar'
 
 export default function TaskflowProductsPage() {
   return (
-    <div className="flex min-h-screen">
+    <SidebarProvider>
       <AppSidebar />
       <main className="flex-1 p-8">
-        <h1 className="text-3xl font-bold">Taskflow Products</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-bold">Taskflow Products</h1>
+          <SidebarTrigger />
+        </div>
       </main>
-    </div>
+    </SidebarProvider>
   )
 }
