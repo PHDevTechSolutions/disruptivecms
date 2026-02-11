@@ -251,15 +251,12 @@ export default function ApplicationsPage() {
 
           <main className="flex flex-1 flex-col gap-8 p-6 max-w-7xl mx-auto w-full">
             <div className="flex items-center gap-4">
-              <div className="bg-primary p-3 rounded-xl shadow-sm">
-                <Briefcase className="text-primary-foreground" size={24} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-black uppercase italic tracking-tighter">
-                  Maintenance
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  Applications
                 </h1>
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">
-                  Application Classification
+                <p className="text-sm text-muted-foreground">
+                  Manage and maintain application sectors for product categorization.
                 </p>
               </div>
             </div>

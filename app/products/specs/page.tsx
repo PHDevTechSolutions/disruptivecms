@@ -199,15 +199,12 @@ export default function SpecsMaintenancePage() {
           <main className="flex flex-1 flex-col gap-8 p-6 max-w-7xl mx-auto w-full">
             {/* --- HEADER --- */}
             <div className="flex items-center gap-4">
-              <div className="bg-primary p-3 rounded-xl shadow-sm text-primary-foreground">
-                <Settings2 size={24} />
-              </div>
-              <div>
-                <h1 className="text-2xl font-black uppercase italic tracking-tighter">
-                  Specs <span className="text-primary">Maintenance</span>
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  Specs Maintenance
                 </h1>
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">
-                  Technical Parameter Grouping
+                <p className="text-sm text-muted-foreground">
+                  Manage and maintain product specification groups.
                 </p>
               </div>
             </div>

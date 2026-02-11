@@ -341,7 +341,7 @@ export default function TaskflowProductsPage() {
         </div>
 
         <Select value={brandFilter} onValueChange={setBrandFilter}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-45">
             <SelectValue placeholder="Select brand" />
           </SelectTrigger>
           <SelectContent>
@@ -366,7 +366,7 @@ export default function TaskflowProductsPage() {
                   onCheckedChange={toggleSelectAll}
                 />
               </TableHead>
-              <TableHead className="w-[80px]">Image</TableHead>
+              <TableHead className="w-20">Image</TableHead>
               <TableHead>Product Info</TableHead>
               <TableHead>Item Code</TableHead>
               <TableHead>Brand / Website</TableHead>
@@ -419,7 +419,7 @@ export default function TaskflowProductsPage() {
 
                   {/* PRODUCT INFO */}
                   <TableCell>
-                    <div className="flex flex-col max-w-[250px]">
+                    <div className="flex flex-col max-w-62.5">
                       <span className="font-semibold text-sm line-clamp-1">{product.name}</span>
                       <span className="text-xs text-muted-foreground">
                         {product.categories || "No Category"}
@@ -514,7 +514,7 @@ export default function TaskflowProductsPage() {
                 setCurrentPage(1);
               }}
             >
-              <SelectTrigger className="w-[70px]">
+              <SelectTrigger className="w-17.5">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
