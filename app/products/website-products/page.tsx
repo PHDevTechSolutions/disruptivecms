@@ -100,7 +100,7 @@ import BulkUploader from "@/components/product-forms/bulk-uploader";
 export type Product = {
   id: string;
   name: string;
-  sku: string;
+  itemCode: string;
   mainImage: string;
   categories: string;
   brand: string | string[];
@@ -252,11 +252,11 @@ export default function AllProductsPage() {
       ),
     },
     {
-      accessorKey: "sku",
-      header: () => <div className="text-xs font-medium">SKU</div>,
+      accessorKey: "itemCode",
+      header: () => <div className="text-xs font-medium">Item Code</div>,
       cell: ({ row }) => (
         <span className="text-xs text-muted-foreground font-mono">
-          {row.getValue("sku") || "---"}
+          {row.getValue("itemCode") || "---"}
         </span>
       ),
     },

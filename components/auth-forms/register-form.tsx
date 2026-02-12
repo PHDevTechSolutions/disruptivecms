@@ -208,20 +208,20 @@ export function RegisterForm({
 
   return (
     <Card className={cn("overflow-hidden", className)} {...props}>
-      <CardHeader className="flex flex-col items-center gap-2">
-        <div className="relative mb-2">
+      <CardHeader className="flex flex-col items-center gap-1 pb-4">
+        <div className="relative">
           <Image
             src="/logo-full.png"
             alt="Logo"
-            width={200}
-            height={60}
+            width={120}
+            height={32}
             className="h-auto w-auto object-contain"
             priority
           />
         </div>
         <div className="text-center">
-          <CardTitle className="text-xl">Create an account</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-lg">Create an account</CardTitle>
+          <CardDescription className="text-sm">
             Enter your information below to create your account or sign up with
             Google
           </CardDescription>
