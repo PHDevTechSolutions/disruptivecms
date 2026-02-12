@@ -36,6 +36,7 @@ import {
   updateProfile,
   GoogleAuthProvider,
   signInWithPopup,
+  signOut,
 } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { toast } from "sonner";
@@ -93,6 +94,7 @@ export function RegisterForm({
       const snap = await getDoc(ref);
 
       if (snap.exists()) {
+        await signOut(auth);
         toast.error("Account Exists", {
           id: regToast,
           description: "This user is already registered in the CMS.",
@@ -114,10 +116,15 @@ export function RegisterForm({
         lastLogin: new Date().toISOString(),
       });
 
-      toast.success("Account Created!", {
+      // Sign out user after registration
+      await signOut(auth);
+
+      toast.success("Registration Successful!", {
         id: regToast,
-        description: "Your access has been provisioned. Please sign in.",
+        description:
+          "Your account has been created. Please sign in to continue.",
       });
+
       router.push("/auth/login");
     } catch (err: any) {
       toast.error("Registration Failed", {
@@ -154,6 +161,7 @@ export function RegisterForm({
       const snap = await getDoc(ref);
 
       if (snap.exists()) {
+        await signOut(auth);
         toast.info("Account Exists", {
           id: googleToast,
           description:
@@ -175,10 +183,14 @@ export function RegisterForm({
         lastLogin: new Date().toISOString(),
       });
 
-      toast.success("Google Account Authorized", {
+      // Sign out user after registration
+      await signOut(auth);
+
+      toast.success("Registration Successful!", {
         id: googleToast,
-        description: `Successfully registered as ${role.toUpperCase()}.`,
+        description: `Account created as ${role.toUpperCase()}. Please sign in to continue.`,
       });
+
       router.push("/auth/login");
     } catch (err: any) {
       if (err?.code !== "auth/popup-closed-by-user") {

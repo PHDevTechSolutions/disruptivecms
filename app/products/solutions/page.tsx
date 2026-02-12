@@ -249,267 +249,272 @@ export default function SolutionsManager() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              {/* FORM SECTION (LEFT) */}
-              <div className="lg:col-span-4 space-y-6">
-                <Card className="rounded-none shadow-none border-foreground/10">
-                  <CardHeader className="border-b py-4 flex flex-row items-center justify-between space-y-0 bg-muted/30">
-                    <CardTitle className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-                      <Settings2 className="h-3 w-3" /> Core Content
-                    </CardTitle>
-                    {editId && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={resetForm}
-                        className="h-7 rounded-none text-[9px] uppercase font-bold text-muted-foreground"
-                      >
-                        <RotateCcw className="mr-1 h-3 w-3" /> Reset
-                      </Button>
-                    )}
-                  </CardHeader>
-                  <CardContent className="pt-5 space-y-5">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase opacity-60">
-                        Solution Title
-                      </label>
-                      <Input
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        placeholder="E.G. CONCRETE PROTECTION"
-                        className="rounded-none h-10 text-xs font-bold uppercase"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase opacity-60">
-                        Label
-                      </label>
-                      <div className="grid grid-cols-2 gap-1">
-                        {LABEL_OPTIONS.map((opt) => (
-                          <Button
-                            key={opt}
-                            type="button"
-                            variant={label === opt ? "default" : "outline"}
-                            className="rounded-none h-8 text-[9px] uppercase font-bold"
-                            onClick={() =>
-                              setLabel((prev) => (prev === opt ? "" : opt))
-                            }
-                          >
-                            {opt}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase opacity-60">
-                        Connect Series
-                      </label>
-                      <Popover open={openSeries} onOpenChange={setOpenSeries}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
-                          >
-                            {selectedSeries.length > 0
-                              ? `${selectedSeries.length} Series Attached`
-                              : "Select Series..."}
-                            <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
-                          align="start"
+              {/* ── FORM SECTION (sticky) ── */}
+              <div className="lg:col-span-4 sticky top-6 z-10">
+                <div className="space-y-6 max-h-[calc(100vh-6rem)] overflow-y-auto pr-1">
+                  {/* Core Content card */}
+                  <Card className="rounded-none shadow-none border-foreground/10">
+                    <CardHeader className="border-b py-4 flex flex-row items-center justify-between space-y-0 bg-muted/30 sticky top-0 z-10">
+                      <CardTitle className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
+                        <Settings2 className="h-3 w-3" /> Core Content
+                      </CardTitle>
+                      {editId && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={resetForm}
+                          className="h-7 rounded-none text-[9px] uppercase font-bold text-muted-foreground"
                         >
-                          <Command>
-                            <CommandInput
-                              placeholder="Search series name..."
-                              className="h-9 text-xs"
-                            />
-                            <CommandList>
-                              <CommandEmpty>No series found.</CommandEmpty>
-                              <CommandGroup>
-                                {seriesList.map((ser) => (
-                                  <CommandItem
-                                    key={ser.id}
-                                    onSelect={() =>
-                                      setSelectedSeries((prev) =>
-                                        prev.includes(ser.id)
-                                          ? prev.filter((id) => id !== ser.id)
-                                          : [...prev, ser.id],
-                                      )
-                                    }
-                                    className="text-[10px] uppercase font-bold"
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-3 w-3",
-                                        selectedSeries.includes(ser.id)
-                                          ? "opacity-100"
-                                          : "opacity-0",
-                                      )}
-                                    />
-                                    {ser.name}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase opacity-60">
-                        Website Scope
-                      </label>
-                      <div className="grid grid-cols-1 gap-1">
-                        {WEBSITE_OPTIONS.map((site) => (
-                          <Button
-                            key={site}
-                            type="button"
-                            variant={
-                              selectedWebsites.includes(site)
-                                ? "default"
-                                : "outline"
-                            }
-                            className="rounded-none h-8 text-[9px] uppercase font-bold px-2 justify-start"
-                            onClick={() =>
-                              setSelectedWebsites((prev) =>
-                                prev.includes(site)
-                                  ? prev.filter((s) => s !== site)
-                                  : [...prev, site],
-                              )
-                            }
-                          >
-                            <Globe className="mr-2 h-3 w-3" /> {site}
-                          </Button>
-                        ))}
+                          <RotateCcw className="mr-1 h-3 w-3" /> Reset
+                        </Button>
+                      )}
+                    </CardHeader>
+                    <CardContent className="pt-5 space-y-5">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Solution Title
+                        </label>
+                        <Input
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                          placeholder="E.G. CONCRETE PROTECTION"
+                          className="rounded-none h-10 text-xs font-bold uppercase"
+                        />
                       </div>
-                    </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase opacity-60">
-                        Cover Image
-                      </label>
-                      <div
-                        {...getRootProps()}
-                        className={cn(
-                          "flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-none cursor-pointer hover:bg-accent min-h-[120px]",
-                          isDragActive && "border-primary",
-                        )}
-                      >
-                        <input {...getInputProps()} />
-                        {previewUrl ? (
-                          <div className="relative w-full aspect-video border bg-muted overflow-hidden">
-                            <img
-                              src={previewUrl}
-                              className="h-full w-full object-cover"
-                              alt="Preview"
-                            />
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Label
+                        </label>
+                        <div className="grid grid-cols-2 gap-1">
+                          {LABEL_OPTIONS.map((opt) => (
                             <Button
+                              key={opt}
                               type="button"
-                              variant="destructive"
-                              size="icon"
-                              className="absolute top-1 right-1 h-6 w-6 rounded-none"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPreviewUrl("");
-                                setImageFile(null);
-                              }}
+                              variant={label === opt ? "default" : "outline"}
+                              className="rounded-none h-8 text-[9px] uppercase font-bold"
+                              onClick={() =>
+                                setLabel((prev) => (prev === opt ? "" : opt))
+                              }
                             >
-                              <X size={12} />
+                              {opt}
                             </Button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-2">
-                            <ImageIcon
-                              size={24}
-                              className="text-muted-foreground opacity-30"
-                            />
-                            <p className="text-[9px] font-black uppercase text-muted-foreground">
-                              Upload Visual
-                            </p>
-                          </div>
-                        )}
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
 
-                {/* SEO PANEL */}
-                <Card className="rounded-none shadow-none border-primary/20 bg-primary/[0.02]">
-                  <CardHeader className="border-b py-3 bg-primary/5">
-                    <CardTitle className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 text-primary">
-                      <Globe className="h-3 w-3" /> SEO & Metadata
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-4 space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase">
-                        URL Slug
-                      </label>
-                      <Input
-                        value={slug}
-                        onChange={(e) => setSlug(e.target.value)}
-                        className="h-8 rounded-none text-xs bg-background"
-                        placeholder="auto-generated-slug"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase">
-                        Meta Title
-                      </label>
-                      <Input
-                        value={metaTitle}
-                        onChange={(e) => setMetaTitle(e.target.value)}
-                        className="h-8 rounded-none text-xs bg-background"
-                        placeholder="Search result title"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase">
-                        Meta Description
-                      </label>
-                      <Textarea
-                        value={metaDescription}
-                        onChange={(e) => setMetaDescription(e.target.value)}
-                        className="min-h-[60px] rounded-none text-xs bg-background resize-none"
-                        placeholder="Search result snippet..."
-                      />
-                    </div>
+                      {/* Series selector — unchanged */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Connect Series
+                        </label>
+                        <Popover open={openSeries} onOpenChange={setOpenSeries}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
+                            >
+                              {selectedSeries.length > 0
+                                ? `${selectedSeries.length} Series Attached`
+                                : "Select Series..."}
+                              <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
+                            align="start"
+                          >
+                            <Command>
+                              <CommandInput
+                                placeholder="Search series name..."
+                                className="h-9 text-xs"
+                              />
+                              <CommandList>
+                                <CommandEmpty>No series found.</CommandEmpty>
+                                <CommandGroup>
+                                  {seriesList.map((ser) => (
+                                    <CommandItem
+                                      key={ser.id}
+                                      onSelect={() =>
+                                        setSelectedSeries((prev) =>
+                                          prev.includes(ser.id)
+                                            ? prev.filter((id) => id !== ser.id)
+                                            : [...prev, ser.id],
+                                        )
+                                      }
+                                      className="text-[10px] uppercase font-bold"
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-3 w-3",
+                                          selectedSeries.includes(ser.id)
+                                            ? "opacity-100"
+                                            : "opacity-0",
+                                        )}
+                                      />
+                                      {ser.name}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
 
-                    {/* Google Preview */}
-                    <div className="p-3 bg-white border rounded-sm space-y-1 shadow-sm overflow-hidden">
-                      <p className="text-[10px] text-[#202124] truncate">
-                        https://yourdomain.com/solutions/<b>{slug || "..."}</b>
-                      </p>
-                      <p className="text-[14px] text-[#1a0dab] font-medium leading-tight truncate hover:underline cursor-pointer">
-                        {metaTitle || "Solution Title"}
-                      </p>
-                      <p className="text-[12px] text-[#4d5156] line-clamp-2 leading-snug">
-                        {metaDescription || "No description provided."}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Website Scope
+                        </label>
+                        <div className="grid grid-cols-1 gap-1">
+                          {WEBSITE_OPTIONS.map((site) => (
+                            <Button
+                              key={site}
+                              type="button"
+                              variant={
+                                selectedWebsites.includes(site)
+                                  ? "default"
+                                  : "outline"
+                              }
+                              className="rounded-none h-8 text-[9px] uppercase font-bold px-2 justify-start"
+                              onClick={() =>
+                                setSelectedWebsites((prev) =>
+                                  prev.includes(site)
+                                    ? prev.filter((s) => s !== site)
+                                    : [...prev, site],
+                                )
+                              }
+                            >
+                              <Globe className="mr-2 h-3 w-3" /> {site}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
 
-                <Button
-                  onClick={handleSubmit}
-                  disabled={isSubmitLoading}
-                  className="w-full rounded-none uppercase font-black text-[11px] h-12 tracking-widest shadow-xl"
-                >
-                  {isSubmitLoading ? (
-                    <Loader2 className="animate-spin h-4 w-4" />
-                  ) : editId ? (
-                    "Update Solution"
-                  ) : (
-                    "Save Solution"
-                  )}
-                </Button>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Cover Image
+                        </label>
+                        <div
+                          {...getRootProps()}
+                          className={cn(
+                            "flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-none cursor-pointer hover:bg-accent min-h-[120px]",
+                            isDragActive && "border-primary",
+                          )}
+                        >
+                          <input {...getInputProps()} />
+                          {previewUrl ? (
+                            <div className="relative w-full aspect-video border bg-muted overflow-hidden">
+                              <img
+                                src={previewUrl}
+                                className="h-full w-full object-cover"
+                                alt="Preview"
+                              />
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="icon"
+                                className="absolute top-1 right-1 h-6 w-6 rounded-none"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewUrl("");
+                                  setImageFile(null);
+                                }}
+                              >
+                                <X size={12} />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-2">
+                              <ImageIcon
+                                size={24}
+                                className="text-muted-foreground opacity-30"
+                              />
+                              <p className="text-[9px] font-black uppercase text-muted-foreground">
+                                Upload Visual
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* SEO Panel */}
+                  <Card className="rounded-none shadow-none border-primary/20 bg-primary/[0.02]">
+                    <CardHeader className="border-b py-3 bg-primary/5">
+                      <CardTitle className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 text-primary">
+                        <Globe className="h-3 w-3" /> SEO & Metadata
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-4 space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black uppercase">
+                          URL Slug
+                        </label>
+                        <Input
+                          value={slug}
+                          onChange={(e) => setSlug(e.target.value)}
+                          className="h-8 rounded-none text-xs bg-background"
+                          placeholder="auto-generated-slug"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black uppercase">
+                          Meta Title
+                        </label>
+                        <Input
+                          value={metaTitle}
+                          onChange={(e) => setMetaTitle(e.target.value)}
+                          className="h-8 rounded-none text-xs bg-background"
+                          placeholder="Search result title"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black uppercase">
+                          Meta Description
+                        </label>
+                        <Textarea
+                          value={metaDescription}
+                          onChange={(e) => setMetaDescription(e.target.value)}
+                          className="min-h-[60px] rounded-none text-xs bg-background resize-none"
+                          placeholder="Search result snippet..."
+                        />
+                      </div>
+
+                      {/* Google Preview */}
+                      <div className="p-3 bg-white border rounded-sm space-y-1 shadow-sm overflow-hidden">
+                        <p className="text-[10px] text-[#202124] truncate">
+                          https://yourdomain.com/solutions/
+                          <b>{slug || "..."}</b>
+                        </p>
+                        <p className="text-[14px] text-[#1a0dab] font-medium leading-tight truncate hover:underline cursor-pointer">
+                          {metaTitle || "Solution Title"}
+                        </p>
+                        <p className="text-[12px] text-[#4d5156] line-clamp-2 leading-snug">
+                          {metaDescription || "No description provided."}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Button
+                    onClick={handleSubmit}
+                    disabled={isSubmitLoading}
+                    className="w-full rounded-none uppercase font-black text-[11px] h-12 tracking-widest shadow-xl"
+                  >
+                    {isSubmitLoading ? (
+                      <Loader2 className="animate-spin h-4 w-4" />
+                    ) : editId ? (
+                      "Update Solution"
+                    ) : (
+                      "Save Solution"
+                    )}
+                  </Button>
+                </div>
               </div>
 
-              {/* LIST VIEW SECTION (RIGHT) */}
+              {/* ── LIST VIEW (RIGHT) ── */}
               <div className="lg:col-span-8">
                 {loading ? (
                   <div className="flex justify-center py-20">
@@ -541,7 +546,6 @@ export default function SolutionsManager() {
                                 setSelectedWebsites(sol.websites || []);
                                 setSelectedSeries(sol.series || []);
                                 setPreviewUrl(sol.mainImage);
-                                // Set SEO states for editing
                                 setSlug(sol.slug || "");
                                 setMetaTitle(sol.metaTitle || "");
                                 setMetaDescription(sol.metaDescription || "");

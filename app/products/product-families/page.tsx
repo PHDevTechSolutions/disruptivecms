@@ -22,9 +22,9 @@ import {
   Loader2,
   Check,
   Globe,
-  ChevronsUpDown,
   X,
   RotateCcw,
+  Layers,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -90,7 +90,9 @@ export default function CategoryMaintenance() {
   const [specifications, setSpecifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
-  const [openCombo, setOpenCombo] = useState(false);
+
+  // Separate open state for the specs combobox (mirrors openSeries pattern)
+  const [openSpecs, setOpenSpecs] = useState(false);
 
   // Form States
   const [editId, setEditId] = useState<string | null>(null);
@@ -214,19 +216,20 @@ export default function CategoryMaintenance() {
           </header>
 
           <main className="flex flex-1 flex-col gap-6 p-4 md:p-8">
-              <div className="space-y-1">
-                <h1 className="text-2xl font-semibold tracking-tight">
-                  Product Families
-                </h1>
-                <p className="text-sm text-muted-foreground">
-                  Manage product families and specifications.
-                </p>
-              </div>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Product Families
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Manage product families and specifications.
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              {/* RESTORED FORM */}
-              <div className="lg:col-span-4">
-                <Card className="rounded-none shadow-none border-foreground/10">
-                  <CardHeader className="border-b py-4 flex flex-row items-center justify-between space-y-0">
+              {/* ── FORM (sticky) ── */}
+              <div className="lg:col-span-4 sticky top-6 z-10">
+                <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
+                  <CardHeader className="border-b py-4 flex flex-row items-center justify-between space-y-0 sticky top-0 bg-background z-10">
                     <CardTitle className="text-xs font-bold uppercase tracking-widest">
                       {editId ? "Update Category" : "Add New Category"}
                     </CardTitle>
@@ -241,8 +244,9 @@ export default function CategoryMaintenance() {
                       </Button>
                     )}
                   </CardHeader>
+
                   <CardContent className="pt-5 space-y-5">
-                    {/* RESTORED TITLE */}
+                    {/* Title */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Category Title
@@ -255,7 +259,7 @@ export default function CategoryMaintenance() {
                       />
                     </div>
 
-                    {/* RESTORED DESCRIPTION */}
+                    {/* Description */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Description
@@ -268,6 +272,7 @@ export default function CategoryMaintenance() {
                       />
                     </div>
 
+                    {/* Websites */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Websites
@@ -297,33 +302,36 @@ export default function CategoryMaintenance() {
                       </div>
                     </div>
 
+                    {/* Specifications — now uses the series selector pattern from SolutionsManager */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Specifications
                       </label>
-                      <Popover open={openCombo} onOpenChange={setOpenCombo}>
+                      <Popover open={openSpecs} onOpenChange={setOpenSpecs}>
                         <PopoverTrigger asChild>
                           <Button
                             variant="outline"
-                            className="w-full justify-between rounded-none h-10 text-xs font-normal"
+                            className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
                           >
                             {selectedSpecs.length > 0
-                              ? `${selectedSpecs.length} Selected`
-                              : "Search specifications..."}
-                            <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                              ? `${selectedSpecs.length} Spec${selectedSpecs.length > 1 ? "s" : ""} Attached`
+                              : "Select Specifications..."}
+                            <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent
-                          className="w-full p-0 rounded-none"
+                          className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
                           align="start"
                         >
-                          <Command className="rounded-none">
+                          <Command>
                             <CommandInput
-                              placeholder="Type to filter..."
+                              placeholder="Search spec name..."
                               className="h-9 text-xs"
                             />
                             <CommandList>
-                              <CommandEmpty>No results found.</CommandEmpty>
+                              <CommandEmpty>
+                                No specifications found.
+                              </CommandEmpty>
                               <CommandGroup>
                                 {specifications.map((spec) => (
                                   <CommandItem
@@ -335,7 +343,7 @@ export default function CategoryMaintenance() {
                                           : [...prev, spec.id],
                                       )
                                     }
-                                    className="text-xs"
+                                    className="text-[10px] uppercase font-bold"
                                   >
                                     <Check
                                       className={cn(
@@ -355,7 +363,7 @@ export default function CategoryMaintenance() {
                       </Popover>
                     </div>
 
-                    {/* INCREASED DROPZONE SIZE */}
+                    {/* Cover image dropzone */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Category Cover
@@ -419,7 +427,7 @@ export default function CategoryMaintenance() {
                 </Card>
               </div>
 
-              {/* LIST VIEW */}
+              {/* ── LIST VIEW ── */}
               <div className="lg:col-span-8">
                 {loading ? (
                   <div className="flex justify-center py-20">

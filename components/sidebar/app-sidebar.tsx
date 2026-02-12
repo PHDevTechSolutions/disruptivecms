@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image"; // Using Next.js Image component for optimization
+import { useState, useEffect } from "react";
+import Image from "next/image";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import { NavUser } from "@/components/sidebar/nav-user";
@@ -11,7 +12,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
-  useSidebar, // Import the hook
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 import {
@@ -22,79 +23,165 @@ import {
   BriefcaseBusiness,
 } from "lucide-react";
 
-const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
+import { auth, db } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
+
+// Define all navigation items
+const allNavItems = {
+  products: {
+    title: "Products",
+    url: "#",
+    icon: <TerminalSquareIcon />,
+    isActive: true,
+    items: [
+      { title: "Website Products", url: "/products/website-products" },
+      { title: "Taskflow Products", url: "/products/taskflow-products" },
+      { title: "Applications", url: "/products/applications" },
+      { title: "Brands", url: "/products/brands" },
+      { title: "Product Families", url: "/products/product-families" },
+      { title: "Orders", url: "#" },
+      { title: "Reviews", url: "/products/reviews" },
+      { title: "Solutions", url: "/products/solutions" },
+      { title: "Series", url: "/products/series" },
+      { title: "Specifications", url: "/products/specs" },
+    ],
   },
-  navMain: [
-    {
-      title: "Products",
-      url: "#",
-      icon: <TerminalSquareIcon />,
-      isActive: true,
-      items: [
-        { title: "Website Products", url: "/products/website-products" },
-        { title: "Taskflow Products", url: "/products/taskflow-products" },
-        { title: "Applications", url: "/products/applications" },
-        { title: "Brands", url: "/products/brands" },
-        { title: "Product Families", url: "/products/product-families" },
-        { title: "Orders", url: "#" },
-        { title: "Reviews", url: "/products/reviews" },
-        { title: "Solutions", url: "/products/solutions" },
-        { title: "Series", url: "/products/series" },
-        { title: "Specifications", url: "/products/specs" },
-      ],
-    },
-    {
-      title: "Inquiries",
-      url: "#",
-      icon: <BotIcon />,
-      items: [
-        { title: "Customer Inquiries", url: "#" },
-        { title: "Messenger", url: "#" },
-        { title: "Quotations", url: "#" },
-      ],
-    },
-    {
-      title: "Jobs",
-      url: "#",
-      icon: <BriefcaseBusiness />,
-      items: [
-        { title: "Applications", url: "#" },
-        { title: "Careers Posting", url: "#" },
-        { title: "Email", url: "#" },
-      ],
-    },
-    {
-      title: "Contents",
-      url: "#",
-      icon: <Settings2Icon />,
-      items: [
-        { title: "Blogs", url: "/content/blogs" },
-        { title: "Catalogs", url: "#" },
-        { title: "FAQs Manager", url: "#" },
-        { title: "Home Popups", url: "#" },
-        { title: "Projects", url: "#" },
-        { title: "Partners", url: "#" },
-      ],
-    },
-    {
-      title: "Settings",
-      url: "#",
-      icon: <Settings />,
-      items: [
-        { title: "All Users", url: "#" },
-        { title: "Change Password", url: "#" },
-      ],
-    },
-  ],
+  inquiries: {
+    title: "Inquiries",
+    url: "#",
+    icon: <BotIcon />,
+    items: [
+      { title: "Customer Inquiries", url: "#" },
+      { title: "Messenger", url: "#" },
+      { title: "Quotations", url: "#" },
+    ],
+  },
+  jobs: {
+    title: "Jobs",
+    url: "#",
+    icon: <BriefcaseBusiness />,
+    items: [
+      { title: "Applications", url: "#" },
+      { title: "Careers Posting", url: "/jobs/careers" },
+      { title: "Email", url: "#" },
+    ],
+  },
+  contents: {
+    title: "Contents",
+    url: "#",
+    icon: <Settings2Icon />,
+    items: [
+      { title: "Blogs", url: "/content/blog" },
+      { title: "Catalogs", url: "#" },
+      { title: "FAQs Manager", url: "#" },
+      { title: "Home Popups", url: "#" },
+      { title: "Projects", url: "#" },
+      { title: "Partners", url: "#" },
+    ],
+  },
+  settings: {
+    title: "Settings",
+    url: "#",
+    icon: <Settings />,
+    items: [
+      { title: "All Users", url: "#" },
+      { title: "Change Password", url: "#" },
+    ],
+  },
 };
+
+// Role-based navigation mapping
+const roleNavMap: Record<string, string[]> = {
+  admin: ["products", "inquiries", "jobs", "contents", "settings"],
+  warehouse: ["products"],
+  hr: ["jobs"],
+  seo: ["contents"],
+  csr: ["inquiries"],
+  ecomm: ["products", "inquiries"],
+};
+
+interface UserData {
+  name: string;
+  email: string;
+  avatar: string;
+  role: string;
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
+
+  const [userData, setUserData] = useState<UserData>({
+    name: "Loading...",
+    email: "",
+    avatar: "",
+    role: "",
+  });
+
+  const [navItems, setNavItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // Fetch user data from Firestore
+          const userDoc = await getDoc(doc(db, "adminaccount", user.uid));
+
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            const userRole = String(data.role || "")
+              .toLowerCase()
+              .trim();
+
+            setUserData({
+              name: data.fullName || user.displayName || "User",
+              email: user.email || "",
+              avatar: user.photoURL || "",
+              role: userRole,
+            });
+
+            // Set navigation items based on role
+            const allowedNavKeys = roleNavMap[userRole] || [];
+            const filteredNav = allowedNavKeys
+              .map((key) => allNavItems[key as keyof typeof allNavItems])
+              .filter(Boolean);
+            setNavItems(filteredNav);
+          } else {
+            // Fallback if no Firestore document
+            setUserData({
+              name: user.displayName || "User",
+              email: user.email || "",
+              avatar: user.photoURL || "",
+              role: "staff",
+            });
+            setNavItems([]);
+          }
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          // Fallback on error
+          setUserData({
+            name: user.displayName || "User",
+            email: user.email || "",
+            avatar: user.photoURL || "",
+            role: "staff",
+          });
+          setNavItems([]);
+        }
+      } else {
+        // Reset if no user
+        setUserData({
+          name: "Guest",
+          email: "",
+          avatar: "",
+          role: "",
+        });
+        setNavItems([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -106,7 +193,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <Image
                 src="/logo-small.png"
                 alt="JarIS CMS Icon"
-                width={44} // Maxed out (Sidebar is usually 48px)
+                width={44}
                 height={44}
                 className="object-contain"
                 priority
@@ -129,11 +216,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
 
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <NavMain items={navItems} />
       </SidebarContent>
 
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser user={userData} />
       </SidebarFooter>
 
       <SidebarRail />
