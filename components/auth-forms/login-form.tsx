@@ -103,7 +103,7 @@ export function LoginForm({
     const roleRoutes: Record<string, string> = {
       warehouse: "/products/website-products",
       admin: "/products/website-products",
-      seo: "/content/blog",
+      seo: "/content/blogs",
       hr: "/jobs/careers",
     };
 
