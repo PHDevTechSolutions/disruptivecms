@@ -8,7 +8,6 @@ import {
   ImagePlus,
   AlignLeft,
   Layout,
-  FileText,
   Settings2,
   Bold,
   Italic,
@@ -48,6 +47,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -487,14 +487,6 @@ export default function BlogCreator({
   );
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
 
-  // Lock body scroll
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, []);
-
   // ── Section helpers ─────────────────────────────────────────────────────────
   function addParagraph() {
     setSections((prev) => [
@@ -582,75 +574,36 @@ export default function BlogCreator({
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex bg-white">
-      {/* ══════════════════════════════════════════════════════════════════════
-          LEFT — Content editor
-      ══════════════════════════════════════════════════════════════════════ */}
-      <div className="flex-1 flex flex-col bg-white overflow-hidden">
-        {/* Header */}
-        <header className="h-16 border-b flex items-center justify-between px-8 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 flex items-center justify-center bg-red-50 text-[#d11a2a]">
-              <FileText size={16} />
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* LEFT COLUMN - Content Editor */}
+      <div className="md:col-span-2 space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Blog Content</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Headline */}
+            <div className="space-y-2">
+              <textarea
+                value={mainTitle}
+                onChange={(e) => setMainTitle(e.target.value)}
+                placeholder="ENTER YOUR HEADLINE..."
+                className="w-full text-3xl font-black uppercase outline-none border-none placeholder:opacity-5 resize-none leading-tight tracking-tight bg-transparent"
+                rows={2}
+              />
             </div>
-            <div>
-              <h2 className="font-bold uppercase tracking-tight text-[11px]">
-                Publication Builder
-              </h2>
-              <p className="text-[9px] opacity-50 uppercase font-bold tracking-widest">
-                {editingId ? "Editing" : "Drafting"} Phase
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              onClick={onClose}
-              className="text-[10px] font-bold uppercase h-9 rounded-none px-6"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={isSubmitLoading}
-              className="bg-black text-white hover:bg-[#d11a2a] rounded-none px-8 h-9 text-[10px] font-bold uppercase tracking-widest transition-all"
-            >
-              {isSubmitLoading ? (
-                <Loader2 className="animate-spin h-4 w-4" />
-              ) : (
-                <>
-                  <Save size={14} className="mr-2" /> Publish Story
-                </>
-              )}
-            </Button>
-          </div>
-        </header>
-
-        {/* Scrollable editor body */}
-        <ScrollArea className="flex-1 bg-[#fafafa]">
-          <div className="max-w-3xl mx-auto py-16 px-6 space-y-12 bg-white min-h-screen shadow-sm border-x border-foreground/5">
-            {/* ── Headline ── */}
-            <textarea
-              value={mainTitle}
-              onChange={(e) => setMainTitle(e.target.value)}
-              placeholder="ENTER YOUR HEADLINE..."
-              className="w-full text-5xl font-black uppercase outline-none border-none placeholder:opacity-5 resize-none leading-[0.9] tracking-tighter"
-              rows={2}
-            />
-
-            {/* ── Meta row: category / status / website / cover ── */}
-            <div className="flex flex-wrap gap-8 items-end border-y border-foreground/5 py-6">
-              {/* Category */}
+            {/* Meta row */}
+            <div className="flex flex-wrap gap-4 items-end border-y border-foreground/5 py-4">
               <div className="space-y-2">
                 <label className="text-[9px] font-bold uppercase tracking-widest opacity-40 block">
                   Category
                 </label>
                 <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger className="h-8 w-44 rounded-none border-none border-b border-foreground/20 shadow-none text-[10px] font-bold uppercase focus:ring-0 px-0">
+                  <SelectTrigger className="h-8 w-44 text-[10px] font-bold uppercase">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="rounded-none">
+                  <SelectContent>
                     {CATEGORY_OPTIONS.map((o) => (
                       <SelectItem
                         key={o}
@@ -664,16 +617,15 @@ export default function BlogCreator({
                 </Select>
               </div>
 
-              {/* Visibility */}
               <div className="space-y-2">
                 <label className="text-[9px] font-bold uppercase tracking-widest opacity-40 block">
                   Visibility
                 </label>
                 <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger className="h-8 w-36 rounded-none border-none border-b border-foreground/20 shadow-none text-[10px] font-bold uppercase focus:ring-0 px-0">
+                  <SelectTrigger className="h-8 w-36 text-[10px] font-bold uppercase">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="rounded-none">
+                  <SelectContent>
                     {STATUS_OPTIONS.map((o) => (
                       <SelectItem
                         key={o}
@@ -687,16 +639,15 @@ export default function BlogCreator({
                 </Select>
               </div>
 
-              {/* Target Website */}
               <div className="space-y-2">
                 <label className="text-[9px] font-bold uppercase tracking-widest opacity-40 block">
                   Target Website
                 </label>
                 <Select value={website} onValueChange={setWebsite}>
-                  <SelectTrigger className="h-8 w-52 rounded-none border-none border-b border-foreground/20 shadow-none text-[10px] font-bold uppercase focus:ring-0 px-0">
+                  <SelectTrigger className="h-8 w-52 text-[10px] font-bold uppercase">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="rounded-none">
+                  <SelectContent>
                     {WEBSITE_OPTIONS.map((o) => (
                       <SelectItem
                         key={o.value}
@@ -710,7 +661,6 @@ export default function BlogCreator({
                 </Select>
               </div>
 
-              {/* Cover image upload */}
               <label className="ml-auto flex items-center gap-2 cursor-pointer bg-black text-white px-5 py-2 text-[9px] font-bold uppercase tracking-widest hover:bg-[#d11a2a] transition-all h-8">
                 <ImagePlus size={14} />
                 {mainImagePrev ? "Replace Cover" : "Upload Cover"}
@@ -729,7 +679,7 @@ export default function BlogCreator({
               </label>
             </div>
 
-            {/* ── Cover preview ── */}
+            {/* Cover preview */}
             {mainImagePrev && (
               <div className="relative aspect-[21/9] overflow-hidden shadow-sm group">
                 <img
@@ -743,24 +693,19 @@ export default function BlogCreator({
 
             <Separator className="opacity-5" />
 
-            {/* ── Content blocks ── */}
+            {/* Content blocks */}
             <div className="space-y-12">
               {sections.map((section, idx) => (
-                <div
-                  key={section.id}
-                  className="relative group animate-in fade-in slide-in-from-bottom-2 duration-300"
-                >
-                  {/* Block number */}
+                <div key={section.id} className="relative group">
                   <div className="absolute -left-12 top-0 text-[10px] font-black opacity-10 select-none">
                     0{idx + 1}
                   </div>
 
-                  {/* Remove button */}
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => removeSection(section.id)}
-                    className="absolute -right-10 top-0 h-8 w-8 rounded-none opacity-0 group-hover:opacity-100 hover:text-red-600 transition-all"
+                    className="absolute -right-10 top-0 h-8 w-8 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-all"
                   >
                     <X size={14} />
                   </Button>
@@ -776,7 +721,7 @@ export default function BlogCreator({
                   ) : (
                     <div className="border border-foreground/10 p-5 space-y-4 bg-white shadow-sm">
                       <Input
-                        className="h-8 border-none text-[10px] font-bold uppercase px-0 shadow-none focus-visible:ring-0 border-b rounded-none mb-4 placeholder:opacity-30"
+                        className="h-8 border-none text-[10px] font-bold uppercase px-0 shadow-none focus-visible:ring-0 border-b mb-4 placeholder:opacity-30"
                         placeholder="SECTION SUB-HEADER"
                         value={section.title ?? ""}
                         onChange={(e) =>
@@ -784,7 +729,6 @@ export default function BlogCreator({
                         }
                       />
                       <div className="grid grid-cols-2 gap-6">
-                        {/* Image upload */}
                         <div className="aspect-square bg-gray-50 border border-dashed border-foreground/10 flex items-center justify-center relative overflow-hidden hover:border-[#d11a2a] transition-all group/img">
                           {section.imageUrl || section.imageFile ? (
                             <img
@@ -829,12 +773,12 @@ export default function BlogCreator({
               ))}
             </div>
 
-            {/* ── Block controls ── */}
-            <div className="flex gap-4 border-t pt-12">
+            {/* Block controls */}
+            <div className="flex gap-4 border-t pt-6">
               <Button
                 variant="outline"
                 onClick={addParagraph}
-                className="flex-1 h-24 rounded-none border-dashed border-foreground/20 hover:border-[#d11a2a] hover:bg-red-50/30 flex flex-col gap-2 transition-all group"
+                className="flex-1 h-24 border-dashed border-foreground/20 hover:border-[#d11a2a] hover:bg-red-50/30 flex flex-col gap-2 transition-all group"
               >
                 <AlignLeft
                   size={20}
@@ -843,14 +787,11 @@ export default function BlogCreator({
                 <span className="text-[10px] font-bold uppercase tracking-widest">
                   Text Block
                 </span>
-                <span className="text-[9px] opacity-40">
-                  Add a new paragraph
-                </span>
               </Button>
               <Button
                 variant="outline"
                 onClick={addImageDetail}
-                className="flex-1 h-24 rounded-none border-dashed border-foreground/20 hover:border-[#d11a2a] hover:bg-red-50/30 flex flex-col gap-2 transition-all group"
+                className="flex-1 h-24 border-dashed border-foreground/20 hover:border-[#d11a2a] hover:bg-red-50/30 flex flex-col gap-2 transition-all group"
               >
                 <Layout
                   size={20}
@@ -859,39 +800,22 @@ export default function BlogCreator({
                 <span className="text-[10px] font-bold uppercase tracking-widest">
                   Visual Section
                 </span>
-                <span className="text-[9px] opacity-40">
-                  Image + description
-                </span>
               </Button>
             </div>
-          </div>
-        </ScrollArea>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          RIGHT — SEO sidebar
-      ══════════════════════════════════════════════════════════════════════ */}
-      <div className="w-[340px] bg-white border-l shrink-0 flex flex-col shadow-2xl">
-        <header className="h-16 border-b flex items-center justify-between px-6 shrink-0">
-          <div className="flex items-center gap-2">
-            <Settings2 size={14} className="text-[#d11a2a]" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em]">
+      {/* RIGHT COLUMN - SEO Sidebar */}
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Settings2 size={14} />
               SEO Meta
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-8 w-8 rounded-none"
-          >
-            <X size={16} />
-          </Button>
-        </header>
-
-        <ScrollArea className="flex-1">
-          <div className="p-8 space-y-10">
-            {/* SEO Title */}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
             <div className="space-y-2">
               <label className="text-[10px] font-bold uppercase tracking-widest opacity-40">
                 Browser Title
@@ -902,17 +826,13 @@ export default function BlogCreator({
                   setSeoData({ ...seoData, title: e.target.value })
                 }
                 placeholder={mainTitle || "Enter title…"}
-                className="rounded-none h-11 text-xs border-foreground/10 focus-visible:ring-1 focus-visible:ring-[#d11a2a]"
+                className="h-11 text-xs"
               />
             </div>
 
-            {/* Slug */}
             <div className="space-y-2">
-              <label className="text-[10px] font-bold uppercase tracking-widest opacity-40 flex items-center gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-widest opacity-40">
                 URL Slug
-                <span className="text-[8px] bg-amber-50 text-amber-600 font-bold px-1.5 py-0.5">
-                  No slashes
-                </span>
               </label>
               <Input
                 value={seoData.slug}
@@ -931,11 +851,10 @@ export default function BlogCreator({
                     .replace(/[^\w ]+/g, "")
                     .replace(/ +/g, "-") || "story-url"
                 }
-                className="rounded-none h-11 text-[11px] font-mono border-foreground/10 focus-visible:ring-1 focus-visible:ring-[#d11a2a]"
+                className="h-11 text-[11px] font-mono"
               />
             </div>
 
-            {/* Description */}
             <div className="space-y-2">
               <label className="text-[10px] font-bold uppercase tracking-widest opacity-40">
                 Meta Description
@@ -946,7 +865,7 @@ export default function BlogCreator({
                   setSeoData({ ...seoData, description: e.target.value })
                 }
                 placeholder="Brief summary for search results…"
-                className="min-h-[120px] rounded-none text-xs border-foreground/10 resize-none leading-relaxed focus-visible:ring-1 focus-visible:ring-[#d11a2a]"
+                className="min-h-[120px] text-xs resize-none leading-relaxed"
               />
             </div>
 
@@ -960,16 +879,16 @@ export default function BlogCreator({
                   value={previewMode}
                   onValueChange={(v: any) => setPreviewMode(v)}
                 >
-                  <TabsList className="h-7 p-0.5 bg-gray-100 rounded-none border border-foreground/5">
+                  <TabsList className="h-7">
                     <TabsTrigger
                       value="mobile"
-                      className="text-[9px] uppercase font-bold rounded-none px-3 h-full"
+                      className="text-[9px] uppercase font-bold"
                     >
                       Mobile
                     </TabsTrigger>
                     <TabsTrigger
                       value="desktop"
-                      className="text-[9px] uppercase font-bold rounded-none px-3 h-full"
+                      className="text-[9px] uppercase font-bold"
                     >
                       Desktop
                     </TabsTrigger>
@@ -978,7 +897,6 @@ export default function BlogCreator({
               </div>
 
               <div className="bg-[#fcfcfc] p-5 border border-foreground/5 shadow-inner space-y-2">
-                {/* Site + URL row */}
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-5 h-5 bg-gray-100 flex items-center justify-center overflow-hidden shrink-0">
                     <img
@@ -1001,7 +919,6 @@ export default function BlogCreator({
                   </div>
                 </div>
 
-                {/* Title + image */}
                 <div
                   className={`${previewMode === "mobile" ? "flex flex-col-reverse gap-2" : "flex gap-3"}`}
                 >
@@ -1029,8 +946,30 @@ export default function BlogCreator({
                 </div>
               </div>
             </div>
-          </div>
-        </ScrollArea>
+          </CardContent>
+        </Card>
+
+        {/* Publish Button */}
+        <Button
+          onClick={handleSubmit}
+          disabled={isSubmitLoading}
+          className="w-full h-14 text-base font-semibold bg-black hover:bg-[#d11a2a] transition-all"
+        >
+          {isSubmitLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Publishing...
+            </>
+          ) : editingId ? (
+            <>
+              <Save size={14} className="mr-2" /> Update Story
+            </>
+          ) : (
+            <>
+              <Save size={14} className="mr-2" /> Publish Story
+            </>
+          )}
+        </Button>
       </div>
     </div>
   );

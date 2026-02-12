@@ -21,6 +21,7 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
+  ArrowLeft,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -99,10 +100,12 @@ export default function BlogManager() {
     setEditingBlog(null);
     setIsCreatorOpen(true);
   };
+
   const handleEdit = (blog: any) => {
     setEditingBlog(blog);
     setIsCreatorOpen(true);
   };
+
   const handleClose = () => {
     setIsCreatorOpen(false);
     setEditingBlog(null);
@@ -133,12 +136,200 @@ export default function BlogManager() {
     }
   };
 
+  // --- RENDER: EDIT MODE ---
+  const renderEditMode = () => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" onClick={handleClose} className="gap-2">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Publications
+        </Button>
+        <Separator orientation="vertical" className="h-6" />
+        <p className="text-sm text-muted-foreground">
+          {editingBlog
+            ? `Editing: ${editingBlog?.title}`
+            : "Creating New Publication"}
+        </p>
+      </div>
+      <BlogCreator
+        initialData={editingBlog}
+        onClose={handleClose}
+        onSubmit={handleSubmit}
+      />
+    </div>
+  );
+
+  // --- RENDER: TABLE MODE ---
+  const renderTableMode = () => (
+    <>
+      {/* Filter bar */}
+      <div className="bg-white border border-foreground/10 px-6 py-4 flex items-center gap-4">
+        <Filter size={14} className="opacity-30 shrink-0" />
+        <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 shrink-0">
+          Filter by Website
+        </span>
+        <Select value={websiteFilter} onValueChange={setWebsiteFilter}>
+          <SelectTrigger className="h-8 w-56 rounded-none border-foreground/10 text-[10px] font-bold uppercase focus:ring-1 focus:ring-[#d11a2a]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="rounded-none">
+            {WEBSITE_FILTER_OPTIONS.map((o) => (
+              <SelectItem
+                key={o.value}
+                value={o.value}
+                className="text-[10px] font-bold uppercase"
+              >
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {websiteFilter !== "all" && (
+          <span className="text-[10px] font-bold opacity-40">
+            {filteredBlogs.length}{" "}
+            {filteredBlogs.length === 1 ? "blog" : "blogs"}
+          </span>
+        )}
+        <Button
+          onClick={handleCreateNew}
+          className="ml-auto h-8 rounded-none bg-black hover:bg-[#d11a2a] text-[10px] font-bold uppercase tracking-widest px-6 transition-all"
+        >
+          <Plus className="mr-2 h-3.5 w-3.5" /> New Story
+        </Button>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white border border-foreground/10 border-t-0 overflow-hidden">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 opacity-20">
+            <Loader2 className="animate-spin h-8 w-8 mb-2" />
+            <span className="text-[10px] font-bold uppercase">
+              Loading Archive
+            </span>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[720px]">
+              <thead className="border-b border-foreground/5">
+                <tr className="text-[9px] font-bold uppercase tracking-widest opacity-30">
+                  <th className="px-6 py-4">Preview</th>
+                  <th className="px-6 py-4">Story Details</th>
+                  <th className="px-6 py-4 text-center">Status</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-foreground/5">
+                {paginatedBlogs.map((blog) => (
+                  <tr
+                    key={blog.id}
+                    className="hover:bg-gray-50/50 transition-colors group"
+                  >
+                    <td className="px-6 py-5">
+                      <div className="w-20 h-14 overflow-hidden border border-foreground/5">
+                        <img
+                          src={blog.coverImage || "/placeholder.png"}
+                          className="w-full h-full object-cover"
+                          alt={blog.title}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <h4 className="font-bold text-[11px] uppercase tracking-wide line-clamp-1 max-w-[280px] mb-1">
+                        {blog.title}
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-[#d11a2a] uppercase tracking-widest">
+                          {blog.category}
+                        </span>
+                        <span className="text-[8px] opacity-30 font-bold uppercase">
+                          | {blog.website || "N/A"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 text-center">
+                      <Badge
+                        className={`rounded-none text-[8px] h-5 px-2 font-bold uppercase tracking-widest ${
+                          blog.status === "Published"
+                            ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-50"
+                            : "bg-amber-50 text-amber-600 hover:bg-amber-50"
+                        }`}
+                      >
+                        {blog.status || "Published"}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEdit(blog)}
+                          className="h-8 w-8 rounded-none opacity-0 group-hover:opacity-100 transition-all hover:bg-black hover:text-white"
+                        >
+                          <Pencil size={12} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDelete(blog.id)}
+                          className="h-8 w-8 rounded-none opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 size={12} />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {paginatedBlogs.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="text-center py-20 text-[10px] font-bold uppercase opacity-20"
+                    >
+                      No publications found
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-foreground/5">
+          <span className="text-[9px] font-bold uppercase opacity-30 tracking-widest">
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}
+              className="h-8 w-8 rounded-none disabled:opacity-20"
+            >
+              <ChevronLeft size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="h-8 w-8 rounded-none disabled:opacity-20"
+            >
+              <ChevronRight size={14} />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset className="bg-[#f9f9f9]">
-          {/* Top header — breadcrumb only */}
+          {/* Top header */}
           <header className="flex h-16 shrink-0 items-center border-b bg-white px-6">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mx-3 h-4" />
@@ -149,185 +340,23 @@ export default function BlogManager() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Publications</BreadcrumbPage>
+                  <BreadcrumbPage>
+                    {isCreatorOpen
+                      ? editingBlog
+                        ? "Edit Publication"
+                        : "New Publication"
+                      : "Publications"}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </header>
 
           <main className="p-6 md:p-10">
-            {/* Filter bar — Create Story button lives on the right */}
-            <div className="bg-white border border-foreground/10 px-6 py-4 flex items-center gap-4">
-              <Filter size={14} className="opacity-30 shrink-0" />
-              <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 shrink-0">
-                Filter by Website
-              </span>
-              <Select value={websiteFilter} onValueChange={setWebsiteFilter}>
-                <SelectTrigger className="h-8 w-56 rounded-none border-foreground/10 text-[10px] font-bold uppercase focus:ring-1 focus:ring-[#d11a2a]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="rounded-none">
-                  {WEBSITE_FILTER_OPTIONS.map((o) => (
-                    <SelectItem
-                      key={o.value}
-                      value={o.value}
-                      className="text-[10px] font-bold uppercase"
-                    >
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {websiteFilter !== "all" && (
-                <span className="text-[10px] font-bold opacity-40">
-                  {filteredBlogs.length}{" "}
-                  {filteredBlogs.length === 1 ? "blog" : "blogs"}
-                </span>
-              )}
-              <Button
-                onClick={handleCreateNew}
-                className="ml-auto h-8 rounded-none bg-black hover:bg-[#d11a2a] text-[10px] font-bold uppercase tracking-widest px-6 transition-all"
-              >
-                <Plus className="mr-2 h-3.5 w-3.5" /> New Story
-              </Button>
-            </div>
-
-            {/* Table — border-t-0 so it sits flush against the filter bar */}
-            <div className="bg-white border border-foreground/10 border-t-0 overflow-hidden">
-              {loading ? (
-                <div className="flex flex-col items-center justify-center py-20 opacity-20">
-                  <Loader2 className="animate-spin h-8 w-8 mb-2" />
-                  <span className="text-[10px] font-bold uppercase">
-                    Loading Archive
-                  </span>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[720px]">
-                    <thead className="border-b border-foreground/5">
-                      <tr className="text-[9px] font-bold uppercase tracking-widest opacity-30">
-                        <th className="px-6 py-4">Preview</th>
-                        <th className="px-6 py-4">Story Details</th>
-                        <th className="px-6 py-4 text-center">Status</th>
-                        <th className="px-6 py-4 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-foreground/5">
-                      {paginatedBlogs.map((blog) => (
-                        <tr
-                          key={blog.id}
-                          className="hover:bg-gray-50/50 transition-colors group"
-                        >
-                          <td className="px-6 py-5">
-                            <div className="w-20 h-14 overflow-hidden border border-foreground/5">
-                              <img
-                                src={blog.coverImage || "/placeholder.png"}
-                                className="w-full h-full object-cover"
-                                alt={blog.title}
-                              />
-                            </div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <h4 className="font-bold text-[11px] uppercase tracking-wide line-clamp-1 max-w-[280px] mb-1">
-                              {blog.title}
-                            </h4>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[9px] font-bold text-[#d11a2a] uppercase tracking-widest">
-                                {blog.category}
-                              </span>
-                              <span className="text-[8px] opacity-30 font-bold uppercase">
-                                | {blog.website || "N/A"}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-5 text-center">
-                            <Badge
-                              className={`rounded-none text-[8px] h-5 px-2 font-bold uppercase tracking-widest ${
-                                blog.status === "Published"
-                                  ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-50"
-                                  : "bg-amber-50 text-amber-600 hover:bg-amber-50"
-                              }`}
-                            >
-                              {blog.status || "Published"}
-                            </Badge>
-                          </td>
-                          <td className="px-6 py-5 text-right">
-                            <div className="flex justify-end gap-1.5">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleEdit(blog)}
-                                className="h-8 w-8 rounded-none opacity-0 group-hover:opacity-100 transition-all hover:bg-black hover:text-white"
-                              >
-                                <Pencil size={12} />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDelete(blog.id)}
-                                className="h-8 w-8 rounded-none opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 hover:text-red-600"
-                              >
-                                <Trash2 size={12} />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {paginatedBlogs.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={4}
-                            className="text-center py-20 text-[10px] font-bold uppercase opacity-20"
-                          >
-                            No publications found
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Pagination */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-foreground/5">
-                <span className="text-[9px] font-bold uppercase opacity-30 tracking-widest">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <div className="flex gap-1.5">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="h-8 w-8 rounded-none disabled:opacity-20"
-                  >
-                    <ChevronLeft size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.min(p + 1, totalPages))
-                    }
-                    disabled={currentPage === totalPages}
-                    className="h-8 w-8 rounded-none disabled:opacity-20"
-                  >
-                    <ChevronRight size={14} />
-                  </Button>
-                </div>
-              </div>
-            </div>
+            {isCreatorOpen ? renderEditMode() : renderTableMode()}
           </main>
         </SidebarInset>
       </SidebarProvider>
-
-      {isCreatorOpen && (
-        <BlogCreator
-          initialData={editingBlog}
-          onClose={handleClose}
-          onSubmit={handleSubmit}
-        />
-      )}
     </TooltipProvider>
   );
 }

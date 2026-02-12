@@ -72,7 +72,7 @@ const allNavItems = {
     url: "#",
     icon: <Settings2Icon />,
     items: [
-      { title: "Blogs", url: "/content/blog" },
+      { title: "Blogs", url: "/content/blogs" },
       { title: "Catalogs", url: "#" },
       { title: "FAQs Manager", url: "#" },
       { title: "Home Popups", url: "#" },
