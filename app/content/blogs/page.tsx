@@ -328,7 +328,7 @@ export default function BlogManager() {
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
         <AppSidebar />
-        <SidebarInset className="bg-[#f9f9f9]">
+        <SidebarInset className="bg-white">
           {/* Top header */}
           <header className="flex h-16 shrink-0 items-center border-b bg-white px-6">
             <SidebarTrigger className="-ml-1" />
