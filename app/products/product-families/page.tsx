@@ -25,6 +25,7 @@ import {
   X,
   RotateCcw,
   Layers,
+  FolderPlus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -91,7 +92,6 @@ export default function CategoryMaintenance() {
   const [loading, setLoading] = useState(true);
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
 
-  // Separate open state for the specs combobox (mirrors openSeries pattern)
   const [openSpecs, setOpenSpecs] = useState(false);
 
   // Form States
@@ -105,7 +105,7 @@ export default function CategoryMaintenance() {
 
   useEffect(() => {
     const q = query(
-      collection(db, "categoriesmaintenance"),
+      collection(db, "productfamilies"),
       orderBy("createdAt", "desc"),
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -176,10 +176,10 @@ export default function CategoryMaintenance() {
       };
 
       if (editId) {
-        await updateDoc(doc(db, "categoriesmaintenance", editId), payload);
+        await updateDoc(doc(db, "productfamilies", editId), payload);
         toast.success("Updated Successfully");
       } else {
-        await addDoc(collection(db, "categoriesmaintenance"), {
+        await addDoc(collection(db, "productfamilies"), {
           ...payload,
           isActive: true,
           createdAt: serverTimestamp(),
@@ -226,7 +226,7 @@ export default function CategoryMaintenance() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              {/* ── FORM (sticky) ── */}
+              {/* ── FORM ── */}
               <div className="lg:col-span-4 sticky top-6 z-10">
                 <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
                   <CardHeader className="border-b py-4 flex flex-row items-center justify-between space-y-0 sticky top-0 bg-background z-10">
@@ -246,7 +246,6 @@ export default function CategoryMaintenance() {
                   </CardHeader>
 
                   <CardContent className="pt-5 space-y-5">
-                    {/* Title */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Category Title
@@ -259,7 +258,6 @@ export default function CategoryMaintenance() {
                       />
                     </div>
 
-                    {/* Description */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Description
@@ -272,7 +270,6 @@ export default function CategoryMaintenance() {
                       />
                     </div>
 
-                    {/* Websites */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Websites
@@ -302,7 +299,6 @@ export default function CategoryMaintenance() {
                       </div>
                     </div>
 
-                    {/* Specifications — now uses the series selector pattern from SolutionsManager */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Specifications
@@ -363,7 +359,6 @@ export default function CategoryMaintenance() {
                       </Popover>
                     </div>
 
-                    {/* Cover image dropzone */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase opacity-60">
                         Category Cover
@@ -433,6 +428,20 @@ export default function CategoryMaintenance() {
                   <div className="flex justify-center py-20">
                     <Loader2 className="animate-spin text-primary" />
                   </div>
+                ) : categories.length === 0 ? (
+                  /* ── EMPTY STATE ── */
+                  <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
+                    <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm">
+                      <FolderPlus className="h-8 w-8 text-muted-foreground/40" />
+                    </div>
+                    <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
+                      No Product Families
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
+                      Your database is currently empty. Define a new category
+                      using the panel on the left to begin.
+                    </p>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {categories.map((cat) => (
@@ -490,11 +499,7 @@ export default function CategoryMaintenance() {
                                     className="rounded-none bg-destructive text-xs"
                                     onClick={() =>
                                       deleteDoc(
-                                        doc(
-                                          db,
-                                          "categoriesmaintenance",
-                                          cat.id,
-                                        ),
+                                        doc(db, "productfamilies", cat.id),
                                       )
                                     }
                                   >

@@ -128,13 +128,18 @@ export default function AllProductsPage() {
 
   // View States
   const [isEditing, setIsEditing] = React.useState(false);
-  const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(
+    null,
+  );
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   // Table States
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
+    [],
+  );
+  const [columnVisibility, setColumnVisibility] =
+    React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
 
@@ -157,7 +162,7 @@ export default function AllProductsPage() {
         console.error("Fetch error:", error);
         toast.error("Failed to load products");
         setLoading(false);
-      }
+      },
     );
 
     return () => unsubscribe();
@@ -176,7 +181,9 @@ export default function AllProductsPage() {
   const handleBulkDelete = async (selectedIds: string[]) => {
     if (selectedIds.length === 0) return;
     setIsDeleting(true);
-    const deleteToast = toast.loading(`Deleting ${selectedIds.length} products...`);
+    const deleteToast = toast.loading(
+      `Deleting ${selectedIds.length} products...`,
+    );
 
     try {
       const batch = writeBatch(db);
@@ -184,7 +191,9 @@ export default function AllProductsPage() {
         batch.delete(doc(db, "products", id));
       });
       await batch.commit();
-      toast.success(`Deleted ${selectedIds.length} products!`, { id: deleteToast });
+      toast.success(`Deleted ${selectedIds.length} products!`, {
+        id: deleteToast,
+      });
       setRowSelection({});
     } catch (error) {
       console.error("Bulk delete error:", error);
@@ -227,15 +236,22 @@ export default function AllProductsPage() {
     {
       accessorKey: "mainImage",
       header: "Image",
-      cell: ({ row }) => (
-        <div className="w-12 h-12 bg-background rounded-lg p-1 border overflow-hidden">
-          <img
-            src={row.getValue("mainImage")}
-            alt={row.original.name}
-            className="w-full h-full object-contain"
-          />
-        </div>
-      ),
+      cell: ({ row }) => {
+        const imageUrl = row.getValue("mainImage") as string;
+        return (
+          <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={row.original.name}
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <Package className="h-6 w-6 text-muted-foreground/40" />
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "name",
@@ -263,8 +279,12 @@ export default function AllProductsPage() {
     {
       id: "details",
       accessorFn: (row) => {
-        const brand = Array.isArray(row.brands) ? row.brands.join(" ") : row.brand;
-        const web = Array.isArray(row.websites) ? row.websites.join(" ") : row.website;
+        const brand = Array.isArray(row.brands)
+          ? row.brands.join(" ")
+          : row.brand;
+        const web = Array.isArray(row.websites)
+          ? row.websites.join(" ")
+          : row.website;
         return `${brand} ${web}`;
       },
       header: () => <div className="text-xs font-medium">Brand / Website</div>,
@@ -290,12 +310,17 @@ export default function AllProductsPage() {
     },
     {
       id: "actions",
-      header: () => <div className="text-xs font-medium text-right">Actions</div>,
+      header: () => (
+        <div className="text-xs font-medium text-right">Actions</div>
+      ),
       cell: ({ row }) => {
         const product = row.original;
 
         return (
-          <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="flex justify-end gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
             <Button
               variant="ghost"
               size="icon"
@@ -307,7 +332,11 @@ export default function AllProductsPage() {
 
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive"
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </AlertDialogTrigger>
@@ -316,8 +345,10 @@ export default function AllProductsPage() {
                   <AlertDialogTitle>Delete Product?</AlertDialogTitle>
                   <AlertDialogDescription>
                     You are about to delete{" "}
-                    <span className="font-semibold text-foreground">{product.name}</span>. This
-                    action cannot be undone.
+                    <span className="font-semibold text-foreground">
+                      {product.name}
+                    </span>
+                    . This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -397,7 +428,9 @@ export default function AllProductsPage() {
         </Button>
         <Separator orientation="vertical" className="h-6" />
         <p className="text-sm text-muted-foreground">
-          {selectedProduct ? `Editing: ${selectedProduct?.name}` : "Adding New Product"}
+          {selectedProduct
+            ? `Editing: ${selectedProduct?.name}`
+            : "Adding New Product"}
         </p>
       </div>
       <AddNewProduct
@@ -419,7 +452,9 @@ export default function AllProductsPage() {
           <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
             Website Product Inventory
           </h2>
-          <p className="text-sm text-muted-foreground">Manage and update your website products</p>
+          <p className="text-sm text-muted-foreground">
+            Manage and update your website products
+          </p>
         </div>
 
         <div className="flex gap-3">
@@ -442,13 +477,17 @@ export default function AllProductsPage() {
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-destructive/20 rounded-full flex items-center justify-center">
-              <span className="text-sm font-semibold text-destructive">{selectedCount}</span>
+              <span className="text-sm font-semibold text-destructive">
+                {selectedCount}
+              </span>
             </div>
             <div>
               <p className="text-sm font-semibold">
                 {selectedCount} product{selectedCount > 1 ? "s" : ""} selected
               </p>
-              <p className="text-xs text-muted-foreground">Ready for bulk actions</p>
+              <p className="text-xs text-muted-foreground">
+                Ready for bulk actions
+              </p>
             </div>
           </div>
 
@@ -465,7 +504,12 @@ export default function AllProductsPage() {
 
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={isDeleting} className="gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={isDeleting}
+                  className="gap-2"
+                >
                   {isDeleting ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
@@ -476,10 +520,12 @@ export default function AllProductsPage() {
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {selectedCount} Products?</AlertDialogTitle>
+                  <AlertDialogTitle>
+                    Delete {selectedCount} Products?
+                  </AlertDialogTitle>
                   <AlertDialogDescription>
-                    This action cannot be undone. This will permanently delete the selected
-                    products.
+                    This action cannot be undone. This will permanently delete
+                    the selected products.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -521,15 +567,22 @@ export default function AllProductsPage() {
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48 max-h-60 overflow-y-auto">
-            <DropdownMenuItem onClick={() => table.getColumn("details")?.setFilterValue("")}>
+          <DropdownMenuContent
+            align="end"
+            className="w-48 max-h-60 overflow-y-auto"
+          >
+            <DropdownMenuItem
+              onClick={() => table.getColumn("details")?.setFilterValue("")}
+            >
               All Brands
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {uniqueBrands.map((brand) => (
               <DropdownMenuItem
                 key={brand}
-                onClick={() => table.getColumn("details")?.setFilterValue(brand)}
+                onClick={() =>
+                  table.getColumn("details")?.setFilterValue(brand)
+                }
               >
                 {brand}
               </DropdownMenuItem>
@@ -545,8 +598,13 @@ export default function AllProductsPage() {
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48 max-h-60 overflow-y-auto">
-            <DropdownMenuItem onClick={() => table.getColumn("details")?.setFilterValue("")}>
+          <DropdownMenuContent
+            align="end"
+            className="w-48 max-h-60 overflow-y-auto"
+          >
+            <DropdownMenuItem
+              onClick={() => table.getColumn("details")?.setFilterValue("")}
+            >
               All Websites
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -580,7 +638,9 @@ export default function AllProductsPage() {
                     key={column.id}
                     className="capitalize"
                     checked={column.getIsVisible()}
-                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    onCheckedChange={(value) =>
+                      column.toggleVisibility(!!value)
+                    }
                   >
                     {column.id}
                   </DropdownMenuCheckboxItem>
@@ -601,7 +661,10 @@ export default function AllProductsPage() {
                     <TableHead key={header.id}>
                       {header.isPlaceholder
                         ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
                     </TableHead>
                   );
                 })}
@@ -611,7 +674,10 @@ export default function AllProductsPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-60 text-center">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-60 text-center"
+                >
                   <Loader2 className="animate-spin mx-auto h-8 w-8 text-muted-foreground" />
                 </TableCell>
               </TableRow>
@@ -625,14 +691,20 @@ export default function AllProductsPage() {
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
                     </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-60 text-center">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-60 text-center"
+                >
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <Package className="h-8 w-8" />
                     <p className="text-sm">No products found</p>

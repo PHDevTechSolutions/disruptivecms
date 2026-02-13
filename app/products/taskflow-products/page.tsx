@@ -135,11 +135,10 @@ export default function TaskflowProductsPage() {
           ? p.brands.includes(brandFilter)
           : p.brand === brandFilter);
 
-      // Always filter for taskflow website
-      const matchesTaskflow =
-        Array.isArray(p.websites)
-          ? p.websites.some((w: string) => w?.toLowerCase().includes("taskflow"))
-          : p.website?.toLowerCase().includes("taskflow");
+      // p.website is always an array (e.g. ["Taskflow"]) — handle both array and legacy string
+      const matchesTaskflow = Array.isArray(p.website)
+        ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
+        : p.website?.toLowerCase().includes("taskflow");
 
       const matchesSearch =
         p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -422,7 +421,7 @@ export default function TaskflowProductsPage() {
                     <div className="flex flex-col max-w-62.5">
                       <span className="font-semibold text-sm line-clamp-1">{product.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {product.categories || "No Category"}
+                        {product.productFamily || product.categories || "No Category"}
                       </span>
                     </div>
                   </TableCell>
@@ -443,8 +442,8 @@ export default function TaskflowProductsPage() {
                           : product.brand || "Generic"}
                       </Badge>
                       <Badge variant="secondary" className="w-fit text-xs">
-                        {Array.isArray(product.websites)
-                          ? product.websites.join(", ")
+                        {Array.isArray(product.website)
+                          ? product.website.join(", ")
                           : product.website || "N/A"}
                       </Badge>
                     </div>

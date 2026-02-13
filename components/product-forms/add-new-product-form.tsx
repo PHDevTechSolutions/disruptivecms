@@ -48,6 +48,13 @@ interface MasterItem {
   isTemp?: boolean;
 }
 
+interface SpecItem {
+  id: string;
+  label: string;
+  specGroup: string;
+  specGroupId: string;
+}
+
 interface PendingItem {
   type: "brand" | "category" | "application" | "spec";
   name: string;
@@ -56,8 +63,8 @@ interface PendingItem {
 }
 
 interface SpecValue {
-  name: string;
-  value: string;
+  specGroup: string;
+  specs: { name: string; value: string }[];
 }
 
 const WEBSITE_OPTIONS = [
@@ -98,7 +105,7 @@ export default function AddNewProduct({
   const [salePrice, setSalePrice] = useState("");
 
   // MASTER DATA STATE
-  const [availableSpecs, setAvailableSpecs] = useState<MasterItem[]>([]);
+  const [availableSpecs, setAvailableSpecs] = useState<SpecItem[]>([]);
   const [specsLoading, setSpecsLoading] = useState(false);
   const [availableCats, setAvailableCats] = useState<MasterItem[]>([]);
   const [availableBrands, setAvailableBrands] = useState<MasterItem[]>([]);
@@ -169,7 +176,7 @@ export default function AddNewProduct({
     const qFilter = where("websites", "array-contains-any", selectedWebs);
 
     const unsubCats = onSnapshot(
-      query(collection(db, "categoriesmaintenance"), qFilter),
+      query(collection(db, "productfamilies"), qFilter),
       (snap) => {
         setAvailableCats((prev) =>
           mergeWithPending(prev, snap, "category", "title"),
@@ -212,30 +219,31 @@ export default function AddNewProduct({
 
     setSpecsLoading(true);
     const unsubscribers: Array<() => void> = [];
-    const specIdsFromCategories = new Set<string>();
 
-    // Fetch each selected category to get their spec IDs
     const fetchCategorySpecs = async () => {
       try {
-        console.log("[v0] Fetching specs for categories:", selectedCats);
+        console.log("[v0] Fetching specs for product families:", selectedCats);
+        const specIdsFromCategories = new Set<string>();
+
+        // Fetch each selected product family to get their spec IDs
         for (const catId of selectedCats) {
-          const catDoc = await getDoc(doc(db, "categoriesmaintenance", catId));
+          const catDoc = await getDoc(doc(db, "productfamilies", catId));
           console.log(
-            "[v0] Category doc exists?",
+            "[v0] Product family doc exists?",
             catDoc.exists(),
             "catId:",
             catId,
           );
           if (catDoc.exists()) {
             const catData = catDoc.data();
-            console.log("[v0] Full category data:", catData);
+            console.log("[v0] Full product family data:", catData);
             console.log("[v0] Specifications field:", catData?.specifications);
             if (
               catData.specifications &&
               Array.isArray(catData.specifications)
             ) {
               console.log(
-                "[v0] Category",
+                "[v0] Product family",
                 catId,
                 "specs:",
                 catData.specifications,
@@ -245,23 +253,23 @@ export default function AddNewProduct({
               });
             } else {
               console.log(
-                "[v0] Category",
+                "[v0] Product family",
                 catId,
                 "has no specifications array",
               );
             }
           } else {
-            console.log("[v0] Category document not found:", catId);
+            console.log("[v0] Product family document not found:", catId);
           }
         }
 
         console.log(
-          "[v0] All spec IDs from categories:",
+          "[v0] All spec IDs from product families:",
           Array.from(specIdsFromCategories),
         );
 
         if (specIdsFromCategories.size === 0) {
-          console.log("[v0] No specs found for selected categories");
+          console.log("[v0] No specs found for selected product families");
           setAvailableSpecs([]);
           setSpecsLoading(false);
           return;
@@ -269,29 +277,32 @@ export default function AddNewProduct({
 
         // Listen to the specs collection and filter by our collected IDs
         const unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
-          const filteredSpecs = specsSnap.docs
+          const allSpecItems: SpecItem[] = [];
+
+          specsSnap.docs
             .filter((doc) => specIdsFromCategories.has(doc.id))
-            .map((doc) => {
+            .forEach((doc) => {
               const data = doc.data();
-              return {
-                id: doc.id,
-                name: data.name || "Unnamed",
-                websites: [],
-              };
+              const specGroupName = data.name || "Unnamed Group";
+              const specGroupId = doc.id;
+
+              // Extract individual spec items from the items array
+              if (data.items && Array.isArray(data.items)) {
+                data.items.forEach((item: any) => {
+                  if (item.label) {
+                    allSpecItems.push({
+                      id: `${specGroupId}-${item.label}`,
+                      label: item.label,
+                      specGroup: specGroupName,
+                      specGroupId: specGroupId,
+                    });
+                  }
+                });
+              }
             });
 
-          console.log("[v0] Fetched specs:", filteredSpecs);
-
-          const currentPending = pendingItemsRef.current
-            .filter((p) => p.type === "spec")
-            .map((p) => ({
-              id: `temp-${p.name}`,
-              name: p.name,
-              websites: selectedWebs,
-              isTemp: true,
-            }));
-
-          setAvailableSpecs([...filteredSpecs, ...currentPending]);
+          console.log("[v0] Fetched spec items:", allSpecItems);
+          setAvailableSpecs(allSpecItems);
           setSpecsLoading(false);
         });
 
@@ -341,37 +352,71 @@ export default function AddNewProduct({
 
   // --- 2. LOAD EDIT DATA ---
   useEffect(() => {
-    if (editData) {
-      setProductName(editData.name || "");
-      setShortDesc(editData.shortDescription || "");
-      setItemCode(editData.itemCode || "");
-      setRegPrice(editData.regularPrice?.toString() || "");
-      setSalePrice(editData.salePrice?.toString() || "");
-      setSelectedWebs(
-        Array.isArray(editData.website)
-          ? editData.website
-          : editData.website
-            ? [editData.website]
-            : [],
-      );
-      // Store category ID directly
-      setSelectedCats(editData.category ? [editData.category] : []);
-      setSelectedBrands(editData.brand ? [editData.brand] : []);
-      setSelectedApps(editData.applications || []);
-      setExistingMainImage(editData.mainImage || "");
-      setExistingGalleryImages(editData.galleryImages || []);
-      setExistingQrImage(editData.qrCodeImage || "");
-      if (editData.technicalSpecs) {
-        const values: Record<string, string> = {};
-        editData.technicalSpecs.forEach((s: SpecValue) => {
-          values[s.name] = s.value;
-        });
-        setSpecValues(values);
-      }
-    }
+    if (!editData) return;
+
+    setProductName(editData.name || "");
+    setShortDesc(editData.shortDescription || "");
+    setItemCode(editData.itemCode || "");
+    setRegPrice(editData.regularPrice?.toString() || "");
+    setSalePrice(editData.salePrice?.toString() || "");
+
+    setSelectedWebs(
+      Array.isArray(editData.website)
+        ? editData.website
+        : editData.website
+          ? [editData.website]
+          : [],
+    );
+
+    setSelectedBrands(editData.brand ? [editData.brand] : []);
+    setSelectedApps(editData.applications || []);
+    setExistingMainImage(editData.mainImage || "");
+    setExistingGalleryImages(editData.galleryImages || []);
+    setExistingQrImage(editData.qrCodeImage || "");
   }, [editData]);
 
-  // --- 3. HANDLERS ---
+  useEffect(() => {
+    if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
+      return;
+
+    const values: Record<string, string> = {};
+
+    editData.technicalSpecs.forEach((group: SpecValue) => {
+      group.specs.forEach((spec: { name: string; value: string }) => {
+        const specItem = availableSpecs.find(
+          (s) => s.label === spec.name && s.specGroup === group.specGroup,
+        );
+
+        if (specItem) {
+          const key = `${specItem.specGroupId}-${specItem.label}`;
+          values[key] = spec.value;
+        }
+      });
+    });
+
+    setSpecValues(values);
+  }, [editData, availableSpecs]);
+
+  // --- 3. LOAD PRODUCT FAMILY AFTER CATEGORIES ARE FETCHED ---
+  useEffect(() => {
+    if (editData && availableCats.length > 0) {
+      // Handle productFamily - find the ID by matching the title
+      if (editData.productFamily) {
+        // productFamily is the title, find the matching ID from availableCats
+        const matchingCat = availableCats.find(
+          (cat) => cat.name === editData.productFamily,
+        );
+        if (matchingCat) {
+          setSelectedCats([matchingCat.id]);
+        }
+      } else if (editData.category) {
+        // Backward compatibility - category is the ID
+        setSelectedCats([editData.category]);
+      }
+    }
+  }, [editData, availableCats]);
+
+  // --- 4. HANDLERS ---
 
   const uploadToCloudinary = async (file: File) => {
     const formData = new FormData();
@@ -399,7 +444,6 @@ export default function AddNewProduct({
     if (type === "brand") listToCheck = availableBrands;
     if (type === "category") listToCheck = availableCats;
     if (type === "application") listToCheck = availableApps;
-    if (type === "spec") listToCheck = availableSpecs;
 
     const exists = listToCheck.some(
       (item) => item.name.toLowerCase() === cleanName.toLowerCase(),
@@ -435,9 +479,6 @@ export default function AddNewProduct({
     } else if (type === "application") {
       setAvailableApps((prev) => [...prev, newItem]);
       setSelectedApps((prev) => [...prev, `temp-${cleanName}`]);
-    } else if (type === "spec") {
-      setAvailableSpecs((prev) => [...prev, newItem]);
-      setSpecValues((prev) => ({ ...prev, [cleanName]: "" }));
     }
   };
 
@@ -475,10 +516,10 @@ export default function AddNewProduct({
 
       // B. SAVE PENDING TAGS AND TRACK NEW IDs
       const pendingIdMap: Record<string, string> = {};
-      
+
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: publishToast });
-        
+
         for (const item of pendingItemsRef.current) {
           const payload: any = {
             websites: selectedWebs,
@@ -493,11 +534,18 @@ export default function AddNewProduct({
             payload.description = "";
           }
 
+          if (item.type === "category") {
+            payload.isActive = true;
+            payload.imageUrl = "";
+            payload.description = "";
+            payload.specifications = [];
+          }
+
           const docRef = await addDoc(collection(db, item.collection), payload);
           // Map temp ID to real Firestore ID
           pendingIdMap[`temp-${item.name}`] = docRef.id;
         }
-        
+
         pendingItemsRef.current = [];
       }
 
@@ -513,10 +561,37 @@ export default function AddNewProduct({
         galleryImages.map(uploadToCloudinary),
       );
 
-      // D. PREPARE SPECS
-      const technicalSpecs = Object.entries(specValues)
-        .filter(([_, val]) => val.trim() !== "")
-        .map(([name, value]) => ({ name, value }));
+      // D. PREPARE SPECS - Group by specGroup
+      const specsGrouped: Record<string, { name: string; value: string }[]> =
+        {};
+
+      Object.entries(specValues).forEach(([key, value]) => {
+        if (value.trim() !== "") {
+          // Find the spec item to get the specGroup
+          const specItem = availableSpecs.find(
+            (spec) =>
+              `${spec.specGroupId}-${spec.label}` === key ||
+              `${spec.specGroup}-${spec.label}` === key,
+          );
+
+          if (specItem) {
+            if (!specsGrouped[specItem.specGroup]) {
+              specsGrouped[specItem.specGroup] = [];
+            }
+            specsGrouped[specItem.specGroup].push({
+              name: specItem.label,
+              value: value,
+            });
+          }
+        }
+      });
+
+      const technicalSpecs = Object.entries(specsGrouped).map(
+        ([specGroup, specs]) => ({
+          specGroup,
+          specs,
+        }),
+      );
 
       // E. RESOLVE IDs (replace temp IDs with real ones)
       const resolveCategoryId = (catId: string) => {
@@ -528,8 +603,16 @@ export default function AddNewProduct({
       };
 
       const resolveAppIds = (appIds: string[]) => {
-        return appIds.map(id => pendingIdMap[id] || id);
+        return appIds.map((id) => pendingIdMap[id] || id);
       };
+
+      // Get product family title from the fetched data
+      const resolvedCategoryId = selectedCats[0]
+        ? resolveCategoryId(selectedCats[0])
+        : "";
+      const productFamilyTitle = resolvedCategoryId
+        ? availableCats.find((cat) => cat.id === selectedCats[0])?.name || ""
+        : "";
 
       // F. SAVE PRODUCT
       const payload = {
@@ -544,7 +627,7 @@ export default function AddNewProduct({
         qrCodeImage: qrUrl,
         galleryImages: [...existingGalleryImages, ...uploadedGallery],
         website: selectedWebs,
-        category: selectedCats[0] ? resolveCategoryId(selectedCats[0]) : "",
+        productFamily: productFamilyTitle,
         brand: selectedBrands[0] ? resolveBrandId(selectedBrands[0]) : "",
         applications: resolveAppIds(selectedApps),
         seo: {
@@ -602,6 +685,18 @@ export default function AddNewProduct({
     );
   };
 
+  // Group specs by specGroup for organized display
+  const groupedSpecs = availableSpecs.reduce(
+    (acc, spec) => {
+      if (!acc[spec.specGroup]) {
+        acc[spec.specGroup] = [];
+      }
+      acc[spec.specGroup].push(spec);
+      return acc;
+    },
+    {} as Record<string, SpecItem[]>,
+  );
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 min-h-screen">
       <div className="md:col-span-2 space-y-6">
@@ -609,7 +704,7 @@ export default function AddNewProduct({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Globe className="h-4 w-4" /> 
+              <Globe className="h-4 w-4" />
               Targeted Websites
             </CardTitle>
           </CardHeader>
@@ -643,7 +738,7 @@ export default function AddNewProduct({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Images className="h-4 w-4" /> 
+              <Images className="h-4 w-4" />
               Media Assets
             </CardTitle>
           </CardHeader>
@@ -794,15 +889,13 @@ export default function AddNewProduct({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <AlignLeft className="h-4 w-4" /> 
+              <AlignLeft className="h-4 w-4" />
               General Information
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-2">
-              <Label className="text-sm font-medium">
-                Product Name
-              </Label>
+              <Label className="text-sm font-medium">Product Name</Label>
               <Input
                 className="h-12 text-base font-semibold"
                 value={productName}
@@ -811,9 +904,7 @@ export default function AddNewProduct({
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-sm font-medium">
-                Short Description
-              </Label>
+              <Label className="text-sm font-medium">Short Description</Label>
               <Input
                 className="h-12"
                 value={shortDesc}
@@ -832,14 +923,6 @@ export default function AddNewProduct({
                       Technical Specifications
                     </Label>
                   </div>
-                  {/* Add Custom Spec Button */}
-                  <AddCustomItem
-                    placeholder="New Spec Name..."
-                    onAdd={(name) =>
-                      handleAddItem("spec", name, "specs", "name")
-                    }
-                    disabled={selectedWebs.length === 0}
-                  />
                 </div>
 
                 {specsLoading ? (
@@ -852,39 +935,43 @@ export default function AddNewProduct({
                 ) : availableSpecs.length === 0 ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed">
                     <p className="text-xs font-medium text-muted-foreground">
-                      No specs available for selected category
+                      No specs available for selected product family
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {availableSpecs.map((spec) => (
-                      <div
-                        key={spec.id}
-                        className={`space-y-1.5 p-3 rounded-lg border ${
-                          spec.isTemp
-                            ? "border-primary/50 bg-primary/5"
-                            : "border-border bg-card"
-                        }`}
-                      >
-                        <Label className="text-xs font-medium flex justify-between">
-                          {spec.name}
-                          {spec.isTemp && (
-                            <span className="text-primary text-[10px]">
-                              (New)
-                            </span>
-                          )}
-                        </Label>
-                        <Input
-                          placeholder={`Enter ${spec.name}...`}
-                          className="h-9 text-sm"
-                          value={specValues[spec.name] || ""}
-                          onChange={(e) =>
-                            setSpecValues((prev) => ({
-                              ...prev,
-                              [spec.name]: e.target.value,
-                            }))
-                          }
-                        />
+                  <div className="space-y-6">
+                    {Object.entries(groupedSpecs).map(([groupName, specs]) => (
+                      <div key={groupName} className="space-y-3">
+                        <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
+                          <Zap className="h-3 w-3" />
+                          {groupName}
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-5">
+                          {specs.map((spec) => {
+                            const specKey = `${spec.specGroupId}-${spec.label}`;
+                            return (
+                              <div
+                                key={spec.id}
+                                className="space-y-1.5 p-3 rounded-lg border bg-card"
+                              >
+                                <Label className="text-xs font-medium">
+                                  {spec.label}
+                                </Label>
+                                <Input
+                                  placeholder={`Enter ${spec.label}...`}
+                                  className="h-9 text-sm"
+                                  value={specValues[specKey] || ""}
+                                  onChange={(e) =>
+                                    setSpecValues((prev) => ({
+                                      ...prev,
+                                      [specKey]: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -912,11 +999,13 @@ export default function AddNewProduct({
               disabled={selectedWebs.length === 0}
               onToggle={(id: string) =>
                 setSelectedCats((prev) =>
-                  prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((i) => i !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
-                handleAddItem("category", name, "categoriesmaintenance", "title")
+                handleAddItem("category", name, "productfamilies", "title")
               }
             />
             <SidebarList
@@ -927,7 +1016,9 @@ export default function AddNewProduct({
               disabled={selectedWebs.length === 0}
               onToggle={(id: string) =>
                 setSelectedBrands((prev) =>
-                  prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((i) => i !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
@@ -942,7 +1033,9 @@ export default function AddNewProduct({
               disabled={selectedWebs.length === 0}
               onToggle={(id: string) =>
                 setSelectedApps((prev) =>
-                  prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((a) => a !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
@@ -997,7 +1090,7 @@ export default function AddNewProduct({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Search className="h-4 w-4" /> 
+              <Search className="h-4 w-4" />
               SEO Settings
             </CardTitle>
           </CardHeader>
@@ -1005,9 +1098,7 @@ export default function AddNewProduct({
             {/* INPUT SECTION */}
             <div className="space-y-4 border-b pb-6">
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">
-                  SEO Title
-                </Label>
+                <Label className="text-sm font-medium">SEO Title</Label>
                 <Input
                   className="h-10"
                   placeholder="Product name for Google"
@@ -1038,9 +1129,7 @@ export default function AddNewProduct({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">
-                  Meta Description
-                </Label>
+                <Label className="text-sm font-medium">Meta Description</Label>
                 <textarea
                   rows={3}
                   className="w-full px-3 py-2 bg-background border rounded-md focus:outline-none focus:ring-2 focus:ring-ring text-sm resize-none"
@@ -1207,9 +1296,7 @@ function SidebarList({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-primary">
           {icon}
-          <Label className="text-xs font-medium">
-            {label}
-          </Label>
+          <Label className="text-xs font-medium">{label}</Label>
         </div>
       </div>
 
@@ -1345,9 +1432,7 @@ function QrDropzone({
       ) : (
         <div className="flex flex-col items-center">
           <Zap className="h-8 w-8 mb-2 text-muted-foreground" />
-          <p className="text-xs font-medium text-muted-foreground">
-            QR Code
-          </p>
+          <p className="text-xs font-medium text-muted-foreground">QR Code</p>
         </div>
       )}
     </div>
