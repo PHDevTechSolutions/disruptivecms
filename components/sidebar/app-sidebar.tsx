@@ -62,7 +62,7 @@ const allNavItems = {
     url: "#",
     icon: <BriefcaseBusiness />,
     items: [
-      { title: "Applications", url: "#" },
+      { title: "Applications", url: "/jobs/applications" },
       { title: "Careers Posting", url: "/jobs/careers" },
       { title: "Email", url: "#" },
     ],
@@ -73,10 +73,11 @@ const allNavItems = {
     icon: <Settings2Icon />,
     items: [
       { title: "Blogs", url: "/content/blogs" },
+      { title: "Companies", url: "/content/companies" },
       { title: "Catalogs", url: "#" },
       { title: "FAQs Manager", url: "#" },
       { title: "Home Popups", url: "#" },
-      { title: "Projects", url: "#" },
+      { title: "Projects", url: "/content/projects" },
       { title: "Partners", url: "#" },
     ],
   },

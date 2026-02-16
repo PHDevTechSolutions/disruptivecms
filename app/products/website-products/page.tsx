@@ -89,6 +89,7 @@ import {
   doc,
   deleteDoc,
   writeBatch,
+  where,
 } from "firebase/firestore";
 import { toast } from "sonner";
 
@@ -146,7 +147,15 @@ export default function AllProductsPage() {
   // --- FETCH DATA ---
   React.useEffect(() => {
     setLoading(true);
-    const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
+    const q = query(
+  collection(db, "products"),
+  where("website", "in", [
+    "Disruptive Solutions Inc",
+    "Ecoshift Corporation",
+    "Value Acquisitions Holdings",
+  ]),
+  orderBy("createdAt", "desc")
+);
 
     const unsubscribe = onSnapshot(
       q,
