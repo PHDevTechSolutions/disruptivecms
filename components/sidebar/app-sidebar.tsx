@@ -52,9 +52,9 @@ const allNavItems = {
     url: "#",
     icon: <BotIcon />,
     items: [
-      { title: "Customer Inquiries", url: "#" },
-      { title: "Messenger", url: "#" },
-      { title: "Quotations", url: "#" },
+      { title: "Customer Inquiries", url: "/inquiries/customer-inquiries" },
+      { title: "Messenger", url: "/inquiries/messenger" },
+      { title: "Quotations", url: "/inquiries/quotations" },
     ],
   },
   jobs: {
