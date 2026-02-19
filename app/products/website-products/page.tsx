@@ -144,18 +144,57 @@ export default function AllProductsPage() {
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
 
+  // Rows per page input state
+  const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
+
+  // Search suggestions state
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const searchContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Close suggestions on outside click
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Compute suggestions from current data based on globalFilter
+  const suggestions = React.useMemo(() => {
+    const q = (globalFilter ?? "").trim().toLowerCase();
+    if (!q) return [];
+    return data
+      .filter(
+        (p) =>
+          p.name?.toLowerCase().includes(q) ||
+          p.itemCode?.toLowerCase().includes(q) ||
+          (p.categories as string)?.toLowerCase().includes(q),
+      )
+      .slice(0, 7);
+  }, [data, globalFilter]);
+
   // --- FETCH DATA ---
+  // ✅ FIX: Use array-contains-any on the `websites` array field so products
+  // that belong to multiple websites (e.g. ["Ecoshift Corporation", "Taskflow"])
+  // are still returned, instead of the old `in` operator which did an exact match.
   React.useEffect(() => {
     setLoading(true);
     const q = query(
-  collection(db, "products"),
-  where("website", "in", [
-    "Disruptive Solutions Inc",
-    "Ecoshift Corporation",
-    "Value Acquisitions Holdings",
-  ]),
-  orderBy("createdAt", "desc")
-);
+      collection(db, "products"),
+      where("websites", "array-contains-any", [
+        "Disruptive Solutions Inc",
+        "Ecoshift Corporation",
+        "Value Acquisitions Holdings",
+        "Taskflow",
+      ]),
+      orderBy("createdAt", "desc"),
+    );
 
     const unsubscribe = onSnapshot(
       q,
@@ -419,6 +458,9 @@ export default function AllProductsPage() {
   }, [data]);
 
   const selectedCount = Object.keys(rowSelection).length;
+  const filteredCount = table.getFilteredRowModel().rows.length;
+  const totalCount = data.length;
+  const isFiltered = filteredCount !== totalCount;
 
   // --- RENDER: EDIT MODE ---
   const renderEditMode = () => (
@@ -458,11 +500,27 @@ export default function AllProductsPage() {
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+          <h2 className="text-2xl font-semibold tracking-tight">
             Website Product Inventory
           </h2>
           <p className="text-sm text-muted-foreground">
-            Manage and update your website products
+            Manage and update your website products &mdash;{" "}
+            {loading ? (
+              <span className="text-muted-foreground">Loading...</span>
+            ) : (
+              <>
+                <span className="font-semibold text-foreground">
+                  {isFiltered ? filteredCount : totalCount}
+                </span>
+                {isFiltered && (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    of {totalCount}
+                  </span>
+                )}{" "}
+                product{totalCount !== 1 ? "s" : ""}
+              </>
+            )}
           </p>
         </div>
 
@@ -558,14 +616,84 @@ export default function AllProductsPage() {
 
       {/* FILTERS TOOLBAR */}
       <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+        <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
             placeholder="Search products..."
             value={globalFilter ?? ""}
-            onChange={(event) => setGlobalFilter(event.target.value)}
+            onChange={(event) => {
+              setGlobalFilter(event.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setShowSuggestions(false);
+            }}
             className="pl-9"
           />
+          {/* SUGGESTIONS DROPDOWN */}
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-popover border rounded-lg shadow-lg overflow-hidden">
+              {suggestions.map((product) => {
+                const brands = Array.isArray(product.brands)
+                  ? product.brands
+                  : [product.brand || "Generic"];
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-accent transition-colors"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setShowSuggestions(false);
+                      setGlobalFilter("");
+                      handleEdit(product);
+                    }}
+                  >
+                    <div className="w-9 h-9 shrink-0 bg-muted rounded-md border overflow-hidden flex items-center justify-center">
+                      {product.mainImage ? (
+                        <img
+                          src={product.mainImage}
+                          alt={product.name}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <Package className="h-4 w-4 text-muted-foreground/40" />
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium truncate">
+                        {product.name}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {product.itemCode || "---"}
+                        </span>
+                        {product.categories && (
+                          <span className="text-xs text-muted-foreground truncate">
+                            · {product.categories}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="ml-auto shrink-0 text-xs"
+                    >
+                      {brands[0]}
+                    </Badge>
+                  </button>
+                );
+              })}
+              <div className="px-3 py-1.5 border-t bg-muted/40">
+                <p className="text-xs text-muted-foreground">
+                  {suggestions.length} suggestion
+                  {suggestions.length !== 1 ? "s" : ""} — press Enter to search
+                  all
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Brand Filter */}
@@ -734,19 +862,32 @@ export default function AllProductsPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Rows per page</span>
-            <select
-              className="h-9 rounded-md border px-3 text-sm"
-              value={table.getState().pagination.pageSize}
+            <Input
+              type="number"
+              min={1}
+              max={500}
+              className="h-9 w-20 text-sm text-center"
+              value={rowsPerPageInput}
               onChange={(e) => {
-                table.setPageSize(Number(e.target.value));
+                setRowsPerPageInput(e.target.value);
               }}
-            >
-              {[10, 20, 30, 40, 50].map((pageSize) => (
-                <option key={pageSize} value={pageSize}>
-                  {pageSize}
-                </option>
-              ))}
-            </select>
+              onBlur={(e) => {
+                const parsed = parseInt(e.target.value, 10);
+                if (!isNaN(parsed) && parsed >= 1) {
+                  table.setPageSize(Math.min(parsed, 500));
+                  setRowsPerPageInput(String(Math.min(parsed, 500)));
+                } else {
+                  setRowsPerPageInput(
+                    String(table.getState().pagination.pageSize),
+                  );
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+            />
           </div>
 
           <div className="flex gap-2">

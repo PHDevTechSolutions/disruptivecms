@@ -27,6 +27,8 @@ import {
   Zap,
   Plus,
   Images,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 // UI Components
@@ -66,6 +68,25 @@ interface SpecValue {
 
 const DEFAULT_WEBSITE = "Taskflow";
 const SELECTED_WEBS = [DEFAULT_WEBSITE];
+
+const STATUS_OPTIONS = [
+  {
+    value: "public" as const,
+    label: "Public",
+    desc: "Visible on website immediately",
+    icon: <Eye className="w-4 h-4" />,
+    color: "text-emerald-600",
+    activeBg: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30",
+  },
+  {
+    value: "draft" as const,
+    label: "Draft",
+    desc: "Hidden, review before publishing",
+    icon: <EyeOff className="w-4 h-4" />,
+    color: "text-amber-600",
+    activeBg: "border-amber-500 bg-amber-50 dark:bg-amber-950/30",
+  },
+];
 
 function mergeWithPending(
   prev: MasterItem[],
@@ -113,6 +134,11 @@ export default function TaskflowAddNewProduct({
   const [itemCode, setItemCode] = useState("");
   const [regPrice, setRegPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
+
+  // ── STATUS ───────────────────────────────────────────────────────────────────
+  const [status, setStatus] = useState<"draft" | "public" | "">(
+    editData?.status || "",
+  );
 
   // MASTER DATA STATE
   const [availableSpecs, setAvailableSpecs] = useState<SpecItem[]>([]);
@@ -285,6 +311,7 @@ export default function TaskflowAddNewProduct({
     setItemCode(editData.itemCode || "");
     setRegPrice(editData.regularPrice?.toString() || "");
     setSalePrice(editData.salePrice?.toString() || "");
+    setStatus(editData.status || "");
     setSelectedBrands(editData.brand ? [editData.brand] : []);
     setSelectedApps(editData.applications || []);
     setExistingMainImage(editData.mainImage || "");
@@ -393,29 +420,34 @@ export default function TaskflowAddNewProduct({
 
   const handlePublish = async () => {
     if (!productName) return toast.error("Please enter a product name!");
+    if (!status)
+      return toast.error("Please select a product status (Draft or Public).");
 
     setIsPublishing(true);
     const publishToast = toast.loading("Validating...");
 
     try {
-      const dupQuery = query(
-        collection(db, "products"),
-        where("name", "==", productName),
-      );
-      const dupSnap = await getDocs(dupQuery);
+      const nameChanged = !editData || editData.name !== productName;
+      if (nameChanged) {
+        const dupQuery = query(
+          collection(db, "products"),
+          where("name", "==", productName),
+        );
+        const dupSnap = await getDocs(dupQuery);
 
-      const isDuplicate = dupSnap.docs.some((docSnap) => {
-        if (editData && docSnap.id === editData.id) return false;
-        const data = docSnap.data();
-        const productWebsites = data.website || [];
-        return productWebsites.some((w: string) => SELECTED_WEBS.includes(w));
-      });
+        const isDuplicate = dupSnap.docs.some((docSnap) => {
+          if (docSnap.id === editData?.id) return false;
+          const data = docSnap.data();
+          const productWebsites = data.websites || data.website || [];
+          return productWebsites.some((w: string) => SELECTED_WEBS.includes(w));
+        });
 
-      if (isDuplicate) {
-        toast.dismiss(publishToast);
-        toast.error("This product name already exists on Taskflow.");
-        setIsPublishing(false);
-        return;
+        if (isDuplicate) {
+          toast.dismiss(publishToast);
+          toast.error("This product name already exists on Taskflow.");
+          setIsPublishing(false);
+          return;
+        }
       }
 
       const pendingIdMap: Record<string, string> = {};
@@ -510,10 +542,11 @@ export default function TaskflowAddNewProduct({
         mainImage: mainUrl,
         qrCodeImage: qrUrl,
         galleryImages: [...existingGalleryImages, ...uploadedGallery],
-        website: SELECTED_WEBS,
+        websites: SELECTED_WEBS,
         productFamily: productFamilyTitle,
         brand: selectedBrands[0] ? resolveBrandId(selectedBrands[0]) : "",
         applications: resolveAppIds(selectedApps),
+        status,
         updatedAt: serverTimestamp(),
       };
 
@@ -564,6 +597,48 @@ export default function TaskflowAddNewProduct({
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 min-h-screen">
       <div className="md:col-span-2 space-y-6">
+        {/* ── STATUS CARD ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Eye className="h-4 w-4" />
+              Product Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-3">
+              {STATUS_OPTIONS.map((opt) => {
+                const active = status === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setStatus(opt.value)}
+                    className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all
+                      ${
+                        active
+                          ? `${opt.activeBg} ${opt.color} border-current font-semibold`
+                          : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
+                      }`}
+                  >
+                    <span
+                      className={active ? opt.color : "text-muted-foreground"}
+                    >
+                      {opt.icon}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">{opt.label}</p>
+                      <p className="text-[11px] font-normal opacity-70">
+                        {opt.desc}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* MEDIA ASSETS CARD */}
         <Card>
           <CardHeader>
@@ -770,7 +845,6 @@ export default function TaskflowAddNewProduct({
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      // ── In edit mode, only show specs that have a saved value ──
                       const visibleSpecs = editData
                         ? specs.filter((spec) => {
                             const key = `${spec.specGroupId}-${spec.label}`;
