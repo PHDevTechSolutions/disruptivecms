@@ -544,7 +544,9 @@ export default function TaskflowAddNewProduct({
         galleryImages: [...existingGalleryImages, ...uploadedGallery],
         websites: SELECTED_WEBS,
         productFamily: productFamilyTitle,
-        brand: selectedBrands[0] ? resolveBrandId(selectedBrands[0]) : "",
+        brand: selectedBrands[0]
+          ? availableBrands.find((b) => b.id === selectedBrands[0])?.name || ""
+          : "",
         applications: resolveAppIds(selectedApps),
         status,
         updatedAt: serverTimestamp(),

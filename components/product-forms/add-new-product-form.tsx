@@ -583,7 +583,9 @@ export default function AddNewProduct({
         website: selectedWebs,
         websites: selectedWebs,
         productFamily: productFamilyTitle,
-        brand: selectedBrands[0] ? resolveBrandId(selectedBrands[0]) : "",
+        brand: selectedBrands[0]
+          ? availableBrands.find((b) => b.id === selectedBrands[0])?.name || ""
+          : "",
         applications: resolveAppIds(selectedApps),
         status,
         seo: {
