@@ -49,14 +49,11 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ParsedProduct {
-  // Identity
-  category: string; // sheet category col → productFamily title
-  productCode: string; // Product Code
-  csvSku: string; // CSV SKU → itemCode
-  cloudinaryUrl: string; // mainImage
-  productName: string; // Product Name (OCR) → name
-
-  // Spec groups (keyed by group name → { label, value }[])
+  category: string;
+  productCode: string;
+  csvSku: string;
+  cloudinaryUrl: string;
+  productName: string;
   specs: Record<string, { label: string; value: string }[]>;
 }
 
@@ -67,45 +64,22 @@ interface ImportStats {
   skipped: number;
 }
 
-// ─── Excel spec-group map ─────────────────────────────────────────────────────
-// Row 2 contains group labels at specific column indices (0-based).
-// Everything between two group anchors belongs to the group at the left anchor.
-// Columns with no group label in row 2 are assigned to the nearest left anchor.
-
-const FIXED_COLUMN_META: {
-  colIndex: number; // 0-based A=0
-  label: string; // spec label shown in Firestore
-  groupHint: string; // fallback group name if row-2 is blank at this col
-}[] = [
-  // col 5 = F  (Wattage)     — group anchor "LAMP DETAILS" at col 5
-  { colIndex: 5, label: "Wattage", groupHint: "LAMP DETAILS" },
-  { colIndex: 6, label: "Lumens Output", groupHint: "LAMP DETAILS" },
-  { colIndex: 7, label: "Color Temperature", groupHint: "LAMP DETAILS" },
-  { colIndex: 8, label: "CRI", groupHint: "LAMP DETAILS" },
-  { colIndex: 9, label: "Visual Angle", groupHint: "LAMP DETAILS" },
-  { colIndex: 10, label: "Light Source", groupHint: "LAMP DETAILS" },
-  { colIndex: 11, label: "Life Hours", groupHint: "LAMP DETAILS" },
-  // col 12 = M — group anchor "ELECTRICAL SPECIFICATION" at col 12
-  {
-    colIndex: 12,
-    label: "Working Voltage",
-    groupHint: "ELECTRICAL SPECIFICATION",
-  },
-  {
-    colIndex: 13,
-    label: "Power Factor",
-    groupHint: "ELECTRICAL SPECIFICATION",
-  },
-  // col 14 = O — group anchor "FIXTURE DETAILS" at col 14
-  { colIndex: 14, label: "Dimension", groupHint: "FIXTURE DETAILS" },
-  { colIndex: 15, label: "Materials", groupHint: "FIXTURE DETAILS" },
-  { colIndex: 16, label: "Cover", groupHint: "FIXTURE DETAILS" },
-  { colIndex: 17, label: "Working Temperature", groupHint: "FIXTURE DETAILS" },
-  { colIndex: 18, label: "Ceiling", groupHint: "FIXTURE DETAILS" },
-  { colIndex: 19, label: "IP Rating", groupHint: "FIXTURE DETAILS" },
-];
+// ─── Helper: normalise a cell value to clean string ──────────────────────────
+function cellStr(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "object" && "text" in (v as any))
+    return String((v as any).text).trim();
+  if (typeof v === "object" && "result" in (v as any))
+    return String((v as any).result).trim();
+  // Collapse internal newlines to a space for cleaner values
+  return String(v)
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+}
 
 // ─── Helper: derive group map from row 2 of the sheet ────────────────────────
+// Row 2 has group name anchors at specific columns. All columns between two
+// anchors (inclusive of the left anchor) belong to the left anchor's group.
 function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   const map: Record<number, string> = {};
   let currentGroup = "";
@@ -117,16 +91,6 @@ function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   return map;
 }
 
-// ─── Helper: normalise a cell value to clean string ──────────────────────────
-function cellStr(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "object" && "text" in (v as any))
-    return String((v as any).text).trim();
-  if (typeof v === "object" && "result" in (v as any))
-    return String((v as any).result).trim();
-  return String(v).trim();
-}
-
 // ─── Parse the workbook ───────────────────────────────────────────────────────
 async function parseWorkbook(file: File): Promise<{
   sheetName: string;
@@ -136,18 +100,46 @@ async function parseWorkbook(file: File): Promise<{
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
 
-  // Sheet name = filename without extension
-  const targetName = file.name.replace(/\.xlsx$/i, "");
-  const ws = wb.getWorksheet(targetName) ?? wb.getWorksheet(1); // fallback to first sheet
+  // ── Sheet selection strategy ──────────────────────────────────────────────
+  // Sheet names often have trailing spaces, are truncated (Excel's 31-char
+  // sheet-name limit), or differ from the filename in other ways.
+  // Rather than fragile name-matching, we pick the non-"All Products" sheet
+  // that has the most rows with a product code in column B (col index 1).
+  // This is always the right sheet regardless of naming quirks.
+  const candidateSheets = wb.worksheets.filter(
+    (s) => !/^all\s*products$/i.test(s.name.trim()),
+  );
 
-  if (!ws) throw new Error(`Sheet "${targetName}" not found in workbook.`);
+  let ws = candidateSheets[0]; // fallback: first non-All-Products sheet
 
+  if (candidateSheets.length > 1) {
+    // Pick the sheet with the most product-code rows
+    let bestCount = -1;
+    for (const sheet of candidateSheets) {
+      let count = 0;
+      sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+        if (rowNum <= 2) return;
+        const cell = row.getCell(2); // col B
+        if (cell.value != null && String(cell.value).trim()) count++;
+      });
+      if (count > bestCount) {
+        bestCount = count;
+        ws = sheet;
+      }
+    }
+  }
+
+  // Final fallback to first sheet if nothing found
+  if (!ws) ws = wb.worksheets[0];
+  if (!ws) throw new Error(`No usable worksheet found in ${file.name}.`);
+
+  // Read all rows into a 2-D array (0-based col index)
   const allRows: (string | null)[][] = [];
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell) => {
+      const colIndex = Number(cell.col) - 1; // ExcelJS col is 1-based
       const raw = cell.value;
-      const colIndex = Number(cell.col) - 1;
       cells[colIndex] = raw != null ? cellStr(raw) : null;
     });
     allRows.push(cells);
@@ -155,11 +147,20 @@ async function parseWorkbook(file: File): Promise<{
 
   if (allRows.length < 3) throw new Error("Sheet has no data rows.");
 
-  const headerRow = allRows[0]; // row 1 — column labels
-  const groupRow = allRows[1]; // row 2 — spec group anchors
-  const dataRows = allRows.slice(2); // rows 3+
+  const headerRow = allRows[0]; // row 1 — column labels  (A=0, B=1, …)
+  const groupRow = allRows[1]; // row 2 — spec-group anchors
+  const dataRows = allRows.slice(2); // rows 3+ — actual products
 
+  // Build: colIndex → groupName  (driven entirely by the real sheet row 2)
   const groupMap = buildGroupMap(groupRow as string[]);
+
+  // Build: colIndex → label  (driven entirely by the real sheet row 1)
+  // Columns 0-4 are identity columns; 5+ are spec columns.
+  const IDENTITY_COLS = new Set([0, 1, 2, 3, 4]);
+  const labelMap: Record<number, string> = {};
+  headerRow.forEach((h, i) => {
+    if (!IDENTITY_COLS.has(i) && h) labelMap[i] = h.trim();
+  });
 
   let lastCategory = "";
   let lastProductName = "";
@@ -170,32 +171,32 @@ async function parseWorkbook(file: File): Promise<{
   for (const row of dataRows) {
     if (!row || row.every((c) => c == null || c === "")) continue;
 
-    // Inherit sparse cells from above (merged-looking data)
+    // Inherit sparse (merged-looking) cells from the row above
     const category = row[0] || lastCategory;
     const productCode = row[1] || "";
     const csvSku = row[2] || "";
     const cloudinaryUrl = row[3] || lastCloudinaryUrl;
     const productName = row[4] || lastProductName;
 
-    // Update inherited state
     if (row[0]) lastCategory = row[0];
     if (row[4]) lastProductName = row[4];
     if (row[3]) lastCloudinaryUrl = row[3];
 
-    if (!productCode) continue; // skip rows without a product code
+    if (!productCode) continue; // skip rows with no product code
 
-    // Build spec groups
+    // Build spec groups using actual sheet headers & group anchors
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
 
-    for (const meta of FIXED_COLUMN_META) {
-      const rawVal = row[meta.colIndex];
+    for (const [colIdxStr, label] of Object.entries(labelMap)) {
+      const colIndex = Number(colIdxStr);
+      const rawVal = row[colIndex];
       if (rawVal == null || rawVal === "") continue;
 
-      // Determine group name: prefer dynamic groupMap, fallback to hint
-      const groupName = groupMap[meta.colIndex] || meta.groupHint;
+      const groupName = groupMap[colIndex];
+      if (!groupName) continue; // no group anchor found — skip
 
       if (!specsByGroup[groupName]) specsByGroup[groupName] = [];
-      specsByGroup[groupName].push({ label: meta.label, value: rawVal });
+      specsByGroup[groupName].push({ label, value: rawVal });
     }
 
     products.push({
@@ -203,7 +204,8 @@ async function parseWorkbook(file: File): Promise<{
       productCode,
       csvSku,
       cloudinaryUrl,
-      productName,
+      // ── Fix 1: fall back to "Category — ProductCode" when OCR name is empty ──
+      productName: productName || `${category} ${productCode}`.trim(),
       specs: specsByGroup,
     });
   }
@@ -213,7 +215,6 @@ async function parseWorkbook(file: File): Promise<{
 
 // ─── Firestore helpers ────────────────────────────────────────────────────────
 
-/** Find doc by field value; returns null if not found */
 async function findDoc(
   col: string,
   field: string,
@@ -225,7 +226,6 @@ async function findDoc(
   return snap.empty ? null : snap.docs[0].id;
 }
 
-/** Upsert a spec group doc; returns its ID */
 async function upsertSpecGroup(
   groupName: string,
   labels: string[],
@@ -234,7 +234,6 @@ async function upsertSpecGroup(
   const existingId = await findDoc("specs", "name", groupName);
 
   if (existingId) {
-    // Merge any new labels into items array
     const existing = (
       await getDocs(
         query(collection(db, "specs"), where("name", "==", groupName)),
@@ -253,7 +252,6 @@ async function upsertSpecGroup(
     return existingId;
   }
 
-  // Create new
   const ref = await addDoc(collection(db, "specs"), {
     name: groupName,
     items: labels.map((label) => ({ label })),
@@ -265,7 +263,6 @@ async function upsertSpecGroup(
   return ref.id;
 }
 
-/** Upsert a productfamily doc; returns its ID */
 async function upsertProductFamily(
   title: string,
   specIds: string[],
@@ -274,7 +271,6 @@ async function upsertProductFamily(
   const existingId = await findDoc("productfamilies", "title", title);
 
   if (existingId) {
-    // Merge any new spec IDs
     const existing = (
       await getDocs(
         query(collection(db, "productfamilies"), where("title", "==", title)),
@@ -345,7 +341,7 @@ export default function BulkUploader({
     ]);
   };
 
-  // ── Parse file for preview ──────────────────────────────────────────────────
+  // ── Parse files for preview ─────────────────────────────────────────────────
   const handleFileDrop = useCallback(async (files: File[]) => {
     if (!files.length) return;
 
@@ -381,7 +377,7 @@ export default function BulkUploader({
       );
       addLog(
         "info",
-        `✅ Successfully parsed ${parsedFiles.length} file(s) with ${totalProducts} total products`,
+        `✅ Parsed ${parsedFiles.length} file(s) — ${totalProducts} total products`,
       );
     } catch (err: any) {
       addLog("err", `❌ Parse error: ${err.message}`);
@@ -402,9 +398,7 @@ export default function BulkUploader({
 
   // ── Run import ──────────────────────────────────────────────────────────────
   const runImport = async () => {
-    // Flatten all products from all files
     const allProducts = uploadedFiles.flatMap((f) => f.products);
-
     if (!allProducts.length) return;
 
     setImporting(true);
@@ -417,13 +411,11 @@ export default function BulkUploader({
       `🚀 Starting import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
     );
 
-    // Pre-compute all unique spec groups & product families across all products
-    // so we can upsert them in batches before touching products.
-    const websiteList = ["Taskflow"]; // BulkUploader is Taskflow-scoped
+    const websiteList = ["Taskflow"];
 
-    // Collect all spec groups
-    const allSpecGroups: Record<string, Set<string>> = {}; // groupName → labels
-    const categoryToGroups: Record<string, Set<string>> = {}; // category → groupNames
+    // Collect all spec groups and category→groups mapping
+    const allSpecGroups: Record<string, Set<string>> = {};
+    const categoryToGroups: Record<string, Set<string>> = {};
 
     for (const p of allProducts) {
       if (!categoryToGroups[p.category])
@@ -440,8 +432,7 @@ export default function BulkUploader({
       `🗂️  Upserting ${Object.keys(allSpecGroups).length} spec group(s)...`,
     );
 
-    // Upsert spec groups → get IDs
-    const specGroupIds: Record<string, string> = {}; // groupName → firestoreId
+    const specGroupIds: Record<string, string> = {};
     for (const [groupName, labelsSet] of Object.entries(allSpecGroups)) {
       try {
         const id = await upsertSpecGroup(
@@ -456,12 +447,11 @@ export default function BulkUploader({
       }
     }
 
-    // Upsert product families
     addLog(
       "info",
       `📦 Upserting ${Object.keys(categoryToGroups).length} product family/families...`,
     );
-    const familyIds: Record<string, string> = {}; // category title → firestoreId
+    const familyIds: Record<string, string> = {};
     for (const [catTitle, groupNames] of Object.entries(categoryToGroups)) {
       const specIds = Array.from(groupNames)
         .map((g) => specGroupIds[g])
@@ -475,7 +465,6 @@ export default function BulkUploader({
       }
     }
 
-    // Import products
     addLog("info", `\n📝 Importing products...`);
 
     for (let i = 0; i < allProducts.length; i++) {
@@ -483,23 +472,26 @@ export default function BulkUploader({
       setCurrentItem(p.productCode);
 
       try {
-        // Duplicate check by itemCode on Taskflow
+        // ── Fix 2: duplicate check uses csvSku (itemCode field), NOT productCode ──
+        // itemCode in Firestore is stored as p.csvSku (the CSV SKU column)
+        const dupField = p.csvSku || p.productCode;
         const dupSnap = await getDocs(
-          query(
-            collection(db, "products"),
-            where("itemCode", "==", p.productCode),
-          ),
+          query(collection(db, "products"), where("itemCode", "==", dupField)),
         );
         if (!dupSnap.empty) {
-          addLog("skip", `⏭  SKIPPED (duplicate): ${p.productCode}`);
+          addLog(
+            "skip",
+            `⏭  SKIPPED (duplicate itemCode: ${dupField}): ${p.productCode}`,
+          );
           setStats((prev) => ({ ...prev, skipped: prev.skipped + 1 }));
           setProgress(((i + 1) / allProducts.length) * 100);
           await new Promise((r) => setTimeout(r, 20));
           continue;
         }
 
-        // Build technicalSpecs in AddNewProduct schema:
-        // [{ specGroup: string, specs: [{ name, value }] }]
+        // ── Fix 3: technicalSpecs built from dynamically parsed specs ──
+        // groupName and labels are read directly from the sheet, so they
+        // will always align correctly regardless of sheet layout.
         const technicalSpecs = Object.entries(p.specs).map(
           ([groupName, entries]) => ({
             specGroup: groupName,
@@ -507,43 +499,32 @@ export default function BulkUploader({
           }),
         );
 
-        // Slug from product code
         const slug = p.productCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+        // itemCode stored as the Product Code (column B) — matches your schema
         const payload = {
-          // Core identity — matches AddNewProduct handlePublish payload exactly
-          name: p.productName || p.productCode,
+          name: p.productName,
           shortDescription: "",
           slug,
           itemCode: p.productCode,
           regularPrice: 0,
           salePrice: 0,
-
-          // Media
           mainImage: p.cloudinaryUrl || "",
           qrCodeImage: "",
           galleryImages: [],
-
-          // Classification — matches form schema
-          productFamily: p.category, // stored as title string
-          website: websiteList, // array (matches form's website field)
+          productFamily: p.category,
+          website: websiteList,
           brand: "",
           applications: [],
-
-          // Specs — grouped, same as form
           technicalSpecs,
-
-          // SEO stub
           seo: {
-            title: p.productName || p.productCode,
+            title: p.productName,
             description: "",
             canonical: "",
             ogImage: p.cloudinaryUrl || "",
             robots: "index, follow",
             lastUpdated: new Date().toISOString(),
           },
-
-          // Timestamps & meta
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           importSource: "bulk-uploader",
@@ -558,7 +539,7 @@ export default function BulkUploader({
       }
 
       setProgress(((i + 1) / allProducts.length) * 100);
-      await new Promise((r) => setTimeout(r, 40)); // breathing room
+      await new Promise((r) => setTimeout(r, 40));
     }
 
     setImporting(false);
@@ -578,7 +559,6 @@ export default function BulkUploader({
     setCurrentItem("");
   };
 
-  // ── Grouped preview ──────────────────────────────────────────────────────────
   const allProducts = uploadedFiles.flatMap((f) => f.products);
 
   const categorySummary = allProducts.reduce<Record<string, number>>(
@@ -596,7 +576,6 @@ export default function BulkUploader({
     categories: new Set(file.products.map((p) => p.category)),
   }));
 
-  // ── Log colour helper ────────────────────────────────────────────────────────
   const logColor = (type: string) => {
     if (type === "ok") return "text-emerald-400";
     if (type === "err") return "text-red-400";
@@ -636,8 +615,8 @@ export default function BulkUploader({
               <DialogDescription className="text-xs mt-0.5">
                 Drop{" "}
                 <code className="font-mono bg-muted px-1 rounded">.xlsx</code>{" "}
-                files (multiple allowed) — specs &amp; product families are
-                auto-created if missing.
+                files — specs &amp; product families are auto-created if
+                missing.
               </DialogDescription>
             </div>
           </div>
@@ -672,7 +651,7 @@ export default function BulkUploader({
 
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-6 space-y-5">
-            {/* ── Step: IDLE — dropzone ── */}
+            {/* ── IDLE ── */}
             {step === "idle" && (
               <>
                 <div className="rounded-xl border border-dashed bg-muted/20 p-3 flex items-start gap-2 text-xs text-muted-foreground">
@@ -680,14 +659,15 @@ export default function BulkUploader({
                   <span>
                     The sheet name must match the filename (e.g.{" "}
                     <code className="font-mono bg-muted px-1 rounded">
-                      LED_SURFACE_SLIM_DOWNLIGHT.xlsx
+                      LED_EMERGENCY_LIGHT.xlsx
                     </code>{" "}
                     → sheet{" "}
                     <code className="font-mono bg-muted px-1 rounded">
-                      LED SURFACE SLIM DOWNLIGHT
+                      LED EMERGENCY LIGHT
                     </code>
                     ). Spec groups &amp; product families are upserted
-                    automatically.
+                    automatically. Column headers and group labels are read
+                    directly from the sheet.
                   </span>
                 </div>
 
@@ -730,18 +710,18 @@ export default function BulkUploader({
                   </div>
                 </div>
 
-                {/* Schema reminder */}
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div className="rounded-lg border p-3 space-y-1.5 bg-card">
                     <p className="font-semibold flex items-center gap-1.5 text-primary">
-                      <Layers className="w-3.5 h-3.5" /> Required Columns
+                      <Layers className="w-3.5 h-3.5" /> Required Columns (Row
+                      1)
                     </p>
                     {[
-                      "Category",
-                      "Product Code",
-                      "CSV SKU",
-                      "Cloudinary URL",
-                      "Product Name (OCR)",
+                      "A — Category",
+                      "B — Product Code",
+                      "C — CSV SKU",
+                      "D — Cloudinary URL",
+                      "E — Product Name (OCR)",
                     ].map((c) => (
                       <div key={c} className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
@@ -755,8 +735,9 @@ export default function BulkUploader({
                       missing
                     </p>
                     {[
-                      "specs (by group label in row 2)",
-                      "productfamilies (by Category col)",
+                      "Spec groups (from row 2 group anchors)",
+                      "Product families (from Category column)",
+                      "Product name (Category + Product Code if OCR empty)",
                     ].map((c) => (
                       <div key={c} className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
@@ -768,7 +749,7 @@ export default function BulkUploader({
               </>
             )}
 
-            {/* ── Step: PREVIEW ── */}
+            {/* ── PREVIEW ── */}
             {step === "preview" && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -807,7 +788,7 @@ export default function BulkUploader({
                     )}
                   </button>
                   {showFiles && (
-                    <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                    <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1">
                       {fileSummary.map((file, idx) => (
                         <div
                           key={idx}
@@ -846,7 +827,7 @@ export default function BulkUploader({
                   )}
                 </div>
 
-                {/* Category summary across all files */}
+                {/* Category summary */}
                 <div className="space-y-2">
                   <button
                     onClick={() => setShowCategories(!showCategories)}
@@ -862,7 +843,7 @@ export default function BulkUploader({
                     )}
                   </button>
                   {showCategories && (
-                    <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                    <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1">
                       {Object.entries(categorySummary).map(([cat, count]) => {
                         const groups = new Set(
                           allProducts
@@ -900,7 +881,7 @@ export default function BulkUploader({
                   )}
                 </div>
 
-                {/* Product list across all files */}
+                {/* Product list */}
                 <div className="space-y-2">
                   <button
                     onClick={() => setShowProducts(!showProducts)}
@@ -921,7 +902,7 @@ export default function BulkUploader({
                         <span className="text-right pr-4">Item Code</span>
                         <span className="text-right">Image</span>
                       </div>
-                      <div className="divide-y max-h-[160px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                      <div className="divide-y max-h-[160px] overflow-y-auto">
                         {uploadedFiles.map((file, fileIdx) =>
                           file.products.map((p, prodIdx) => (
                             <div
@@ -956,7 +937,6 @@ export default function BulkUploader({
                           )),
                         )}
                       </div>
-                      {/* Solid white gradient at bottom */}
                       <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white via-white/90 to-transparent pointer-events-none" />
                     </div>
                   )}
@@ -964,10 +944,9 @@ export default function BulkUploader({
               </div>
             )}
 
-            {/* ── Step: IMPORTING / DONE ── */}
+            {/* ── IMPORTING / DONE ── */}
             {(step === "importing" || step === "done") && (
               <div className="space-y-5">
-                {/* Progress */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm font-semibold">
                     <span className="flex items-center gap-2 text-slate-600">
@@ -987,7 +966,6 @@ export default function BulkUploader({
                   <Progress value={progress} className="h-2.5" />
                 </div>
 
-                {/* Stats */}
                 <div className="grid grid-cols-4 gap-2.5">
                   {[
                     {
@@ -1031,7 +1009,6 @@ export default function BulkUploader({
                   ))}
                 </div>
 
-                {/* Console */}
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 tracking-widest">
                     <Terminal className="w-3 h-3" /> Import Console
@@ -1059,7 +1036,7 @@ export default function BulkUploader({
           </div>
         </ScrollArea>
 
-        {/* ── Footer actions ── */}
+        {/* ── Footer ── */}
         <div className="border-t px-6 py-3 flex justify-between items-center shrink-0 bg-muted/30">
           <Button
             variant="ghost"

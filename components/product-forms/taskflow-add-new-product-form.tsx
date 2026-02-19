@@ -65,11 +65,8 @@ interface SpecValue {
 }
 
 const DEFAULT_WEBSITE = "Taskflow";
-const SELECTED_WEBS = [DEFAULT_WEBSITE]; // Stable module-level constant — never recreated
+const SELECTED_WEBS = [DEFAULT_WEBSITE];
 
-// --- MODULE-LEVEL HELPER ---
-// Defined outside the component so onSnapshot callbacks always reference
-// the same function — prevents the "setState inside useEffect" infinite loop.
 function mergeWithPending(
   prev: MasterItem[],
   snap: any,
@@ -124,11 +121,9 @@ export default function TaskflowAddNewProduct({
   const [availableBrands, setAvailableBrands] = useState<MasterItem[]>([]);
   const [availableApps, setAvailableApps] = useState<MasterItem[]>([]);
 
-  // NEW ITEM TRACKING
   const pendingItemsRef = useRef<PendingItem[]>([]);
 
-  // SELECTIONS - using IDs
-  // selectedWebs = SELECTED_WEBS (module-level constant) — used directly below
+  // SELECTIONS
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
@@ -146,7 +141,6 @@ export default function TaskflowAddNewProduct({
   const [existingQrImage, setExistingQrImage] = useState("");
 
   // --- 1. FETCH MASTER DATA ---
-  // SELECTED_WEBS is a stable module-level constant → dep array is []
   useEffect(() => {
     const qFilter = where("websites", "array-contains-any", SELECTED_WEBS);
 
@@ -215,60 +209,29 @@ export default function TaskflowAddNewProduct({
 
     const fetchCategorySpecs = async () => {
       try {
-        console.log("[v0] Fetching specs for product families:", selectedCats);
         const specIdsFromCategories = new Set<string>();
 
-        // Fetch each selected product family to get their spec IDs
         for (const catId of selectedCats) {
           const catDoc = await getDoc(doc(db, "productfamilies", catId));
-          console.log(
-            "[v0] Product family doc exists?",
-            catDoc.exists(),
-            "catId:",
-            catId,
-          );
           if (catDoc.exists()) {
             const catData = catDoc.data();
-            console.log("[v0] Full product family data:", catData);
-            console.log("[v0] Specifications field:", catData?.specifications);
             if (
               catData.specifications &&
               Array.isArray(catData.specifications)
             ) {
-              console.log(
-                "[v0] Product family",
-                catId,
-                "specs:",
-                catData.specifications,
-              );
               catData.specifications.forEach((specId: string) => {
                 specIdsFromCategories.add(specId);
               });
-            } else {
-              console.log(
-                "[v0] Product family",
-                catId,
-                "has no specifications array",
-              );
             }
-          } else {
-            console.log("[v0] Product family document not found:", catId);
           }
         }
 
-        console.log(
-          "[v0] All spec IDs from product families:",
-          Array.from(specIdsFromCategories),
-        );
-
         if (specIdsFromCategories.size === 0) {
-          console.log("[v0] No specs found for selected product families");
           setAvailableSpecs([]);
           setSpecsLoading(false);
           return;
         }
 
-        // Listen to the specs collection and filter by our collected IDs
         const unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const allSpecItems: SpecItem[] = [];
 
@@ -279,7 +242,6 @@ export default function TaskflowAddNewProduct({
               const specGroupName = data.name || "Unnamed Group";
               const specGroupId = doc.id;
 
-              // Extract individual spec items from the items array
               if (data.items && Array.isArray(data.items)) {
                 data.items.forEach((item: any) => {
                   if (item.label) {
@@ -294,7 +256,6 @@ export default function TaskflowAddNewProduct({
               }
             });
 
-          console.log("[v0] Fetched spec items:", allSpecItems);
           setAvailableSpecs(allSpecItems);
           setSpecsLoading(false);
         });
@@ -314,8 +275,6 @@ export default function TaskflowAddNewProduct({
       setSpecsLoading(false);
     };
   }, [selectedCats]);
-
-  // mergeWithPending is defined at module level (below) to avoid unstable closure references
 
   // --- 2. LOAD EDIT DATA ---
   useEffect(() => {
@@ -358,17 +317,12 @@ export default function TaskflowAddNewProduct({
   // --- 3. LOAD PRODUCT FAMILY AFTER CATEGORIES ARE FETCHED ---
   useEffect(() => {
     if (editData && availableCats.length > 0) {
-      // Handle productFamily - find the ID by matching the title
       if (editData.productFamily) {
-        // productFamily is the title, find the matching ID from availableCats
         const matchingCat = availableCats.find(
           (cat) => cat.name === editData.productFamily,
         );
-        if (matchingCat) {
-          setSelectedCats([matchingCat.id]);
-        }
+        if (matchingCat) setSelectedCats([matchingCat.id]);
       } else if (editData.category) {
-        // Backward compatibility - category is the ID
         setSelectedCats([editData.category]);
       }
     }
@@ -397,7 +351,6 @@ export default function TaskflowAddNewProduct({
     if (!name.trim()) return;
     const cleanName = name.trim();
 
-    // 1. DUPLICATE CHECK (LOCAL)
     let listToCheck: MasterItem[] = [];
     if (type === "brand") listToCheck = availableBrands;
     if (type === "category") listToCheck = availableCats;
@@ -412,7 +365,6 @@ export default function TaskflowAddNewProduct({
       return;
     }
 
-    // 2. Add to pending ref
     pendingItemsRef.current.push({
       type,
       name: cleanName,
@@ -420,7 +372,6 @@ export default function TaskflowAddNewProduct({
       field: dbField,
     });
 
-    // 3. Update local state immediately
     const newItem: MasterItem = {
       id: `temp-${cleanName}`,
       name: cleanName,
@@ -447,7 +398,6 @@ export default function TaskflowAddNewProduct({
     const publishToast = toast.loading("Validating...");
 
     try {
-      // A. CHECK FOR DUPLICATE PRODUCT NAME
       const dupQuery = query(
         collection(db, "products"),
         where("name", "==", productName),
@@ -456,7 +406,6 @@ export default function TaskflowAddNewProduct({
 
       const isDuplicate = dupSnap.docs.some((docSnap) => {
         if (editData && docSnap.id === editData.id) return false;
-
         const data = docSnap.data();
         const productWebsites = data.website || [];
         return productWebsites.some((w: string) => SELECTED_WEBS.includes(w));
@@ -469,7 +418,6 @@ export default function TaskflowAddNewProduct({
         return;
       }
 
-      // B. SAVE PENDING TAGS AND TRACK NEW IDs
       const pendingIdMap: Record<string, string> = {};
 
       if (pendingItemsRef.current.length > 0) {
@@ -488,7 +436,6 @@ export default function TaskflowAddNewProduct({
             payload.imageUrl = "";
             payload.description = "";
           }
-
           if (item.type === "category") {
             payload.isActive = true;
             payload.imageUrl = "";
@@ -497,14 +444,12 @@ export default function TaskflowAddNewProduct({
           }
 
           const docRef = await addDoc(collection(db, item.collection), payload);
-          // Map temp ID to real Firestore ID
           pendingIdMap[`temp-${item.name}`] = docRef.id;
         }
 
         pendingItemsRef.current = [];
       }
 
-      // C. UPLOAD IMAGES
       toast.loading("Uploading images...", { id: publishToast });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -516,13 +461,11 @@ export default function TaskflowAddNewProduct({
         galleryImages.map(uploadToCloudinary),
       );
 
-      // D. PREPARE SPECS - Group by specGroup
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
 
       Object.entries(specValues).forEach(([key, value]) => {
         if (value.trim() !== "") {
-          // Find the spec item to get the specGroup
           const specItem = availableSpecs.find(
             (spec) =>
               `${spec.specGroupId}-${spec.label}` === key ||
@@ -530,9 +473,8 @@ export default function TaskflowAddNewProduct({
           );
 
           if (specItem) {
-            if (!specsGrouped[specItem.specGroup]) {
+            if (!specsGrouped[specItem.specGroup])
               specsGrouped[specItem.specGroup] = [];
-            }
             specsGrouped[specItem.specGroup].push({
               name: specItem.label,
               value: value,
@@ -542,26 +484,15 @@ export default function TaskflowAddNewProduct({
       });
 
       const technicalSpecs = Object.entries(specsGrouped).map(
-        ([specGroup, specs]) => ({
-          specGroup,
-          specs,
-        }),
+        ([specGroup, specs]) => ({ specGroup, specs }),
       );
 
-      // E. RESOLVE IDs (replace temp IDs with real ones)
-      const resolveCategoryId = (catId: string) => {
-        return pendingIdMap[catId] || catId;
-      };
+      const resolveCategoryId = (catId: string) => pendingIdMap[catId] || catId;
+      const resolveBrandId = (brandId: string) =>
+        pendingIdMap[brandId] || brandId;
+      const resolveAppIds = (appIds: string[]) =>
+        appIds.map((id) => pendingIdMap[id] || id);
 
-      const resolveBrandId = (brandId: string) => {
-        return pendingIdMap[brandId] || brandId;
-      };
-
-      const resolveAppIds = (appIds: string[]) => {
-        return appIds.map((id) => pendingIdMap[id] || id);
-      };
-
-      // Get product family title from the fetched data
       const resolvedCategoryId = selectedCats[0]
         ? resolveCategoryId(selectedCats[0])
         : "";
@@ -569,7 +500,6 @@ export default function TaskflowAddNewProduct({
         ? availableCats.find((cat) => cat.id === selectedCats[0])?.name || ""
         : "";
 
-      // F. SAVE PRODUCT
       const payload = {
         name: productName,
         shortDescription: shortDesc,
@@ -598,10 +528,7 @@ export default function TaskflowAddNewProduct({
 
       toast.success("Product Saved Successfully!", { id: publishToast });
 
-      // G. CLOSE COMPONENT
-      if (onFinished) {
-        onFinished();
-      }
+      if (onFinished) onFinished();
     } catch (err) {
       console.error(err);
       toast.error("Error saving product", { id: publishToast });
@@ -610,7 +537,6 @@ export default function TaskflowAddNewProduct({
     }
   };
 
-  // Drag & Drop Hooks
   const onDropMain = useCallback((files: File[]) => {
     if (files[0]) setMainImage(files[0]);
   }, []);
@@ -628,9 +554,7 @@ export default function TaskflowAddNewProduct({
   // Group specs by specGroup for organized display
   const groupedSpecs = availableSpecs.reduce(
     (acc, spec) => {
-      if (!acc[spec.specGroup]) {
-        acc[spec.specGroup] = [];
-      }
+      if (!acc[spec.specGroup]) acc[spec.specGroup] = [];
       acc[spec.specGroup].push(spec);
       return acc;
     },
@@ -640,7 +564,7 @@ export default function TaskflowAddNewProduct({
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 min-h-screen">
       <div className="md:col-span-2 space-y-6">
-        {/* UNIFIED MEDIA ASSETS CARD */}
+        {/* MEDIA ASSETS CARD */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -650,7 +574,7 @@ export default function TaskflowAddNewProduct({
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 1. Main Image */}
+              {/* Main Image */}
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">
                   Main Product Image
@@ -693,7 +617,7 @@ export default function TaskflowAddNewProduct({
                 </div>
               </div>
 
-              {/* 2. QR Code */}
+              {/* QR Code */}
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">
                   QR Code
@@ -711,7 +635,7 @@ export default function TaskflowAddNewProduct({
                 />
               </div>
 
-              {/* 3. Gallery Dropzone */}
+              {/* Gallery Dropzone */}
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">
                   Add Gallery Images
@@ -734,7 +658,6 @@ export default function TaskflowAddNewProduct({
               </div>
             </div>
 
-            {/* Bottom Row: Gallery Grid */}
             {(existingGalleryImages.length > 0 || galleryImages.length > 0) && (
               <div className="pt-4 border-t">
                 <Label className="text-xs font-medium text-muted-foreground mb-3 block">
@@ -819,7 +742,7 @@ export default function TaskflowAddNewProduct({
               />
             </div>
 
-            {/* SPECS SECTION - Only shown when category is selected */}
+            {/* SPECS SECTION */}
             {selectedCats.length > 0 && (
               <div className="pt-6 border-t">
                 <div className="flex items-center justify-between mb-4">
@@ -846,40 +769,54 @@ export default function TaskflowAddNewProduct({
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {Object.entries(groupedSpecs).map(([groupName, specs]) => (
-                      <div key={groupName} className="space-y-3">
-                        <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
-                          <Zap className="h-3 w-3" />
-                          {groupName}
-                        </h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-5">
-                          {specs.map((spec) => {
-                            const specKey = `${spec.specGroupId}-${spec.label}`;
+                    {Object.entries(groupedSpecs).map(([groupName, specs]) => {
+                      // ── In edit mode, only show specs that have a saved value ──
+                      const visibleSpecs = editData
+                        ? specs.filter((spec) => {
+                            const key = `${spec.specGroupId}-${spec.label}`;
                             return (
-                              <div
-                                key={spec.id}
-                                className="space-y-1.5 p-3 rounded-lg border bg-card"
-                              >
-                                <Label className="text-xs font-medium">
-                                  {spec.label}
-                                </Label>
-                                <Input
-                                  placeholder={`Enter ${spec.label}...`}
-                                  className="h-9 text-sm"
-                                  value={specValues[specKey] || ""}
-                                  onChange={(e) =>
-                                    setSpecValues((prev) => ({
-                                      ...prev,
-                                      [specKey]: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
+                              specValues[key] && specValues[key].trim() !== ""
                             );
-                          })}
+                          })
+                        : specs;
+
+                      if (visibleSpecs.length === 0) return null;
+
+                      return (
+                        <div key={groupName} className="space-y-3">
+                          <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
+                            <Zap className="h-3 w-3" />
+                            {groupName}
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-5">
+                            {visibleSpecs.map((spec) => {
+                              const specKey = `${spec.specGroupId}-${spec.label}`;
+                              return (
+                                <div
+                                  key={spec.id}
+                                  className="space-y-1.5 p-3 rounded-lg border bg-card"
+                                >
+                                  <Label className="text-xs font-medium">
+                                    {spec.label}
+                                  </Label>
+                                  <Input
+                                    placeholder={`Enter ${spec.label}...`}
+                                    className="h-9 text-sm"
+                                    value={specValues[specKey] || ""}
+                                    onChange={(e) =>
+                                      setSpecValues((prev) => ({
+                                        ...prev,
+                                        [specKey]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1057,9 +994,7 @@ function SidebarList({
                   onClick={(e) => e.stopPropagation()}
                 />
                 <span
-                  className={`text-sm font-medium ${
-                    isSelected ? "text-primary" : "text-foreground"
-                  } ${item.isTemp ? "italic" : ""}`}
+                  className={`text-sm font-medium ${isSelected ? "text-primary" : "text-foreground"} ${item.isTemp ? "italic" : ""}`}
                 >
                   {item.name} {item.isTemp && "*"}
                 </span>
@@ -1069,7 +1004,6 @@ function SidebarList({
         )}
       </div>
 
-      {/* Add New Button */}
       {!disabled && (
         <div className="pt-2 border-t">
           <AddCustomItem
