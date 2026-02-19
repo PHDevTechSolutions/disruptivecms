@@ -21,6 +21,7 @@ import {
   Settings,
   Settings2Icon,
   BriefcaseBusiness,
+  Trash
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
@@ -89,12 +90,21 @@ const allNavItems = {
       { title: "All Users", url: "#" },
       { title: "Change Password", url: "#" },
     ],
+
+  },
+  "recycle-bin": {
+    title: "Recycle Bin",
+    url: "/recycle-bin",
+    icon: <Trash />,
+    items: [
+      { title: "Deleted Products", url: "/recycle-bin" },
+    ],
   },
 };
 
 // Role-based navigation mapping
 const roleNavMap: Record<string, string[]> = {
-  admin: ["products", "inquiries", "jobs", "contents", "settings"],
+  admin: ["products", "inquiries", "jobs", "contents", "settings", "recycle-bin"],
   warehouse: ["products"],
   hr: ["jobs"],
   seo: ["contents"],
