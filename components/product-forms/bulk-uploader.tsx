@@ -26,8 +26,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Upload,
@@ -41,18 +39,30 @@ import {
   ChevronRight,
   Layers,
   RefreshCw,
-  Info,
   XCircle,
   FileText,
   Tag,
   Package,
-  Globe,
   Eye,
   EyeOff,
+  ShoppingBag,
+  ImageOff,
 } from "lucide-react";
+
+// ─── Env ──────────────────────────────────────────────────────────────────────
+
+const CLOUDINARY_CLOUD_NAME =
+  process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
+const CLOUDINARY_UPLOAD_PRESET =
+  process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? "taskflow_preset";
+const OWN_CLOUDINARY_BASE = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type ImportSource = "excel" | "shopify";
+type ShopifyMode = "draft" | "public";
+
+// ── Excel types ──
 interface ParsedProduct {
   category: string;
   productCode: string;
@@ -62,16 +72,63 @@ interface ParsedProduct {
   specs: Record<string, { label: string; value: string }[]>;
 }
 
+// ── Shopify types ──
+interface ShopifyImage {
+  id: number;
+  src: string;
+  alt: string | null;
+  position: number;
+}
+interface ShopifyVariant {
+  id: number;
+  sku: string;
+  price: string;
+  compare_at_price: string | null;
+  title: string;
+  option1: string | null;
+  option2: string | null;
+  option3: string | null;
+}
+interface ShopifyMetafield {
+  namespace: string;
+  key: string;
+  value: string;
+  type: string;
+}
+interface ShopifyProduct {
+  id: number;
+  title: string;
+  handle: string;
+  body_html: string;
+  product_type: string;
+  vendor: string;
+  status: "active" | "draft" | "archived";
+  tags: string;
+  images: ShopifyImage[];
+  variants: ShopifyVariant[];
+  options: { name: string; values: string[] }[];
+  metafields?: ShopifyMetafield[];
+}
+interface RawSpec {
+  groupName: string | null;
+  label: string;
+  value: string;
+}
+interface TechnicalSpec {
+  specGroup: string;
+  specs: { name: string; value: string }[];
+}
+
+// ── Shared ──
 interface ImportStats {
   total: number;
   success: number;
   failed: number;
   skipped: number;
 }
-
 type PreviewTab = "files" | "categories" | "products";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Excel helpers ────────────────────────────────────────────────────────────
 
 function cellStr(v: unknown): string {
   if (v == null) return "";
@@ -192,7 +249,109 @@ async function parseWorkbook(
   return { sheetName: ws.name, products };
 }
 
-// ─── Firestore helpers ────────────────────────────────────────────────────────
+// ─── Shopify helpers ──────────────────────────────────────────────────────────
+
+function toSlugShopify(str: string): string {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function parsePrice(raw: string | null | undefined): number {
+  if (!raw) return 0;
+  const n = parseFloat(raw.replace(/[^0-9.]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+async function uploadUrlToCloudinary(url: string): Promise<string> {
+  if (!url) return "";
+  if (url.startsWith(OWN_CLOUDINARY_BASE)) return url;
+  const driveMatch = url.match(
+    /drive\.google\.com\/(?:file\/d\/|open\?id=)([\w-]+)/,
+  );
+  const resolved = driveMatch
+    ? `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`
+    : url;
+  const fd = new FormData();
+  fd.append("file", resolved);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: "POST", body: fd },
+  );
+  if (!res.ok)
+    throw new Error(
+      `Cloudinary upload failed (${res.status}) for: ${resolved}`,
+    );
+  return (await res.json()).secure_url as string;
+}
+
+async function uploadManyUrls(
+  urls: string[],
+  concurrency = 4,
+): Promise<string[]> {
+  const out: string[] = new Array(urls.length).fill("");
+  for (let i = 0; i < urls.length; i += concurrency) {
+    const chunk = urls.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(chunk.map(uploadUrlToCloudinary));
+    settled.forEach((r, j) => {
+      if (r.status === "fulfilled") out[i + j] = r.value;
+      else console.warn("[shopify-import] image skipped:", chunk[j], r.reason);
+    });
+  }
+  return out.filter(Boolean);
+}
+
+function extractRawSpecs(product: ShopifyProduct): RawSpec[] {
+  const specs: RawSpec[] = [];
+  const metafields = product.metafields ?? [];
+  for (const mf of metafields) {
+    if (!mf.value) continue;
+    const isUngrouped =
+      !mf.namespace || mf.namespace === "custom" || mf.namespace === "global";
+    specs.push({
+      groupName: isUngrouped ? null : mf.namespace.toUpperCase(),
+      label: mf.key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      value: mf.value,
+    });
+  }
+  const OPTION_KEYS = ["option1", "option2", "option3"] as const;
+  const primaryVariant = product.variants[0];
+  for (let i = 0; i < product.options.length; i++) {
+    const option = product.options[i];
+    if (
+      option.name.toLowerCase() === "title" &&
+      option.values[0] === "Default Title"
+    )
+      continue;
+    const optionKey = OPTION_KEYS[i];
+    const rawValue =
+      (optionKey && primaryVariant?.[optionKey]) ?? option.values[0] ?? "";
+    if (!rawValue) continue;
+    const parts = option.name.split("/");
+    if (parts.length >= 2) {
+      specs.push({
+        groupName: parts[0].trim().toUpperCase(),
+        label: parts.slice(1).join("/").trim(),
+        value: rawValue,
+      });
+    } else {
+      specs.push({ groupName: null, label: option.name, value: rawValue });
+    }
+  }
+  return specs;
+}
+
+// ─── Shared Firestore helpers ─────────────────────────────────────────────────
 
 async function findDoc(
   col: string,
@@ -208,52 +367,56 @@ async function findDoc(
 async function upsertSpecGroup(
   groupName: string,
   labels: string[],
-  websites: string[],
 ): Promise<string> {
   const existingId = await findDoc("specs", "name", groupName);
   if (existingId) {
-    const existing = (
-      await getDocs(
-        query(collection(db, "specs"), where("name", "==", groupName)),
-      )
-    ).docs[0];
-    const existingItems: { label: string }[] = existing.data().items || [];
-    const existingLabels = new Set(existingItems.map((i) => i.label));
-    const newItems = [...existingItems];
-    for (const label of labels) {
-      if (!existingLabels.has(label)) newItems.push({ label });
-    }
+    const snap = await getDocs(
+      query(collection(db, "specs"), where("name", "==", groupName)),
+    );
+    const existing = snap.docs[0];
+    const items: { label: string }[] = existing.data().items ?? [];
+    const set = new Set(items.map((i) => i.label));
+    const merged = [
+      ...items,
+      ...labels.filter((l) => !set.has(l)).map((l) => ({ label: l })),
+    ];
     await updateDoc(doc(db, "specs", existingId), {
-      items: newItems,
+      items: merged,
       updatedAt: serverTimestamp(),
     });
     return existingId;
   }
   const ref = await addDoc(collection(db, "specs"), {
     name: groupName,
-    items: labels.map((label) => ({ label })),
+    items: labels.map((l) => ({ label: l })),
     isActive: true,
-    websites,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
+async function upsertStandaloneSpecItem(label: string): Promise<void> {
+  const existingId = await findDoc("specItems", "label", label);
+  if (existingId) return;
+  await addDoc(collection(db, "specItems"), {
+    label,
+    createdAt: serverTimestamp(),
+  });
+}
+
 async function upsertProductFamily(
   title: string,
-  specIds: string[],
-  websites: string[],
+  specGroupIds: string[],
 ): Promise<string> {
   const existingId = await findDoc("productfamilies", "title", title);
   if (existingId) {
-    const existing = (
-      await getDocs(
-        query(collection(db, "productfamilies"), where("title", "==", title)),
-      )
-    ).docs[0];
-    const existingSpecs: string[] = existing.data().specifications || [];
-    const merged = Array.from(new Set([...existingSpecs, ...specIds]));
+    const snap = await getDocs(
+      query(collection(db, "productfamilies"), where("title", "==", title)),
+    );
+    const existing = snap.docs[0];
+    const existingSpecs: string[] = existing.data().specifications ?? [];
+    const merged = Array.from(new Set([...existingSpecs, ...specGroupIds]));
     await updateDoc(doc(db, "productfamilies", existingId), {
       specifications: merged,
       updatedAt: serverTimestamp(),
@@ -265,21 +428,130 @@ async function upsertProductFamily(
     description: "",
     imageUrl: "",
     isActive: true,
-    specifications: specIds,
-    websites,
+    specifications: specGroupIds,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
-async function checkDuplicate(
+async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
+  technicalSpecs: TechnicalSpec[];
+  specGroupIds: string[];
+}> {
+  const grouped = new Map<string, { name: string; value: string }[]>();
+  const ungrouped: { name: string; value: string }[] = [];
+  for (const spec of rawSpecs) {
+    if (spec.groupName) {
+      if (!grouped.has(spec.groupName)) grouped.set(spec.groupName, []);
+      grouped
+        .get(spec.groupName)!
+        .push({ name: spec.label, value: spec.value });
+    } else {
+      ungrouped.push({ name: spec.label, value: spec.value });
+    }
+  }
+  const specGroupIds: string[] = [];
+  const technicalSpecs: TechnicalSpec[] = [];
+  for (const [groupName, entries] of grouped.entries()) {
+    const id = await upsertSpecGroup(
+      groupName,
+      entries.map((e) => e.name),
+    );
+    specGroupIds.push(id);
+    technicalSpecs.push({ specGroup: groupName, specs: entries });
+  }
+  if (ungrouped.length > 0) {
+    await Promise.all(ungrouped.map((s) => upsertStandaloneSpecItem(s.name)));
+    const UNGROUPED = "UNGROUPED SPECIFICATIONS";
+    const id = await upsertSpecGroup(
+      UNGROUPED,
+      ungrouped.map((s) => s.name),
+    );
+    specGroupIds.push(id);
+    technicalSpecs.push({ specGroup: UNGROUPED, specs: ungrouped });
+  }
+  return { technicalSpecs, specGroupIds };
+}
+
+// Always saves as "draft" in our system regardless of Shopify status
+async function normalizeShopifyProduct(
+  product: ShopifyProduct,
+  log: (msg: string) => void,
+) {
+  const pv = product.variants[0];
+  const ecoItemCode = pv?.sku?.trim() || String(product.id);
+  const productFamily = (
+    product.product_type?.trim() || "UNCATEGORISED"
+  ).toUpperCase();
+  const brand = product.vendor?.trim() || "";
+  const itemDescription = product.title.trim();
+  const shortDescription = stripHtml(product.body_html ?? "").slice(0, 250);
+  const slug = toSlugShopify(product.handle || itemDescription);
+
+  const rawCompare = parsePrice(pv?.compare_at_price);
+  const rawPrice = parsePrice(pv?.price);
+  const regularPrice = rawCompare > rawPrice ? rawCompare : rawPrice;
+  const salePrice = rawCompare > rawPrice ? rawPrice : 0;
+
+  log(`  → Uploading images for "${itemDescription}"...`);
+  const sortedImages = [...product.images].sort(
+    (a, b) => a.position - b.position,
+  );
+  const uploaded = await uploadManyUrls(sortedImages.map((img) => img.src));
+  const mainImage = uploaded[0] ?? "";
+  const rawImage = uploaded[1] ?? "";
+  const galleryImages = uploaded.slice(2);
+
+  log(`  → Extracting specs...`);
+  const rawSpecs = extractRawSpecs(product);
+  log(`  → Resolving ${rawSpecs.length} spec(s)...`);
+  const { technicalSpecs, specGroupIds } = await resolveShopifySpecs(rawSpecs);
+
+  log(`  → Upserting product family "${productFamily}"...`);
+  await upsertProductFamily(productFamily, specGroupIds);
+
+  return {
+    productClass: "" as const,
+    itemDescription,
+    shortDescription,
+    slug,
+    ecoItemCode,
+    litItemCode: "",
+    regularPrice,
+    salePrice,
+    technicalSpecs,
+    mainImage,
+    rawImage,
+    qrCodeImage: "",
+    galleryImages,
+    website: [] as string[],
+    websites: [] as string[],
+    productFamily,
+    brand,
+    applications: [] as string[],
+    // Always draft regardless of Shopify status
+    status: "draft" as const,
+    seo: {
+      itemDescription,
+      description: shortDescription,
+      canonical: "",
+      ogImage: mainImage,
+      robots: "index, follow",
+      lastUpdated: new Date().toISOString(),
+    },
+    importSource: "shopify-importer" as const,
+    shopifyProductId: product.id,
+  };
+}
+
+async function checkExcelDuplicate(
   itemCode: string,
 ): Promise<{ isDuplicate: boolean; reason: string }> {
-  const byItemCode = await getDocs(
+  const snap = await getDocs(
     query(collection(db, "products"), where("itemCode", "==", itemCode)),
   );
-  if (!byItemCode.empty)
+  if (!snap.empty)
     return { isDuplicate: true, reason: `itemCode "${itemCode}"` };
   return { isDuplicate: false, reason: "" };
 }
@@ -365,7 +637,7 @@ function FilesPanel({
   );
 }
 
-function CategoriesPanel({
+function ExcelCategoriesPanel({
   categorySummary,
   allProducts,
 }: {
@@ -406,21 +678,19 @@ function CategoriesPanel({
   );
 }
 
-function ProductsPanel({
+function ExcelProductsPanel({
   uploadedFiles,
 }: {
   uploadedFiles: { name: string; products: ParsedProduct[] }[];
 }) {
   return (
     <div className="h-full flex flex-col rounded-lg border overflow-hidden">
-      {/* Sticky header */}
       <div className="grid grid-cols-[1fr_110px_90px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
         <span>Product / Code</span>
         <span>File</span>
         <span>Item Code</span>
         <span className="text-center">Img</span>
       </div>
-      {/* Scrollable rows */}
       <div className="flex-1 overflow-y-auto divide-y">
         {uploadedFiles.map((file, fileIdx) =>
           file.products.map((p, prodIdx) => (
@@ -458,6 +728,79 @@ function ProductsPanel({
   );
 }
 
+function ShopifyCategoriesPanel({ products }: { products: ShopifyProduct[] }) {
+  const summary = products.reduce<Record<string, number>>((acc, p) => {
+    const fam = (p.product_type?.trim() || "UNCATEGORISED").toUpperCase();
+    acc[fam] = (acc[fam] || 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <div className="h-full overflow-y-auto space-y-2 pr-1">
+      {Object.entries(summary).map(([cat, count]) => (
+        <div
+          key={cat}
+          className="rounded-lg border bg-card p-3 flex items-center justify-between"
+        >
+          <div>
+            <p className="text-sm font-semibold">{cat}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Product family
+            </p>
+          </div>
+          <Badge variant="secondary" className="text-xs">
+            {count} products
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ShopifyProductsPanel({ products }: { products: ShopifyProduct[] }) {
+  return (
+    <div className="h-full flex flex-col rounded-lg border overflow-hidden">
+      <div className="grid grid-cols-[1fr_120px_100px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
+        <span>Title</span>
+        <span>Family</span>
+        <span>SKU</span>
+        <span className="text-center">Img</span>
+      </div>
+      <div className="flex-1 overflow-y-auto divide-y">
+        {products.map((p) => {
+          const sku = p.variants[0]?.sku || "—";
+          const family = (p.product_type?.trim() || "—").toUpperCase();
+          return (
+            <div
+              key={p.id}
+              className="grid grid-cols-[1fr_120px_100px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
+            >
+              <div className="min-w-0 pr-2">
+                <p className="font-medium truncate">{p.title}</p>
+                <p className="text-muted-foreground font-mono text-[10px]">
+                  ID: {p.id}
+                </p>
+              </div>
+              <span className="text-muted-foreground text-[10px] truncate pr-2">
+                {family}
+              </span>
+              <span className="font-mono text-muted-foreground text-[10px] pr-2 truncate">
+                {sku}
+              </span>
+              <span className="flex justify-center">
+                {p.images.length > 0 ? (
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                ) : (
+                  <ImageOff className="w-3.5 h-3.5 text-amber-400" />
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function BulkUploader({
@@ -467,6 +810,7 @@ export default function BulkUploader({
 }) {
   const [open, setOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [fetching, setFetching] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState<ImportStats>({
     total: 0,
@@ -478,31 +822,22 @@ export default function BulkUploader({
     { type: "ok" | "err" | "skip" | "info" | "warn"; msg: string }[]
   >([]);
   const [currentItem, setCurrentItem] = useState("");
-  const [uploadedFiles, setUploadedFiles] = useState<
-    { name: string; sheetName: string; products: ParsedProduct[] }[]
-  >([]);
   const [step, setStep] = useState<
     "idle" | "preview" | "importing" | "done" | "cancelled"
   >("idle");
   const [activeTab, setActiveTab] = useState<PreviewTab>("files");
 
-  // ── Step-1 config ────────────────────────────────────────────────────────────
-  const WEBSITE_OPTIONS = [
-    "Disruptive Solutions Inc",
-    "Ecoshift Corporation",
-    "Value Acquisitions Holdings",
-    "Taskflow",
-  ] as const;
+  // ── Source selector ──────────────────────────────────────────────────────────
+  const [importSource, setImportSource] = useState<ImportSource>("excel");
 
-  const [selectedWebsites, setSelectedWebsites] = useState<string[]>([]);
-  const [importStatus, setImportStatus] = useState<"draft" | "public" | "">("");
+  // ── Excel state ──────────────────────────────────────────────────────────────
+  const [uploadedFiles, setUploadedFiles] = useState<
+    { name: string; sheetName: string; products: ParsedProduct[] }[]
+  >([]);
 
-  const configComplete = selectedWebsites.length > 0 && importStatus !== "";
-
-  const toggleWebsite = (site: string) =>
-    setSelectedWebsites((prev) =>
-      prev.includes(site) ? prev.filter((w) => w !== site) : [...prev, site],
-    );
+  // ── Shopify state ────────────────────────────────────────────────────────────
+  const [shopifyMode, setShopifyMode] = useState<ShopifyMode>("draft");
+  const [shopifyProducts, setShopifyProducts] = useState<ShopifyProduct[]>([]);
 
   const cancelledRef = useRef(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -521,6 +856,8 @@ export default function BulkUploader({
     ]);
   };
 
+  // ── Excel dropzone ───────────────────────────────────────────────────────────
+
   const handleFileDrop = useCallback(async (files: File[]) => {
     if (!files.length) return;
     addLog("info", `📂 Parsing ${files.length} file(s)...`);
@@ -529,7 +866,6 @@ export default function BulkUploader({
       sheetName: string;
       products: ParsedProduct[];
     }[] = [];
-
     for (const file of files) {
       try {
         const { sheetName, products } = await parseWorkbook(file);
@@ -539,12 +875,10 @@ export default function BulkUploader({
         addLog("err", `  ❌ ${file.name}: ${err.message}`);
       }
     }
-
     if (!parsedFiles.length) {
       toast.error("No files were successfully parsed");
       return;
     }
-
     setUploadedFiles(parsedFiles);
     setActiveTab("files");
     setStep("preview");
@@ -553,6 +887,7 @@ export default function BulkUploader({
       "info",
       `✅ Parsed ${parsedFiles.length} file(s) — ${total} total products`,
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -563,8 +898,52 @@ export default function BulkUploader({
       ],
     },
     multiple: true,
-    disabled: step !== "idle" || importing || !configComplete,
+    disabled: importSource !== "excel" || step !== "idle" || importing,
   });
+
+  // ── Shopify fetch ────────────────────────────────────────────────────────────
+
+  const handleShopifyFetch = async () => {
+    setFetching(true);
+    addLog("info", `🔍 Fetching Shopify products (mode: ${shopifyMode})...`);
+    try {
+      const res = await fetch(`/api/shopify/products?mode=${shopifyMode}`);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const fetched: ShopifyProduct[] = data.products ?? [];
+      if (fetched.length === 0) {
+        addLog(
+          "warn",
+          `⚠️  No ${shopifyMode === "draft" ? "draft/archived" : "active"} products found in Shopify.`,
+        );
+        toast.warning("No matching products found.");
+        setFetching(false);
+        return;
+      }
+      setShopifyProducts(fetched);
+      setActiveTab("categories");
+      setStep("preview");
+      const familyCount = new Set(
+        fetched.map((p) =>
+          (p.product_type?.trim() || "UNCATEGORISED").toUpperCase(),
+        ),
+      ).size;
+      addLog(
+        "info",
+        `✅ Fetched ${fetched.length} product(s) across ${familyCount} categories.`,
+      );
+    } catch (err: any) {
+      addLog("err", `❌ Fetch failed: ${err.message}`);
+      toast.error(`Shopify fetch failed: ${err.message}`);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  // ── Cancel ───────────────────────────────────────────────────────────────────
 
   const handleCancel = () => {
     cancelledRef.current = true;
@@ -574,7 +953,10 @@ export default function BulkUploader({
     );
   };
 
-  const runImport = async () => {
+  // ── Run Excel import ─────────────────────────────────────────────────────────
+  // Saves with: status = "draft", website = [], websites = []
+
+  const runExcelImport = async () => {
     const allProducts = uploadedFiles.flatMap((f) => f.products);
     if (!allProducts.length) return;
 
@@ -588,7 +970,6 @@ export default function BulkUploader({
       `🚀 Starting import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
     );
 
-    const websiteList = selectedWebsites;
     const allSpecGroups: Record<string, Set<string>> = {};
     const categoryToGroups: Record<string, Set<string>> = {};
 
@@ -609,11 +990,7 @@ export default function BulkUploader({
     const specGroupIds: Record<string, string> = {};
     for (const [groupName, labelsSet] of Object.entries(allSpecGroups)) {
       try {
-        const id = await upsertSpecGroup(
-          groupName,
-          Array.from(labelsSet),
-          websiteList,
-        );
+        const id = await upsertSpecGroup(groupName, Array.from(labelsSet));
         specGroupIds[groupName] = id;
         addLog("info", `  ✓ Spec group "${groupName}" → ${id}`);
       } catch (err: any) {
@@ -630,7 +1007,7 @@ export default function BulkUploader({
         .map((g) => specGroupIds[g])
         .filter(Boolean);
       try {
-        const id = await upsertProductFamily(catTitle, specIds, websiteList);
+        const id = await upsertProductFamily(catTitle, specIds);
         addLog("info", `  ✓ Product family "${catTitle}" → ${id}`);
       } catch (err: any) {
         addLog("err", `  ✗ Product family "${catTitle}": ${err.message}`);
@@ -657,7 +1034,8 @@ export default function BulkUploader({
         const itemCodeField = p.csvSku || p.productCode;
         const resolvedName =
           p.productName || `${p.category} ${p.productCode}`.trim();
-        const { isDuplicate, reason } = await checkDuplicate(itemCodeField);
+        const { isDuplicate, reason } =
+          await checkExcelDuplicate(itemCodeField);
 
         if (isDuplicate) {
           addLog(
@@ -690,9 +1068,9 @@ export default function BulkUploader({
           qrCodeImage: "",
           galleryImages: [],
           productFamily: p.category,
-          website: websiteList,
-          websites: websiteList,
-          status: importStatus,
+          website: [], // no website assigned
+          websites: [], // no website assigned
+          status: "draft", // always draft
           brand: "",
           applications: [],
           technicalSpecs,
@@ -720,9 +1098,84 @@ export default function BulkUploader({
       await new Promise((r) => setTimeout(r, 40));
     }
 
+    finishImport();
+  };
+
+  // ── Run Shopify import ───────────────────────────────────────────────────────
+  // Always saves as "draft" regardless of Shopify status
+
+  const runShopifyImport = async () => {
+    if (!shopifyProducts.length) return;
+
+    cancelledRef.current = false;
+    setImporting(true);
+    setStep("importing");
+    setProgress(0);
+    setStats({
+      total: shopifyProducts.length,
+      success: 0,
+      failed: 0,
+      skipped: 0,
+    });
+    addLog(
+      "info",
+      `🚀 Starting import of ${shopifyProducts.length} Shopify products (saved as Draft)...`,
+    );
+
+    for (let i = 0; i < shopifyProducts.length; i++) {
+      if (cancelledRef.current) {
+        const remaining = shopifyProducts.length - i;
+        addLog(
+          "warn",
+          `🛑 Import cancelled. ${i} processed, ${remaining} remaining.`,
+        );
+        setStats((prev) => ({ ...prev, skipped: prev.skipped + remaining }));
+        break;
+      }
+
+      const p = shopifyProducts[i];
+      setCurrentItem(p.title);
+
+      try {
+        const sku = p.variants[0]?.sku?.trim() || String(p.id);
+        const dupSnap = await getDocs(
+          query(collection(db, "products"), where("ecoItemCode", "==", sku)),
+        );
+        if (!dupSnap.empty) {
+          addLog("skip", `⏭  SKIPPED (duplicate SKU "${sku}"): ${p.title}`);
+          setStats((prev) => ({ ...prev, skipped: prev.skipped + 1 }));
+          setProgress(((i + 1) / shopifyProducts.length) * 100);
+          await new Promise((r) => setTimeout(r, 20));
+          continue;
+        }
+
+        const normalized = await normalizeShopifyProduct(p, (msg) =>
+          addLog("info", msg),
+        );
+
+        await addDoc(collection(db, "products"), {
+          ...normalized,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        addLog("ok", `✅ ${p.title} (SKU: ${normalized.ecoItemCode})`);
+        setStats((prev) => ({ ...prev, success: prev.success + 1 }));
+      } catch (err: any) {
+        addLog("err", `❌ FAILED "${p.title}": ${err.message}`);
+        setStats((prev) => ({ ...prev, failed: prev.failed + 1 }));
+      }
+
+      setProgress(((i + 1) / shopifyProducts.length) * 100);
+      await new Promise((r) => setTimeout(r, 80));
+    }
+
+    finishImport();
+  };
+
+  const finishImport = () => {
     setImporting(false);
     setCurrentItem("");
-
     if (cancelledRef.current) {
       setStep("cancelled");
       addLog("warn", "🛑 Import was cancelled by user.");
@@ -730,25 +1183,29 @@ export default function BulkUploader({
     } else {
       setStep("done");
       addLog("info", "🏁 Import complete.");
-      toast.success("Bulk import complete!");
+      toast.success("Import complete!");
       onUploadComplete?.();
     }
   };
+
+  // ── Reset ────────────────────────────────────────────────────────────────────
 
   const reset = () => {
     setStep("idle");
     setLogs([]);
     setUploadedFiles([]);
+    setShopifyProducts([]);
     setStats({ total: 0, success: 0, failed: 0, skipped: 0 });
     setProgress(0);
     setCurrentItem("");
-    setSelectedWebsites([]);
-    setImportStatus("");
+    setShopifyMode("draft");
     cancelledRef.current = false;
   };
 
-  const allProducts = uploadedFiles.flatMap((f) => f.products);
-  const categorySummary = allProducts.reduce<Record<string, number>>(
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  const excelAllProducts = uploadedFiles.flatMap((f) => f.products);
+  const excelCategorySummary = excelAllProducts.reduce<Record<string, number>>(
     (acc, p) => {
       acc[p.category] = (acc[p.category] || 0) + 1;
       return acc;
@@ -761,6 +1218,23 @@ export default function BulkUploader({
     productCount: file.products.length,
     categories: new Set(file.products.map((p) => p.category)),
   }));
+  const shopifyCategorySummary = shopifyProducts.reduce<Record<string, number>>(
+    (acc, p) => {
+      const fam = (p.product_type?.trim() || "UNCATEGORISED").toUpperCase();
+      acc[fam] = (acc[fam] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
+
+  const previewProductCount =
+    importSource === "shopify"
+      ? shopifyProducts.length
+      : excelAllProducts.length;
+  const previewCategoryCount =
+    importSource === "shopify"
+      ? Object.keys(shopifyCategorySummary).length
+      : Object.keys(excelCategorySummary).length;
 
   const logColor = (type: string) => {
     if (type === "ok") return "text-emerald-400";
@@ -790,7 +1264,6 @@ export default function BulkUploader({
         </Button>
       </DialogTrigger>
 
-      {/* Fixed-height dialog — nothing escapes */}
       <DialogContent className="sm:max-w-[760px] h-[88vh] flex flex-col p-0 overflow-hidden">
         {/* ── Header ── */}
         <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
@@ -803,10 +1276,10 @@ export default function BulkUploader({
                 Bulk Product Importer
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                Drop{" "}
+                Import from{" "}
                 <code className="font-mono bg-muted px-1 rounded">.xlsx</code>{" "}
-                files — specs &amp; product families are auto-created.
-                Duplicates checked by item code <em>and</em> name.
+                or Shopify. All products are saved as <strong>Draft</strong>{" "}
+                with no website assigned by default.
               </DialogDescription>
             </div>
           </div>
@@ -845,250 +1318,386 @@ export default function BulkUploader({
           </div>
         </DialogHeader>
 
-        {/* ── Body — flex-1, each step owns its own scroll strategy ── */}
+        {/* ── Body ── */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {/* IDLE */}
+          {/* ════════════ IDLE ════════════ */}
           {step === "idle" && (
             <div className="h-full overflow-y-auto">
               <div className="p-6 space-y-5">
-                {/* ── Step 1: Website & Status config ── */}
+                {/* ── Step 1: Source selector ── */}
                 <div className="rounded-xl border bg-card overflow-hidden">
                   <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
                     <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
                       1
                     </div>
                     <p className="text-sm font-semibold">
-                      Configure Import Settings
+                      Select Import Source
                     </p>
-                    {configComplete && (
-                      <CheckCircle className="w-4 h-4 text-emerald-500 ml-auto" />
-                    )}
                   </div>
-                  <div className="p-4 space-y-4">
-                    {/* Website multi-select */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Globe className="w-3.5 h-3.5 text-muted-foreground" />
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Target Websites{" "}
-                          <span className="text-destructive">*</span>
-                        </Label>
-                        {selectedWebsites.length > 0 && (
-                          <Badge
-                            variant="secondary"
-                            className="text-[10px] font-mono ml-auto"
+                  <div className="p-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        {
+                          value: "excel" as const,
+                          label: "Excel / XLSX",
+                          desc: "Upload .xlsx spreadsheet files with product data",
+                          icon: <FileSpreadsheet className="w-4 h-4" />,
+                          color: "text-blue-600",
+                          activeBg:
+                            "border-blue-500 bg-blue-50 dark:bg-blue-950/20",
+                        },
+                        {
+                          value: "shopify" as const,
+                          label: "Shopify Store",
+                          desc: "Fetch products directly from your Shopify Admin API",
+                          icon: <ShoppingBag className="w-4 h-4" />,
+                          color: "text-emerald-600",
+                          activeBg:
+                            "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
+                        },
+                      ].map((opt) => {
+                        const active = importSource === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setImportSource(opt.value);
+                              setActiveTab(
+                                opt.value === "shopify"
+                                  ? "categories"
+                                  : "files",
+                              );
+                            }}
+                            className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${
+                              active
+                                ? `${opt.activeBg} ${opt.color} font-semibold`
+                                : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
+                            }`}
                           >
-                            {selectedWebsites.length} selected
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {WEBSITE_OPTIONS.map((site) => {
-                          const checked = selectedWebsites.includes(site);
-                          return (
-                            // ✅ FIX: Changed from <button> to <div> to avoid
-                            // invalid nested <button> inside <button> (Checkbox renders a button).
-                            <div
-                              key={site}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => toggleWebsite(site)}
-                              onKeyDown={(e) =>
-                                e.key === "Enter" && toggleWebsite(site)
+                            <span
+                              className={
+                                active ? opt.color : "text-muted-foreground"
                               }
-                              className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs transition-all cursor-pointer select-none
-                                ${
-                                  checked
-                                    ? "border-primary bg-primary/5 text-primary font-medium"
-                                    : "border-border hover:border-primary/40 hover:bg-muted/40 text-muted-foreground"
-                                }`}
                             >
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={() => toggleWebsite(site)}
-                                className="shrink-0 pointer-events-none"
-                              />
-                              <span className="truncate">{site}</span>
+                              {opt.icon}
+                            </span>
+                            <div>
+                              <p className="text-xs font-semibold">
+                                {opt.label}
+                              </p>
+                              <p className="text-[10px] font-normal opacity-70 mt-0.5">
+                                {opt.desc}
+                              </p>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Status selector */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Import Status{" "}
-                          <span className="text-destructive">*</span>
-                        </Label>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {(
-                          [
-                            {
-                              value: "public",
-                              label: "Public",
-                              desc: "Visible on website immediately",
-                              icon: <Eye className="w-4 h-4" />,
-                              color: "text-emerald-600",
-                              activeBg: "border-emerald-500 bg-emerald-50",
-                            },
-                            {
-                              value: "draft",
-                              label: "Draft",
-                              desc: "Hidden, for review before publishing",
-                              icon: <EyeOff className="w-4 h-4" />,
-                              color: "text-amber-600",
-                              activeBg: "border-amber-500 bg-amber-50",
-                            },
-                          ] as const
-                        ).map((opt) => {
-                          const active = importStatus === opt.value;
-                          return (
-                            <button
-                              key={opt.value}
-                              type="button"
-                              onClick={() => setImportStatus(opt.value)}
-                              className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all
-                                ${
-                                  active
-                                    ? `${opt.activeBg} ${opt.color} font-semibold`
-                                    : "border-border hover:border-primary/40 hover:bg-muted/40 text-muted-foreground"
-                                }`}
-                            >
-                              <span
-                                className={
-                                  active ? opt.color : "text-muted-foreground"
-                                }
-                              >
-                                {opt.icon}
-                              </span>
-                              <div>
-                                <p className="text-xs font-semibold">
-                                  {opt.label}
-                                </p>
-                                <p className="text-[10px] font-normal opacity-70">
-                                  {opt.desc}
-                                </p>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                            {active && (
+                              <CheckCircle
+                                className={`w-4 h-4 ml-auto shrink-0 ${opt.color}`}
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
 
-                {/* ── Step 2: Drop files ── */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors
-                      ${configComplete ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                    >
-                      2
-                    </div>
-                    <p
-                      className={`text-sm font-semibold transition-colors ${configComplete ? "text-foreground" : "text-muted-foreground"}`}
-                    >
-                      Upload Excel Files
-                    </p>
-                    {!configComplete && (
-                      <span className="text-[11px] text-muted-foreground ml-1">
-                        — complete step 1 first
-                      </span>
-                    )}
-                  </div>
+                {/* ════ EXCEL CONFIG ════ */}
+                {importSource === "excel" && (
+                  <>
+                    {/* Step 2: Drop zone — no config required */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
+                          2
+                        </div>
+                        <p className="text-sm font-semibold">
+                          Upload Excel Files
+                        </p>
+                      </div>
 
-                  <div
-                    {...getRootProps()}
-                    className={`border-2 border-dashed rounded-2xl p-10 text-center
-                      flex flex-col items-center justify-center gap-3 transition-all duration-200
-                      ${
-                        !configComplete
-                          ? "opacity-50 cursor-not-allowed border-border bg-muted/20"
-                          : isDragActive
+                      {/* Defaults notice */}
+                      <div className="flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
+                        <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          Products will be saved as <strong>Draft</strong> with
+                          no website assigned. You can update these fields after
+                          import.
+                        </span>
+                      </div>
+
+                      <div
+                        {...getRootProps()}
+                        className={`border-2 border-dashed rounded-2xl p-10 text-center flex flex-col items-center justify-center gap-3 transition-all duration-200 ${
+                          isDragActive
                             ? "border-primary bg-primary/8 scale-[1.01] cursor-copy"
                             : "border-border hover:border-primary/40 hover:bg-primary/3 cursor-pointer"
-                      }`}
-                  >
-                    <input {...getInputProps()} />
-                    <div
-                      className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors
-                      ${isDragActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                    >
-                      {isDragActive ? (
-                        <FileUp className="w-7 h-7 animate-bounce" />
-                      ) : (
-                        <Upload className="w-7 h-7" />
-                      )}
+                        }`}
+                      >
+                        <input {...getInputProps()} />
+                        <div
+                          className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
+                            isDragActive
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {isDragActive ? (
+                            <FileUp className="w-7 h-7 animate-bounce" />
+                          ) : (
+                            <Upload className="w-7 h-7" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">
+                            {isDragActive
+                              ? "Release to parse"
+                              : "Drop your Excel files here"}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            or{" "}
+                            <span className="text-primary underline underline-offset-2 cursor-pointer">
+                              browse
+                            </span>{" "}
+                            — accepts multiple .xlsx files
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {!configComplete
-                          ? "Select websites and status above to enable"
-                          : isDragActive
-                            ? "Release to parse"
-                            : "Drop your Excel files here"}
-                      </p>
-                      {configComplete && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          or{" "}
-                          <span className="text-primary underline underline-offset-2 cursor-pointer">
-                            browse
-                          </span>{" "}
-                          — accepts multiple .xlsx files
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
 
-                {/* Info cards */}
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                    <p className="font-semibold flex items-center gap-1.5 text-primary">
-                      <Layers className="w-3.5 h-3.5" /> Required Columns (Row
-                      1)
-                    </p>
-                    {[
-                      "A — Category",
-                      "B — Product Code",
-                      "C — CSV SKU",
-                      "D — Cloudinary URL",
-                      "E — Product Name (OCR)",
-                    ].map((c) => (
-                      <div key={c} className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
-                        <code className="font-mono">{c}</code>
+                    {/* Info cards */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
+                        <p className="font-semibold flex items-center gap-1.5 text-primary">
+                          <Layers className="w-3.5 h-3.5" /> Required Columns
+                          (Row 1)
+                        </p>
+                        {[
+                          "A — Category",
+                          "B — Product Code",
+                          "C — CSV SKU",
+                          "D — Cloudinary URL",
+                          "E — Product Name (OCR)",
+                        ].map((c) => (
+                          <div key={c} className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+                            <code className="font-mono">{c}</code>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                    <p className="font-semibold flex items-center gap-1.5 text-amber-600">
-                      <AlertCircle className="w-3.5 h-3.5" /> Duplicate
-                      detection
-                    </p>
-                    {[
-                      "Checks existing itemCode in Firestore",
-                      "Checks existing product name in Firestore",
-                      "Skips if either match is found",
-                      "Product name falls back to Category + Code",
-                    ].map((c) => (
-                      <div key={c} className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-                        <span className="text-muted-foreground">{c}</span>
+                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
+                        <p className="font-semibold flex items-center gap-1.5 text-amber-600">
+                          <AlertCircle className="w-3.5 h-3.5" /> Duplicate
+                          detection
+                        </p>
+                        {[
+                          "Checks existing itemCode in Firestore",
+                          "Skips if a match is found",
+                          "Product name falls back to Category + Code",
+                        ].map((c) => (
+                          <div key={c} className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                            <span className="text-muted-foreground">{c}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+                  </>
+                )}
+
+                {/* ════ SHOPIFY CONFIG ════ */}
+                {importSource === "shopify" && (
+                  <>
+                    {/* Step 2: Fetch mode */}
+                    <div className="rounded-xl border bg-card overflow-hidden">
+                      <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
+                          2
+                        </div>
+                        <p className="text-sm font-semibold">
+                          Select Shopify Fetch Mode
+                        </p>
+                      </div>
+                      <div className="p-4">
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Choose which Shopify products to fetch based on their
+                          publish status.
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          {[
+                            {
+                              value: "draft" as const,
+                              label: "Draft / Archived",
+                              desc: "Fetch products with draft or archived status",
+                              icon: <EyeOff className="w-4 h-4" />,
+                              color: "text-amber-600",
+                              activeBg:
+                                "border-amber-500 bg-amber-50 dark:bg-amber-950/20",
+                            },
+                            {
+                              value: "public" as const,
+                              label: "Active / Published",
+                              desc: "Fetch products with active (published) status",
+                              icon: <Eye className="w-4 h-4" />,
+                              color: "text-emerald-600",
+                              activeBg:
+                                "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
+                            },
+                          ].map((opt) => {
+                            const active = shopifyMode === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setShopifyMode(opt.value)}
+                                className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${
+                                  active
+                                    ? `${opt.activeBg} ${opt.color} font-semibold`
+                                    : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
+                                }`}
+                              >
+                                <span
+                                  className={
+                                    active ? opt.color : "text-muted-foreground"
+                                  }
+                                >
+                                  {opt.icon}
+                                </span>
+                                <div>
+                                  <p className="text-xs font-semibold">
+                                    {opt.label}
+                                  </p>
+                                  <p className="text-[10px] font-normal opacity-70 mt-0.5">
+                                    {opt.desc}
+                                  </p>
+                                </div>
+                                {active && (
+                                  <CheckCircle
+                                    className={`w-4 h-4 ml-auto shrink-0 ${opt.color}`}
+                                  />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Always-draft notice */}
+                        <div className="mt-3 flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
+                          <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            Regardless of Shopify status, all products will be
+                            saved as <strong>Draft</strong> in your system.
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 3: Fetch button */}
+                    <div className="rounded-xl border bg-card overflow-hidden">
+                      <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
+                          3
+                        </div>
+                        <p className="text-sm font-semibold">Fetch Products</p>
+                      </div>
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs text-muted-foreground">
+                          Fetches all matching products from your Shopify store
+                          including images and metafields.
+                        </p>
+                        <Button
+                          onClick={handleShopifyFetch}
+                          disabled={fetching}
+                          className="gap-2 w-full"
+                        >
+                          {fetching ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />{" "}
+                              Fetching from Shopify...
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingBag className="w-4 h-4" /> Fetch{" "}
+                              {shopifyMode === "draft"
+                                ? "Draft / Archived"
+                                : "Active"}{" "}
+                              Products
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Info cards */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
+                        <p className="font-semibold flex items-center gap-1.5 text-primary">
+                          <ShoppingBag className="w-3.5 h-3.5" /> What gets
+                          imported
+                        </p>
+                        {[
+                          "Title → Item Description",
+                          "SKU → Eco Item Code",
+                          "Product Type → Product Family",
+                          "Vendor → Brand",
+                          "Images → Cloudinary (auto-upload)",
+                          "Metafields → Technical Specs",
+                        ].map((c) => (
+                          <div key={c} className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+                            <span className="text-muted-foreground">{c}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
+                        <p className="font-semibold flex items-center gap-1.5 text-amber-600">
+                          <AlertCircle className="w-3.5 h-3.5" /> Duplicate
+                          detection
+                        </p>
+                        {[
+                          "Checks ecoItemCode (SKU) in Firestore",
+                          "Skips if a matching SKU exists",
+                          "Ungrouped specs saved to specItems pool",
+                          "Grouped specs merged into spec groups",
+                          "Product families upserted automatically",
+                        ].map((c) => (
+                          <div key={c} className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                            <span className="text-muted-foreground">{c}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Console (idle fetch logs) */}
+                {logs.length > 0 && (
+                  <div className="rounded-xl overflow-hidden border border-slate-800">
+                    <div className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-900 px-4 py-2">
+                      <Terminal className="w-3 h-3" /> Console
+                    </div>
+                    <div className="bg-slate-950 px-4 py-3 font-mono text-[11px] space-y-1 max-h-32 overflow-y-auto">
+                      {logs.map((log, i) => (
+                        <div
+                          key={i}
+                          className={`flex gap-2.5 ${logColor(log.type)}`}
+                        >
+                          <span className="text-slate-600 shrink-0 select-none tabular-nums">
+                            [{String(i + 1).padStart(3, "0")}]
+                          </span>
+                          <span className="break-all">{log.msg}</span>
+                        </div>
+                      ))}
+                      <div ref={logsEndRef} />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* PREVIEW — tab bar fixed, panel scrolls */}
+          {/* ════════════ PREVIEW ════════════ */}
           {step === "preview" && (
             <div className="h-full flex flex-col">
               {/* Summary bar */}
@@ -1096,17 +1705,16 @@ export default function BulkUploader({
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold">
-                      {uploadedFiles.length} file
-                      {uploadedFiles.length !== 1 ? "s" : ""} ready —{" "}
                       <span className="text-primary font-bold">
-                        {allProducts.length}
+                        {previewProductCount}
                       </span>{" "}
-                      products across {Object.keys(categorySummary).length}{" "}
-                      categories
+                      product{previewProductCount !== 1 ? "s" : ""} ready across{" "}
+                      {previewCategoryCount} famil
+                      {previewCategoryCount !== 1 ? "ies" : "y"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Existing duplicates will be skipped automatically during
-                      import.
+                      Existing duplicates will be skipped. All products saved as{" "}
+                      <strong>Draft</strong>.
                     </p>
                   </div>
                   <Button
@@ -1115,81 +1723,94 @@ export default function BulkUploader({
                     onClick={reset}
                     className="gap-1.5 text-xs h-7 shrink-0 ml-4"
                   >
-                    <RefreshCw className="w-3 h-3" /> Change files
+                    <RefreshCw className="w-3 h-3" /> Change
                   </Button>
                 </div>
-                {/* Config summary chips */}
+
+                {/* Chips */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">
-                    Importing to:
+                    Source:
                   </span>
-                  {selectedWebsites.map((w) => (
+                  <Badge variant="secondary" className="text-[10px] gap-1">
+                    {importSource === "shopify" ? (
+                      <ShoppingBag className="w-2.5 h-2.5" />
+                    ) : (
+                      <FileSpreadsheet className="w-2.5 h-2.5" />
+                    )}
+                    {importSource === "shopify" ? "Shopify" : "Excel"}
+                  </Badge>
+                  {importSource === "shopify" && (
                     <Badge
-                      key={w}
-                      variant="secondary"
-                      className="text-[10px] gap-1"
+                      variant="outline"
+                      className="text-[10px] gap-1 ml-1 border-slate-300 text-slate-500"
                     >
-                      <Globe className="w-2.5 h-2.5" /> {w}
+                      Fetched:{" "}
+                      {shopifyMode === "draft" ? "Draft/Archived" : "Active"}
                     </Badge>
-                  ))}
+                  )}
                   <Badge
                     variant="outline"
-                    className={`text-[10px] gap-1 ml-1 ${importStatus === "public" ? "border-emerald-400 text-emerald-600" : "border-amber-400 text-amber-600"}`}
+                    className="text-[10px] gap-1 ml-1 border-amber-400 text-amber-600"
                   >
-                    {importStatus === "public" ? (
-                      <Eye className="w-2.5 h-2.5" />
-                    ) : (
-                      <EyeOff className="w-2.5 h-2.5" />
-                    )}
-                    {importStatus === "public" ? "Public" : "Draft"}
+                    <EyeOff className="w-2.5 h-2.5" />
+                    Saving as Draft
                   </Badge>
                 </div>
               </div>
 
               {/* Tab bar */}
               <div className="px-6 py-2.5 border-b shrink-0 flex items-center gap-1 bg-background">
-                <TabBtn
-                  active={activeTab === "files"}
-                  onClick={() => setActiveTab("files")}
-                  icon={<FileText className="w-3 h-3" />}
-                  label="Files"
-                  count={uploadedFiles.length}
-                />
+                {importSource === "excel" && (
+                  <TabBtn
+                    active={activeTab === "files"}
+                    onClick={() => setActiveTab("files")}
+                    icon={<FileText className="w-3 h-3" />}
+                    label="Files"
+                    count={uploadedFiles.length}
+                  />
+                )}
                 <TabBtn
                   active={activeTab === "categories"}
                   onClick={() => setActiveTab("categories")}
                   icon={<Tag className="w-3 h-3" />}
-                  label="Categories"
-                  count={Object.keys(categorySummary).length}
+                  label="Families"
+                  count={previewCategoryCount}
                 />
                 <TabBtn
                   active={activeTab === "products"}
                   onClick={() => setActiveTab("products")}
                   icon={<Package className="w-3 h-3" />}
                   label="Products"
-                  count={allProducts.length}
+                  count={previewProductCount}
                 />
               </div>
 
-              {/* Panel — flex-1, self-contained */}
+              {/* Panel */}
               <div className="flex-1 min-h-0 p-5">
-                {activeTab === "files" && (
+                {importSource === "excel" && activeTab === "files" && (
                   <FilesPanel fileSummary={fileSummary} />
                 )}
-                {activeTab === "categories" && (
-                  <CategoriesPanel
-                    categorySummary={categorySummary}
-                    allProducts={allProducts}
+                {importSource === "excel" && activeTab === "categories" && (
+                  <ExcelCategoriesPanel
+                    categorySummary={excelCategorySummary}
+                    allProducts={excelAllProducts}
                   />
                 )}
-                {activeTab === "products" && (
-                  <ProductsPanel uploadedFiles={uploadedFiles} />
+                {importSource === "excel" && activeTab === "products" && (
+                  <ExcelProductsPanel uploadedFiles={uploadedFiles} />
+                )}
+                {importSource === "shopify" && activeTab === "categories" && (
+                  <ShopifyCategoriesPanel products={shopifyProducts} />
+                )}
+                {importSource === "shopify" && activeTab === "products" && (
+                  <ShopifyProductsPanel products={shopifyProducts} />
                 )}
               </div>
             </div>
           )}
 
-          {/* IMPORTING / DONE / CANCELLED */}
+          {/* ════════════ IMPORTING / DONE / CANCELLED ════════════ */}
           {(step === "importing" ||
             step === "done" ||
             step === "cancelled") && (
@@ -1263,7 +1884,7 @@ export default function BulkUploader({
                 ))}
               </div>
 
-              {/* Console — grows to fill remaining height */}
+              {/* Console */}
               <div className="flex-1 min-h-0 flex flex-col gap-1.5">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 tracking-widest shrink-0">
                   <Terminal className="w-3 h-3" /> Import Console
@@ -1307,12 +1928,14 @@ export default function BulkUploader({
             {step === "preview" && (
               <Button
                 size="sm"
-                onClick={runImport}
+                onClick={
+                  importSource === "shopify" ? runShopifyImport : runExcelImport
+                }
                 disabled={importing}
                 className="gap-2 h-8 text-xs font-semibold"
               >
                 <Upload className="w-3.5 h-3.5" />
-                Import {allProducts.length} Products
+                Import {previewProductCount} Products
               </Button>
             )}
             {step === "importing" && importing && (

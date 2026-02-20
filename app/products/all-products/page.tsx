@@ -25,6 +25,9 @@ import {
   SlidersHorizontal,
   ChevronDown,
   X,
+  Sparkles,
+  Globe,
+  Check,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -64,6 +67,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import { db } from "@/lib/firebase";
 import {
@@ -75,6 +86,7 @@ import {
   writeBatch,
   serverTimestamp,
   where,
+  arrayUnion,
 } from "firebase/firestore";
 import { toast } from "sonner";
 
@@ -82,11 +94,18 @@ import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type Product = {
   id: string;
+  itemDescription: string;
+  ecoItemCode: string;
+  litItemCode: string;
+  productClass: "spf" | "standard" | "";
   name: string;
   itemCode: string;
   mainImage: string;
+  rawImage: string[];
   categories: string;
   brand: string | string[];
   website: string | string[];
@@ -95,6 +114,45 @@ export type Product = {
   createdAt: any;
 };
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const WEBSITE_OPTIONS = [
+  {
+    id: "disruptive",
+    label: "Disruptive Solutions Inc",
+    value: "Disruptive Solutions Inc",
+    color: "bg-blue-50 border-blue-200 text-blue-700",
+    activeColor: "bg-blue-100 border-blue-500 text-blue-800",
+    dot: "bg-blue-500",
+  },
+  {
+    id: "ecoshift",
+    label: "Ecoshift Corporation",
+    value: "Ecoshift Corporation",
+    color: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
+    dot: "bg-emerald-500",
+  },
+  {
+    id: "vah",
+    label: "Value Acquisitions Holdings",
+    value: "Value Acquisitions Holdings",
+    color: "bg-amber-50 border-amber-200 text-amber-700",
+    activeColor: "bg-amber-100 border-amber-500 text-amber-800",
+    dot: "bg-amber-500",
+  },
+  {
+    id: "taskflow",
+    label: "Taskflow",
+    value: "Taskflow",
+    color: "bg-violet-50 border-violet-200 text-violet-700",
+    activeColor: "bg-violet-100 border-violet-500 text-violet-800",
+    dot: "bg-violet-500",
+  },
+];
+
+// ─── Custom filter (handles arrays) ──────────────────────────────────────────
+
 const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   const value = row.getValue(columnId);
   const filter = filterValue.toLowerCase();
@@ -102,6 +160,176 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
     return value.some((v: string) => v.toLowerCase().includes(filter));
   return String(value).toLowerCase().includes(filter);
 };
+
+// ─── Product-class badge helper ───────────────────────────────────────────────
+
+function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
+  if (!value)
+    return <span className="text-xs text-muted-foreground/50">—</span>;
+  if (value === "spf")
+    return (
+      <Badge className="gap-1 bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100 text-[10px] font-semibold">
+        <Sparkles className="w-2.5 h-2.5" />
+        SPF
+      </Badge>
+    );
+  return (
+    <Badge variant="secondary" className="text-[10px] font-semibold">
+      <Package className="w-2.5 h-2.5 mr-1" />
+      Standard
+    </Badge>
+  );
+}
+
+// ─── Assign to Website Dialog ─────────────────────────────────────────────────
+
+function AssignToWebsiteDialog({
+  open,
+  onOpenChange,
+  selectedCount,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  selectedCount: number;
+  onConfirm: (websites: string[]) => Promise<void>;
+}) {
+  const [selectedWebsites, setSelectedWebsites] = React.useState<string[]>([]);
+  const [isAssigning, setIsAssigning] = React.useState(false);
+
+  // Reset selections when dialog opens
+  React.useEffect(() => {
+    if (open) setSelectedWebsites([]);
+  }, [open]);
+
+  const toggleWebsite = (value: string) => {
+    setSelectedWebsites((prev) =>
+      prev.includes(value) ? prev.filter((w) => w !== value) : [...prev, value],
+    );
+  };
+
+  const handleConfirm = async () => {
+    if (selectedWebsites.length === 0) return;
+    setIsAssigning(true);
+    try {
+      await onConfirm(selectedWebsites);
+      onOpenChange(false);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Globe className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">Assign to Website</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
+                assigned to the selected websites.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="py-2 space-y-2.5">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-0.5">
+            Select Websites
+          </p>
+          {WEBSITE_OPTIONS.map((site) => {
+            const isSelected = selectedWebsites.includes(site.value);
+            return (
+              <button
+                key={site.id}
+                type="button"
+                onClick={() => toggleWebsite(site.value)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150
+                  ${
+                    isSelected
+                      ? `${site.activeColor} shadow-sm`
+                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
+                  }`}
+              >
+                {/* Colored dot */}
+                <span
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
+                />
+
+                {/* Label */}
+                <span
+                  className={`flex-1 text-sm font-medium ${isSelected ? "" : "text-foreground"}`}
+                >
+                  {site.label}
+                </span>
+
+                {/* Check indicator */}
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
+                    ${isSelected ? "bg-current/20 opacity-100" : "opacity-0"}`}
+                >
+                  <Check className="w-3 h-3" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedWebsites.length > 0 && (
+          <div className="bg-muted/50 rounded-lg px-4 py-3 border">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""}
+              </span>{" "}
+              will be added to{" "}
+              <span className="font-semibold text-foreground">
+                {selectedWebsites.length} website
+                {selectedWebsites.length !== 1 ? "s" : ""}
+              </span>
+              . Existing website assignments will be preserved.
+            </p>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={selectedWebsites.length === 0 || isAssigning}
+            className="gap-2"
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Assigning...
+              </>
+            ) : (
+              <>
+                <Globe className="h-4 w-4" />
+                Assign to{" "}
+                {selectedWebsites.length > 0
+                  ? `${selectedWebsites.length} Website${selectedWebsites.length !== 1 ? "s" : ""}`
+                  : "Website"}
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Page component ───────────────────────────────────────────────────────────
 
 export default function AllProductsPage() {
   const [data, setData] = React.useState<Product[]>([]);
@@ -128,18 +356,20 @@ export default function AllProductsPage() {
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // ── Delete dialog state ──────────────────────────────────────────────────
+  // Delete dialog state
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+
+  // ── NEW: Assign to website dialog state ──────────────────────────────────
+  const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
 
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
         searchContainerRef.current &&
         !searchContainerRef.current.contains(e.target as Node)
-      ) {
+      )
         setShowSuggestions(false);
-      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -151,13 +381,17 @@ export default function AllProductsPage() {
     return data
       .filter(
         (p) =>
+          p.itemDescription?.toLowerCase().includes(q) ||
           p.name?.toLowerCase().includes(q) ||
+          p.ecoItemCode?.toLowerCase().includes(q) ||
+          p.litItemCode?.toLowerCase().includes(q) ||
           p.itemCode?.toLowerCase().includes(q) ||
           (p.categories as string)?.toLowerCase().includes(q),
       )
       .slice(0, 7);
   }, [data, globalFilter]);
 
+  // ── Firestore listener ────────────────────────────────────────────────────
   React.useEffect(() => {
     setLoading(true);
     const q = query(
@@ -187,7 +421,7 @@ export default function AllProductsPage() {
     return () => unsubscribe();
   }, []);
 
-  // ── Soft-delete single → recycle_bin ────────────────────────────────────
+  // ── Soft-delete helpers ───────────────────────────────────────────────────
   const handleSoftDelete = async (product: Product) => {
     const batch = writeBatch(db);
     const { id, ...rest } = product;
@@ -199,10 +433,11 @@ export default function AllProductsPage() {
     });
     batch.delete(doc(db, "products", id));
     await batch.commit();
-    toast.success(`"${product.name}" moved to recycle bin.`);
+    toast.success(
+      `"${product.itemDescription || product.name}" moved to recycle bin.`,
+    );
   };
 
-  // ── Bulk soft-delete → recycle_bin ──────────────────────────────────────
   const handleBulkSoftDelete = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     setIsDeleting(true);
@@ -236,13 +471,44 @@ export default function AllProductsPage() {
     }
   };
 
+  // ── NEW: Bulk assign to website handler ───────────────────────────────────
+  const handleBulkAssignWebsite = async (websites: string[]) => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const count = selectedRows.length;
+    const loadingToast = toast.loading(
+      `Assigning ${count} product${count !== 1 ? "s" : ""} to ${websites.length} website${websites.length !== 1 ? "s" : ""}...`,
+    );
+    try {
+      const batch = writeBatch(db);
+      selectedRows.forEach(({ original: product }) => {
+        batch.update(doc(db, "products", product.id), {
+          websites: arrayUnion(...websites),
+          website: arrayUnion(...websites),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      toast.success(
+        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.`,
+        { id: loadingToast },
+      );
+      setRowSelection({});
+    } catch (error) {
+      console.error("Bulk assign error:", error);
+      toast.error("Failed to assign products to websites.", {
+        id: loadingToast,
+      });
+    }
+  };
+
   const handleEdit = (product: Product) => {
     setSelectedProduct(product);
     setIsEditing(true);
   };
 
-  // ── Columns ──────────────────────────────────────────────────────────────
+  // ── Columns ───────────────────────────────────────────────────────────────
   const columns: ColumnDef<Product>[] = [
+    // 0 — Select
     {
       id: "select",
       header: ({ table }) => (
@@ -266,17 +532,20 @@ export default function AllProductsPage() {
       enableSorting: false,
       enableHiding: false,
     },
+
+    // 1 — Image
     {
       accessorKey: "mainImage",
-      header: "Image",
+      header: () => <div className="text-xs font-medium">Main Image</div>,
       cell: ({ row }) => {
         const imageUrl = row.getValue("mainImage") as string;
+        const label = row.original.itemDescription || row.original.name;
         return (
-          <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center">
+          <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center shrink-0">
             {imageUrl ? (
               <img
                 src={imageUrl}
-                alt={row.original.name}
+                alt={label}
                 className="w-full h-full object-contain"
               />
             ) : (
@@ -285,30 +554,92 @@ export default function AllProductsPage() {
           </div>
         );
       },
+      enableHiding: false,
     },
+
     {
-      accessorKey: "name",
-      header: () => <div className="text-xs font-medium">Product Info</div>,
-      cell: ({ row }) => (
-        <div className="flex flex-col max-w-62.5">
-          <span className="font-semibold text-sm line-clamp-1">
-            {row.getValue("name")}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {row.original.categories || "No Category"}
-          </span>
-        </div>
-      ),
+      accessorKey: "rawImage",
+      header: () => <div className="text-xs font-medium">Raw Image</div>,
+      cell: ({ row }) => {
+        const imageUrl = row.getValue("rawImage") as string;
+        const label = row.original.itemDescription || row.original.name;
+        return (
+          <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center shrink-0">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={label}
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <Package className="h-6 w-6 text-muted-foreground/40" />
+            )}
+          </div>
+        );
+      },
+      enableHiding: false,
     },
+
+    // 2 — Ecoshift Item Code
     {
-      accessorKey: "itemCode",
-      header: () => <div className="text-xs font-medium">Item Code</div>,
+      accessorKey: "ecoItemCode",
+      header: () => <div className="text-xs font-medium">Eco Item Code</div>,
       cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground font-mono">
-          {row.getValue("itemCode") || "---"}
+        <span className="text-xs font-mono text-muted-foreground">
+          {row.getValue("ecoItemCode") || "—"}
         </span>
       ),
     },
+
+    // 3 — LIT Item Code
+    {
+      accessorKey: "litItemCode",
+      header: () => <div className="text-xs font-medium">LIT Item Code</div>,
+      cell: ({ row }) => (
+        <span className="text-xs font-mono text-muted-foreground">
+          {row.getValue("litItemCode") || "—"}
+        </span>
+      ),
+    },
+
+    // 4 — Item Description
+    {
+      accessorKey: "itemDescription",
+      header: () => <div className="text-xs font-medium">Item Description</div>,
+      cell: ({ row }) => {
+        const desc = row.getValue("itemDescription") as string;
+        const fallback = row.original.name;
+        return (
+          <div className="flex flex-col max-w-[260px]">
+            <span className="font-semibold text-sm line-clamp-2 leading-snug">
+              {desc || fallback || "—"}
+            </span>
+            {row.original.categories && (
+              <span className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {row.original.categories}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+
+    // 5 — Product Class
+    {
+      accessorKey: "productClass",
+      header: () => <div className="text-xs font-medium">Product Class</div>,
+      cell: ({ row }) => (
+        <ProductClassBadge
+          value={row.getValue("productClass") as "spf" | "standard" | ""}
+        />
+      ),
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        return (row.getValue("productClass") as string) === filterValue;
+      },
+    },
+
+    // 6 — Brand / Website
     {
       id: "details",
       accessorFn: (row) => {
@@ -320,7 +651,7 @@ export default function AllProductsPage() {
           : row.website;
         return `${brand} ${web}`;
       },
-      header: () => <div className="text-xs font-medium">Brand / Website</div>,
+      header: () => <div className="text-xs font-medium">Brand & Website</div>,
       cell: ({ row }) => {
         const brands = Array.isArray(row.original.brands)
           ? row.original.brands
@@ -339,7 +670,10 @@ export default function AllProductsPage() {
           </div>
         );
       },
+      filterFn: multiValueFilter,
     },
+
+    // 7 — Actions
     {
       id: "actions",
       header: () => (
@@ -360,7 +694,6 @@ export default function AllProductsPage() {
             >
               <Pencil className="h-4 w-4" />
             </Button>
-            {/* ← DeleteToRecycleBinDialog trigger */}
             <Button
               variant="ghost"
               size="icon"
@@ -397,6 +730,7 @@ export default function AllProductsPage() {
     filterFns: { multiValue: multiValueFilter },
   });
 
+  // ── Derived filter values ─────────────────────────────────────────────────
   const uniqueBrands = React.useMemo(() => {
     const s = new Set<string>();
     data.forEach((p) => {
@@ -420,7 +754,7 @@ export default function AllProductsPage() {
   const totalCount = data.length;
   const isFiltered = filteredCount !== totalCount;
 
-  // ── EDIT MODE ────────────────────────────────────────────────────────────
+  // ── Edit view ─────────────────────────────────────────────────────────────
   const renderEditMode = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -438,7 +772,7 @@ export default function AllProductsPage() {
         <Separator orientation="vertical" className="h-6" />
         <p className="text-sm text-muted-foreground">
           {selectedProduct
-            ? `Editing: ${selectedProduct?.name}`
+            ? `Editing: ${selectedProduct.itemDescription || selectedProduct.name}`
             : "Adding New Product"}
         </p>
       </div>
@@ -452,17 +786,17 @@ export default function AllProductsPage() {
     </div>
   );
 
-  // ── TABLE MODE ───────────────────────────────────────────────────────────
+  // ── Table view ────────────────────────────────────────────────────────────
   const renderTableMode = () => (
     <div className="w-full space-y-4">
-      {/* HEADER */}
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">
-            Website Product Inventory
+            Product Inventory
           </h2>
           <p className="text-sm text-muted-foreground">
-            Manage and update your website products &mdash;{" "}
+            Manage and update your website products —{" "}
             {loading ? (
               <span className="text-muted-foreground">Loading...</span>
             ) : (
@@ -483,6 +817,28 @@ export default function AllProductsPage() {
         </div>
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
+
+          {/* ── NEW: Assign to Website button ── */}
+          <Button
+            variant="outline"
+            onClick={() => setAssignWebsiteOpen(true)}
+            disabled={selectedCount === 0}
+            className="gap-2"
+            title={
+              selectedCount === 0
+                ? "Select products first to assign them to a website"
+                : `Assign ${selectedCount} selected product${selectedCount !== 1 ? "s" : ""} to a website`
+            }
+          >
+            <Globe className="h-4 w-4" />
+            Assign to Website
+            {selectedCount > 0 && (
+              <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] font-bold">
+                {selectedCount}
+              </Badge>
+            )}
+          </Button>
+
           <Button
             onClick={() => {
               setSelectedProduct(null);
@@ -495,7 +851,7 @@ export default function AllProductsPage() {
         </div>
       </div>
 
-      {/* BULK ACTIONS */}
+      {/* Bulk actions */}
       {selectedCount > 0 && (
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -522,6 +878,16 @@ export default function AllProductsPage() {
             >
               <X className="h-4 w-4" /> Clear
             </Button>
+            {/* ── NEW: Assign to Website in bulk bar ── */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-primary/30 text-primary hover:bg-primary/5"
+              onClick={() => setAssignWebsiteOpen(true)}
+            >
+              <Globe className="h-4 w-4" />
+              Assign to Website
+            </Button>
             <Button
               variant="destructive"
               size="sm"
@@ -540,8 +906,9 @@ export default function AllProductsPage() {
         </div>
       )}
 
-      {/* FILTERS */}
+      {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
+        {/* Search */}
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
@@ -579,7 +946,7 @@ export default function AllProductsPage() {
                       {product.mainImage ? (
                         <img
                           src={product.mainImage}
-                          alt={product.name}
+                          alt={product.itemDescription || product.name}
                           className="w-full h-full object-contain"
                         />
                       ) : (
@@ -588,11 +955,14 @@ export default function AllProductsPage() {
                     </div>
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm font-medium truncate">
-                        {product.name}
+                        {product.itemDescription || product.name}
                       </span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground font-mono">
-                          {product.itemCode || "---"}
+                          {product.ecoItemCode ||
+                            product.litItemCode ||
+                            product.itemCode ||
+                            "—"}
                         </span>
                         {product.categories && (
                           <span className="text-xs text-muted-foreground truncate">
@@ -621,6 +991,41 @@ export default function AllProductsPage() {
           )}
         </div>
 
+        {/* Product Class filter */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              Product Class <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productClass")?.setFilterValue("")
+              }
+            >
+              All Classes
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productClass")?.setFilterValue("spf")
+              }
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-2 text-violet-500" /> SPF
+              Items
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productClass")?.setFilterValue("standard")
+              }
+            >
+              <Package className="w-3.5 h-3.5 mr-2" /> Standard Items
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Brands filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -650,6 +1055,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* Websites filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -677,6 +1083,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* Column visibility */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="ml-auto">
@@ -703,7 +1110,7 @@ export default function AllProductsPage() {
         </DropdownMenu>
       </div>
 
-      {/* TABLE */}
+      {/* Table */}
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
@@ -767,7 +1174,7 @@ export default function AllProductsPage() {
         </Table>
       </div>
 
-      {/* PAGINATION */}
+      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           {table.getFilteredSelectedRowModel().rows.length} of{" "}
@@ -822,6 +1229,7 @@ export default function AllProductsPage() {
     </div>
   );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
@@ -856,15 +1264,15 @@ export default function AllProductsPage() {
         </SidebarInset>
       </SidebarProvider>
 
-      {/* ── SINGLE ITEM: Move to Recycle Bin ── */}
+      {/* Single delete */}
       <DeleteToRecycleBinDialog
         open={!!deleteTarget}
         onOpenChange={(v) => !v && setDeleteTarget(null)}
-        itemName={deleteTarget?.name ?? ""}
+        itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
         onConfirm={() => handleSoftDelete(deleteTarget!)}
       />
 
-      {/* ── BULK: Move to Recycle Bin ── */}
+      {/* Bulk delete */}
       <DeleteToRecycleBinDialog
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
@@ -872,6 +1280,14 @@ export default function AllProductsPage() {
         confirmText={`${selectedCount} products`}
         count={selectedCount}
         onConfirm={handleBulkSoftDelete}
+      />
+
+      {/* ── NEW: Assign to Website dialog ── */}
+      <AssignToWebsiteDialog
+        open={assignWebsiteOpen}
+        onOpenChange={setAssignWebsiteOpen}
+        selectedCount={selectedCount}
+        onConfirm={handleBulkAssignWebsite}
       />
     </TooltipProvider>
   );

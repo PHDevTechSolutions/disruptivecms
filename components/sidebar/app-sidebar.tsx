@@ -36,7 +36,7 @@ const allNavItems = {
     icon: <TerminalSquareIcon />,
     isActive: true,
     items: [
-      { title: "Website Products", url: "/products/website-products" },
+      { title: "All Products", url: "/products/all-products" },
       { title: "Taskflow Products", url: "/products/taskflow-products" },
       { title: "Applications", url: "/products/applications" },
       { title: "Brands", url: "/products/brands" },

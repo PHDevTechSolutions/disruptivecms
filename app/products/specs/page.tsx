@@ -25,6 +25,8 @@ import {
   Eye,
   EyeOff,
   ClipboardList,
+  Check,
+  Tag,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -43,7 +45,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -60,31 +61,72 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 
+// Shared spec item shape — same everywhere, same as Firestore
 interface SpecItem {
   label: string;
 }
 
+// A standalone (ungrouped) spec item from the `specItems` collection
+interface StandaloneSpecItem {
+  id: string;
+  label: string;
+}
+
 export default function SpecsMaintenancePage() {
+  // ── Spec Groups ──
   const [specGroups, setSpecGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
 
+  // Group form state
   const [editId, setEditId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
   const [items, setItems] = useState<SpecItem[]>([{ label: "" }]);
+  const [openCombo, setOpenCombo] = useState(false);
 
+  // ── Standalone Spec Items pool ──
+  const [standaloneItems, setStandaloneItems] = useState<StandaloneSpecItem[]>(
+    [],
+  );
+  const [newStandaloneLabel, setNewStandaloneLabel] = useState("");
+  const [isStandaloneLoading, setIsStandaloneLoading] = useState(false);
+
+  // ── Listeners ──
   useEffect(() => {
     const q = query(collection(db, "specs"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setSpecGroups(list);
+    const unsub = onSnapshot(q, (snap) => {
+      setSpecGroups(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
+  useEffect(() => {
+    const q = query(collection(db, "specItems"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setStandaloneItems(
+        snap.docs.map((d) => ({ id: d.id, label: d.data().label as string })),
+      );
+    });
+    return () => unsub();
+  }, []);
+
+  // ── Group form helpers ──
   const addField = () => setItems([...items, { label: "" }]);
 
   const removeField = (index: number) => {
@@ -93,9 +135,33 @@ export default function SpecsMaintenancePage() {
   };
 
   const updateField = (index: number, value: string) => {
-    const newItems = [...items];
-    newItems[index].label = value;
-    setItems(newItems);
+    const updated = [...items];
+    updated[index].label = value;
+    setItems(updated);
+  };
+
+  /**
+   * Pick a standalone item from the combobox → push it into items[] as a
+   * normal SpecItem. No schema difference — it becomes just { label } like
+   * everything else when saved.
+   */
+  const attachStandaloneItem = (standalone: StandaloneSpecItem) => {
+    const alreadyIn = items.some(
+      (i) => i.label.toUpperCase() === standalone.label.toUpperCase(),
+    );
+    if (alreadyIn) {
+      toast.info(`"${standalone.label}" is already in the list`);
+      return;
+    }
+    // If the last field is blank, replace it; otherwise append
+    const lastIsBlank = items[items.length - 1]?.label.trim() === "";
+    setItems(
+      lastIsBlank
+        ? [...items.slice(0, -1), { label: standalone.label }]
+        : [...items, { label: standalone.label }],
+    );
+    setOpenCombo(false);
+    toast.success(`"${standalone.label}" added to group`);
   };
 
   const resetForm = () => {
@@ -107,7 +173,7 @@ export default function SpecsMaintenancePage() {
   const handleEditClick = (group: any) => {
     setEditId(group.id);
     setGroupName(group.name);
-    setItems(group.items || [{ label: "" }]);
+    setItems(group.items?.length ? group.items : [{ label: "" }]);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -125,11 +191,10 @@ export default function SpecsMaintenancePage() {
     );
 
     try {
+      // ✅ Exact same payload shape as before — zero schema change
       const payload = {
         name: groupName.toUpperCase(),
-        items: validItems.map((i) => ({
-          label: i.label.toUpperCase(),
-        })),
+        items: validItems.map((i) => ({ label: i.label.toUpperCase() })),
         updatedAt: serverTimestamp(),
       };
 
@@ -145,18 +210,18 @@ export default function SpecsMaintenancePage() {
         toast.success("Spec Group Created", { id: loadingToast });
       }
       resetForm();
-    } catch (error) {
+    } catch {
       toast.error("Process failed", { id: loadingToast });
     } finally {
       setIsSubmitLoading(false);
     }
   };
 
-  const toggleStatus = async (id: string, currentStatus: boolean) => {
+  const toggleStatus = async (id: string, current: boolean) => {
     try {
-      await updateDoc(doc(db, "specs", id), { isActive: !currentStatus });
-      toast.success(currentStatus ? "Group Deactivated" : "Group Activated");
-    } catch (error) {
+      await updateDoc(doc(db, "specs", id), { isActive: !current });
+      toast.success(current ? "Group Deactivated" : "Group Activated");
+    } catch {
       toast.error("Failed to update status");
     }
   };
@@ -165,10 +230,40 @@ export default function SpecsMaintenancePage() {
     try {
       await deleteDoc(doc(db, "specs", id));
       toast.success("Specification Group Deleted");
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete");
     }
   };
+
+  // ── Standalone item handlers ──
+  const handleAddStandalone = async () => {
+    if (!newStandaloneLabel.trim()) return toast.error("Label is required");
+    setIsStandaloneLoading(true);
+    try {
+      await addDoc(collection(db, "specItems"), {
+        label: newStandaloneLabel.toUpperCase().trim(),
+        createdAt: serverTimestamp(),
+      });
+      toast.success("Standalone Spec Item Added");
+      setNewStandaloneLabel("");
+    } catch {
+      toast.error("Failed to add item");
+    } finally {
+      setIsStandaloneLoading(false);
+    }
+  };
+
+  const handleDeleteStandalone = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "specItems", id));
+      toast.success("Spec Item Deleted");
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  // Labels currently in the form — used to show "Added" state in combobox
+  const currentLabels = items.map((i) => i.label.toUpperCase());
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -197,12 +292,117 @@ export default function SpecsMaintenancePage() {
                 Specs Maintenance
               </h1>
               <p className="text-sm text-muted-foreground">
-                Manage and maintain product specification labels.
+                Manage specification groups and standalone spec items.
               </p>
             </div>
 
+            {/* ── STANDALONE SPEC ITEMS PANEL ── */}
+            <Card className="rounded-none shadow-none border-foreground/10">
+              <CardHeader className="pb-4 border-b">
+                <div className="flex items-center gap-2">
+                  <Tag size={14} className="text-primary" />
+                  <CardTitle className="text-xs font-black uppercase tracking-widest">
+                    Standalone Spec Items
+                  </CardTitle>
+                  <Badge
+                    variant="secondary"
+                    className="text-[8px] font-black uppercase px-2 py-0 rounded-none h-4"
+                  >
+                    {standaloneItems.length}
+                  </Badge>
+                </div>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold pt-1">
+                  Ungrouped spec labels. Pick them via the combobox inside the
+                  group form — they become regular spec items, no difference.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-5 space-y-4">
+                {/* Add new standalone item */}
+                <div className="flex gap-2">
+                  <Input
+                    value={newStandaloneLabel}
+                    onChange={(e) => setNewStandaloneLabel(e.target.value)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && handleAddStandalone()
+                    }
+                    placeholder="E.G. TENSILE STRENGTH"
+                    className="font-bold uppercase h-9 text-[11px] rounded-none border-2 flex-1"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleAddStandalone}
+                    disabled={isStandaloneLoading}
+                    size="sm"
+                    className="h-9 rounded-none font-black uppercase text-[9px] tracking-widest gap-1"
+                  >
+                    {isStandaloneLoading ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <>
+                        <Plus size={12} /> Add
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {standaloneItems.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground uppercase font-bold text-center py-4 border border-dashed border-foreground/10">
+                    No standalone items yet
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {standaloneItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-1 bg-muted/40 border border-foreground/10 pl-2.5 pr-1 py-1 group"
+                      >
+                        <span className="text-[9px] font-black uppercase text-muted-foreground">
+                          {item.label}
+                        </span>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 rounded-none text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X size={10} />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="rounded-none border-2">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle className="text-xs font-black uppercase">
+                                Delete Spec Item
+                              </AlertDialogTitle>
+                              <AlertDialogDescription className="text-xs">
+                                Remove "{item.label}" from the standalone pool?
+                                It will remain inside any groups it was already
+                                added to.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-none text-[10px] font-bold uppercase">
+                                Cancel
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDeleteStandalone(item.id)}
+                                className="bg-destructive text-destructive-foreground rounded-none text-[10px] font-bold uppercase"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ── MAIN GRID ── */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* --- FORM COLUMN --- */}
+              {/* FORM COLUMN */}
               <div className="lg:col-span-5">
                 <Card className="sticky top-6 border-foreground/10 shadow-none rounded-none">
                   <CardHeader className="pb-4 border-b">
@@ -224,6 +424,7 @@ export default function SpecsMaintenancePage() {
                   </CardHeader>
                   <CardContent className="pt-6">
                     <form onSubmit={handleSubmit} className="space-y-6">
+                      {/* Group Name */}
                       <div className="space-y-2">
                         <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">
                           Group Name
@@ -236,6 +437,72 @@ export default function SpecsMaintenancePage() {
                         />
                       </div>
 
+                      {/* Combobox — pick from standalone pool, merges into items[] */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">
+                          Add from Standalone Items
+                        </label>
+                        <Popover open={openCombo} onOpenChange={setOpenCombo}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase border-2"
+                            >
+                              Select a standalone item...
+                              <Tag className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
+                            align="start"
+                          >
+                            <Command>
+                              <CommandInput
+                                placeholder="Search spec items..."
+                                className="h-9 text-xs"
+                              />
+                              <CommandList>
+                                <CommandEmpty>No items found.</CommandEmpty>
+                                <CommandGroup>
+                                  {standaloneItems.map((item) => {
+                                    const alreadyIn = currentLabels.includes(
+                                      item.label.toUpperCase(),
+                                    );
+                                    return (
+                                      <CommandItem
+                                        key={item.id}
+                                        value={item.label}
+                                        onSelect={() =>
+                                          attachStandaloneItem(item)
+                                        }
+                                        className="text-[10px] uppercase font-bold"
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-3 w-3",
+                                            alreadyIn
+                                              ? "opacity-100 text-primary"
+                                              : "opacity-0",
+                                          )}
+                                        />
+                                        {item.label}
+                                        {alreadyIn && (
+                                          <span className="ml-auto text-[8px] text-muted-foreground uppercase">
+                                            Added
+                                          </span>
+                                        )}
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* Spec Labels — manual + combobox-added are unified here */}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">
@@ -299,14 +566,13 @@ export default function SpecsMaintenancePage() {
                 </Card>
               </div>
 
-              {/* --- LIST COLUMN --- */}
+              {/* LIST COLUMN */}
               <div className="lg:col-span-7">
                 {loading ? (
                   <div className="h-64 flex items-center justify-center">
                     <Loader2 className="animate-spin text-primary" />
                   </div>
                 ) : specGroups.length === 0 ? (
-                  /* ── EMPTY STATE ── */
                   <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
                     <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm border">
                       <ClipboardList className="h-8 w-8 text-muted-foreground/40" />
@@ -408,6 +674,7 @@ export default function SpecsMaintenancePage() {
                           </div>
                         </CardHeader>
                         <CardContent className="p-4 pt-2">
+                          {/* All items render identically — no visual difference */}
                           <div className="border border-foreground/5 bg-muted/20 p-3 flex flex-wrap gap-2">
                             {group.items?.map((item: SpecItem, idx: number) => (
                               <span
