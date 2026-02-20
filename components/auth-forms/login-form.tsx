@@ -101,8 +101,8 @@ export function LoginForm({
 
     // Role-based routing
     const roleRoutes: Record<string, string> = {
-      warehouse: "/products/website-products",
-      admin: "/products/website-products",
+      warehouse: "/products/all-products",
+      admin: "/products/all-products",
       seo: "/content/blogs",
       hr: "/jobs/careers",
     };
