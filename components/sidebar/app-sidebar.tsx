@@ -97,7 +97,7 @@ const allNavItems = {
     url: "/recycle-bin",
     icon: <Trash />,
     items: [
-      { title: "Deleted Products", url: "/recycle-bin" },
+      { title: "Deleted Products", url: "/recycle-bin/deleted-products" },
     ],
   },
 };

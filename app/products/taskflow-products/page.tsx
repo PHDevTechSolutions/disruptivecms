@@ -15,7 +15,6 @@ import {
   X,
 } from "lucide-react";
 
-// Sidebar Components
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import {
   Breadcrumb,
@@ -32,8 +31,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-
-// UI Components
 import {
   Table,
   TableBody,
@@ -53,19 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 
-// Firebase
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -73,38 +58,42 @@ import {
   query,
   orderBy,
   doc,
-  deleteDoc,
+  writeBatch,
+  serverTimestamp,
 } from "firebase/firestore";
 import { toast } from "sonner";
 
-// Components
 import TaskflowAddNewProduct from "@/components/product-forms/taskflow-add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
+import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
 export default function TaskflowProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filter States
   const [searchQuery, setSearchQuery] = useState("");
   const [brandFilter, setBrandFilter] = useState("all");
 
-  // Pagination States
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [rowsPerPageInput, setRowsPerPageInput] = useState("10");
 
-  // Search suggestions state
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // Close suggestions on outside click
+  const [isEditing, setIsEditing] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // ── Delete dialog state ──────────────────────────────────────────────────
+  // Single item: holds the product object to soft-delete
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  // Bulk: open/close state for the bulk recycle dialog
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(e.target as Node)
-      ) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
         setShowSuggestions(false);
       }
     };
@@ -112,7 +101,6 @@ export default function TaskflowProductsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Compute suggestions from taskflow products based on searchQuery
   const suggestions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
@@ -131,171 +119,123 @@ export default function TaskflowProductsPage() {
       .slice(0, 7);
   }, [products, searchQuery]);
 
-  // View States
-  const [isEditing, setIsEditing] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<any>(null);
-
-  // Selection States
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  // --- 1. FETCH DATA ---
   useEffect(() => {
     setLoading(true);
     const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const productList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setProducts(productList);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Fetch error:", error);
-        toast.error("Failed to load products");
-        setLoading(false);
-      },
-    );
-
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setProducts(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (error) => {
+      console.error("Fetch error:", error);
+      toast.error("Failed to load products");
+      setLoading(false);
+    });
     return () => unsubscribe();
   }, []);
 
-  // --- 2. FILTER LOGIC - Always filters for taskflow ---
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const matchesBrand =
-        brandFilter === "all" ||
-        (Array.isArray(p.brands)
-          ? p.brands.includes(brandFilter)
-          : p.brand === brandFilter);
-
+      const matchesBrand = brandFilter === "all" ||
+        (Array.isArray(p.brands) ? p.brands.includes(brandFilter) : p.brand === brandFilter);
       const matchesTaskflow = Array.isArray(p.website)
         ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
         : p.website?.toLowerCase().includes("taskflow");
-
       const matchesSearch =
         p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.itemCode?.toLowerCase().includes(searchQuery.toLowerCase());
-
       return matchesBrand && matchesTaskflow && matchesSearch;
     });
   }, [products, brandFilter, searchQuery]);
 
-  // --- 3. PAGINATION LOGIC ---
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, brandFilter]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, brandFilter]);
 
   const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-
   const paginatedProducts = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredProducts.slice(startIndex, startIndex + itemsPerPage);
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredProducts.slice(start, start + itemsPerPage);
   }, [filteredProducts, currentPage, itemsPerPage]);
 
   const uniqueBrands = useMemo(() => {
-    const brandsSet = new Set<string>();
-    products.forEach((p: any) => {
-      if (Array.isArray(p.brands))
-        p.brands.forEach((b: string) => brandsSet.add(b));
-      else if (p.brand) brandsSet.add(p.brand);
+    const s = new Set<string>();
+    products.forEach((p) => {
+      if (Array.isArray(p.brands)) p.brands.forEach((b: string) => s.add(b));
+      else if (p.brand) s.add(p.brand);
     });
-    return Array.from(brandsSet).sort();
+    return Array.from(s).sort();
   }, [products]);
 
-  // Taskflow-only total (unfiltered by search/brand)
-  const taskflowTotal = useMemo(() => {
-    return products.filter((p) => {
-      return Array.isArray(p.website)
+  const taskflowTotal = useMemo(() =>
+    products.filter((p) =>
+      Array.isArray(p.website)
         ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
-        : p.website?.toLowerCase().includes("taskflow");
-    }).length;
-  }, [products]);
+        : p.website?.toLowerCase().includes("taskflow"),
+    ).length,
+    [products],
+  );
 
   const isFiltered = filteredProducts.length !== taskflowTotal;
 
-  // --- 4. ACTIONS ---
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    try {
-      await deleteDoc(doc(db, "products", id));
-      toast.success("Product deleted successfully");
-    } catch (error) {
-      toast.error("Failed to delete product");
-    }
+  // ── Soft-delete single product → recycle_bin ─────────────────────────────
+  const handleSoftDelete = async (product: any) => {
+    const batch = writeBatch(db);
+    const { id, ...rest } = product;
+    batch.set(doc(db, "recycle_bin", id), {
+      ...rest,
+      originalCollection: "products",
+      originPage: "/admin/products/taskflow",
+      deletedAt: serverTimestamp(),
+    });
+    batch.delete(doc(db, "products", id));
+    await batch.commit();
+    toast.success(`"${product.name}" moved to recycle bin.`);
   };
 
-  const handleEditClick = (product: any) => {
-    setSelectedProduct(product);
-    setIsEditing(true);
+  // ── Bulk soft-delete → recycle_bin ──────────────────────────────────────
+  const handleBulkSoftDelete = async () => {
+    const targets = paginatedProducts.filter((p) => selectedIds.has(p.id));
+    const batch = writeBatch(db);
+    targets.forEach((product) => {
+      const { id, ...rest } = product;
+      batch.set(doc(db, "recycle_bin", id), {
+        ...rest,
+        originalCollection: "products",
+        originPage: "/admin/products/taskflow",
+        deletedAt: serverTimestamp(),
+      });
+      batch.delete(doc(db, "products", id));
+    });
+    await batch.commit();
+    toast.success(`${targets.length} product(s) moved to recycle bin.`);
+    setSelectedIds(new Set());
   };
 
-  const handleAddNewClick = () => {
-    setSelectedProduct(null);
-    setIsEditing(true);
-  };
+  const handleEditClick = (product: any) => { setSelectedProduct(product); setIsEditing(true); };
+  const handleAddNewClick = () => { setSelectedProduct(null); setIsEditing(true); };
+  const handleBackToList = () => { setSelectedProduct(null); setIsEditing(false); };
 
-  const handleBackToList = () => {
-    setSelectedProduct(null);
-    setIsEditing(false);
-  };
-
-  // --- SELECTION HANDLERS ---
-  const toggleSelectProduct = (productId: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    const newSelected = new Set(selectedIds);
-    if (newSelected.has(productId)) newSelected.delete(productId);
-    else newSelected.add(productId);
-    setSelectedIds(newSelected);
+  const toggleSelectProduct = (productId: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(productId)) next.delete(productId); else next.add(productId);
+    setSelectedIds(next);
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === paginatedProducts.length)
-      setSelectedIds(new Set());
+    if (selectedIds.size === paginatedProducts.length) setSelectedIds(new Set());
     else setSelectedIds(new Set(paginatedProducts.map((p) => p.id)));
   };
 
-  const handleBulkDelete = async () => {
-    setIsDeleting(true);
-    try {
-      const deletePromises = Array.from(selectedIds).map((id) =>
-        deleteDoc(doc(db, "products", id)),
-      );
-      await Promise.all(deletePromises);
-      setSelectedIds(new Set());
-      setShowDeleteConfirm(false);
-      toast.success(`Deleted ${selectedIds.size} product(s)`);
-    } catch (error) {
-      console.error("Bulk delete error:", error);
-      toast.error("Failed to delete products");
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
   const getPaginationPages = () => {
-    const maxButtons = 5;
-    if (totalPages <= maxButtons)
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-
+    const max = 5;
+    if (totalPages <= max) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages: number[] = [];
-    const leftSide = Math.floor(maxButtons / 2);
-
-    let startPage = Math.max(1, currentPage - leftSide);
-    let endPage = Math.min(totalPages, startPage + maxButtons - 1);
-
-    if (endPage - startPage < maxButtons - 1)
-      startPage = Math.max(1, endPage - maxButtons + 1);
-
-    for (let i = startPage; i <= endPage; i++) pages.push(i);
+    let start = Math.max(1, currentPage - Math.floor(max / 2));
+    let end = Math.min(totalPages, start + max - 1);
+    if (end - start < max - 1) start = Math.max(1, end - max + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
     return pages;
   };
 
-  // --- RENDER: EDIT MODE ---
+  // ── EDIT MODE ────────────────────────────────────────────────────────────
   const renderEditMode = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -305,19 +245,14 @@ export default function TaskflowProductsPage() {
         </Button>
         <Separator orientation="vertical" className="h-6" />
         <p className="text-sm text-muted-foreground">
-          {selectedProduct
-            ? `Editing: ${selectedProduct?.name}`
-            : "Adding New Product"}
+          {selectedProduct ? `Editing: ${selectedProduct?.name}` : "Adding New Product"}
         </p>
       </div>
-      <TaskflowAddNewProduct
-        editData={selectedProduct}
-        onFinished={handleBackToList}
-      />
+      <TaskflowAddNewProduct editData={selectedProduct} onFinished={handleBackToList} />
     </div>
   );
 
-  // --- RENDER: TABLE MODE ---
+  // ── TABLE MODE ───────────────────────────────────────────────────────────
   const renderTableMode = () => (
     <div className="w-full space-y-4">
       {/* HEADER */}
@@ -336,22 +271,14 @@ export default function TaskflowProductsPage() {
                 <span className="font-semibold text-foreground">
                   {isFiltered ? filteredProducts.length : taskflowTotal}
                 </span>
-                {isFiltered && (
-                  <span className="text-muted-foreground">
-                    {" "}
-                    of {taskflowTotal}
-                  </span>
-                )}{" "}
+                {isFiltered && <span className="text-muted-foreground"> of {taskflowTotal}</span>}{" "}
                 product{taskflowTotal !== 1 ? "s" : ""}
               </>
             )}
           </p>
         </div>
-
         <div className="flex gap-3">
-          <BulkUploader
-            onUploadComplete={() => toast.success("Bulk upload completed!")}
-          />
+          <BulkUploader onUploadComplete={() => toast.success("Bulk upload completed!")} />
           <Button onClick={handleAddNewClick} className="gap-2">
             <PlusCircle className="h-4 w-4" />
             Add Product
@@ -364,45 +291,27 @@ export default function TaskflowProductsPage() {
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-destructive/20 rounded-full flex items-center justify-center">
-              <span className="text-sm font-semibold text-destructive">
-                {selectedIds.size}
-              </span>
+              <span className="text-sm font-semibold text-destructive">{selectedIds.size}</span>
             </div>
             <div>
               <p className="text-sm font-semibold">
-                {selectedIds.size} product{selectedIds.size > 1 ? "s" : ""}{" "}
-                selected
+                {selectedIds.size} product{selectedIds.size > 1 ? "s" : ""} selected
               </p>
-              <p className="text-xs text-muted-foreground">
-                Ready for bulk actions
-              </p>
+              <p className="text-xs text-muted-foreground">Ready for bulk actions</p>
             </div>
           </div>
-
           <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedIds(new Set())}
-              className="gap-2"
-            >
-              <X className="h-4 w-4" />
-              Clear
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="gap-2">
+              <X className="h-4 w-4" /> Clear
             </Button>
-
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={isDeleting}
+              onClick={() => setBulkDeleteOpen(true)}
               className="gap-2"
             >
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              Delete {selectedIds.size}
+              <Trash2 className="h-4 w-4" />
+              Move {selectedIds.size} to Bin
             </Button>
           </div>
         </div>
@@ -416,22 +325,14 @@ export default function TaskflowProductsPage() {
             placeholder="Search name or item code..."
             className="pl-9"
             value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setShowSuggestions(true);
-            }}
+            onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
             onFocus={() => setShowSuggestions(true)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setShowSuggestions(false);
-            }}
+            onKeyDown={(e) => { if (e.key === "Escape") setShowSuggestions(false); }}
           />
-          {/* SUGGESTIONS DROPDOWN */}
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-popover border rounded-lg shadow-lg overflow-hidden">
               {suggestions.map((product) => {
-                const brands = Array.isArray(product.brands)
-                  ? product.brands
-                  : [product.brand || "Generic"];
+                const brands = Array.isArray(product.brands) ? product.brands : [product.brand || "Generic"];
                 return (
                   <button
                     key={product.id}
@@ -445,45 +346,26 @@ export default function TaskflowProductsPage() {
                     }}
                   >
                     <div className="w-9 h-9 shrink-0 bg-muted rounded-md border overflow-hidden flex items-center justify-center">
-                      {product.mainImage ? (
-                        <img
-                          src={product.mainImage}
-                          alt={product.name}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <Package className="h-4 w-4 text-muted-foreground/40" />
-                      )}
+                      {product.mainImage
+                        ? <img src={product.mainImage} alt={product.name} className="w-full h-full object-contain" />
+                        : <Package className="h-4 w-4 text-muted-foreground/40" />}
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium truncate">
-                        {product.name}
-                      </span>
+                      <span className="text-sm font-medium truncate">{product.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground font-mono">
-                          {product.itemCode || "---"}
-                        </span>
+                        <span className="text-xs text-muted-foreground font-mono">{product.itemCode || "---"}</span>
                         {(product.productFamily || product.categories) && (
-                          <span className="text-xs text-muted-foreground truncate">
-                            · {product.productFamily || product.categories}
-                          </span>
+                          <span className="text-xs text-muted-foreground truncate">· {product.productFamily || product.categories}</span>
                         )}
                       </div>
                     </div>
-                    <Badge
-                      variant="outline"
-                      className="ml-auto shrink-0 text-xs"
-                    >
-                      {brands[0]}
-                    </Badge>
+                    <Badge variant="outline" className="ml-auto shrink-0 text-xs">{brands[0]}</Badge>
                   </button>
                 );
               })}
               <div className="px-3 py-1.5 border-t bg-muted/40">
                 <p className="text-xs text-muted-foreground">
-                  {suggestions.length} suggestion
-                  {suggestions.length !== 1 ? "s" : ""} — press Enter to search
-                  all
+                  {suggestions.length} suggestion{suggestions.length !== 1 ? "s" : ""} — press Enter to search all
                 </p>
               </div>
             </div>
@@ -497,9 +379,7 @@ export default function TaskflowProductsPage() {
           <SelectContent>
             <SelectItem value="all">All Brands</SelectItem>
             {uniqueBrands.map((brand) => (
-              <SelectItem key={brand} value={brand}>
-                {brand}
-              </SelectItem>
+              <SelectItem key={brand} value={brand}>{brand}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -512,10 +392,7 @@ export default function TaskflowProductsPage() {
             <TableRow>
               <TableHead className="w-12">
                 <Checkbox
-                  checked={
-                    selectedIds.size === paginatedProducts.length &&
-                    paginatedProducts.length > 0
-                  }
+                  checked={selectedIds.size === paginatedProducts.length && paginatedProducts.length > 0}
                   onCheckedChange={toggleSelectAll}
                 />
               </TableHead>
@@ -526,7 +403,6 @@ export default function TaskflowProductsPage() {
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
-
           <TableBody>
             {loading ? (
               <TableRow>
@@ -551,15 +427,12 @@ export default function TaskflowProductsPage() {
                   className="cursor-pointer"
                   onClick={() => handleEditClick(product)}
                 >
-                  {/* CHECKBOX */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedIds.has(product.id)}
                       onCheckedChange={() => toggleSelectProduct(product.id)}
                     />
                   </TableCell>
-
-                  {/* IMAGE */}
                   <TableCell>
                     <div className="w-12 h-12 bg-background rounded-lg p-1 border overflow-hidden">
                       <img
@@ -569,94 +442,46 @@ export default function TaskflowProductsPage() {
                       />
                     </div>
                   </TableCell>
-
-                  {/* PRODUCT INFO */}
                   <TableCell>
                     <div className="flex flex-col max-w-62.5">
-                      <span className="font-semibold text-sm line-clamp-1">
-                        {product.name}
-                      </span>
+                      <span className="font-semibold text-sm line-clamp-1">{product.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {product.productFamily ||
-                          product.categories ||
-                          "No Category"}
+                        {product.productFamily || product.categories || "No Category"}
                       </span>
                     </div>
                   </TableCell>
-
-                  {/* ITEM CODE */}
                   <TableCell>
-                    <span className="text-xs text-muted-foreground font-mono">
-                      {product.itemCode || "---"}
-                    </span>
+                    <span className="text-xs text-muted-foreground font-mono">{product.itemCode || "---"}</span>
                   </TableCell>
-
-                  {/* BRAND / WEBSITE */}
                   <TableCell>
                     <div className="flex flex-col gap-1">
                       <Badge variant="outline" className="w-fit text-xs">
-                        {Array.isArray(product.brands)
-                          ? product.brands.join(", ")
-                          : product.brand || "Generic"}
+                        {Array.isArray(product.brands) ? product.brands.join(", ") : product.brand || "Generic"}
                       </Badge>
                       <Badge variant="secondary" className="w-fit text-xs">
-                        {Array.isArray(product.website)
-                          ? product.website.join(", ")
-                          : product.website || "N/A"}
+                        {Array.isArray(product.website) ? product.website.join(", ") : product.website || "N/A"}
                       </Badge>
                     </div>
                   </TableCell>
-
-                  {/* ACTIONS */}
                   <TableCell className="text-right">
-                    <div
-                      className="flex justify-end gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditClick(product);
-                        }}
+                        onClick={() => handleEditClick(product)}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
-
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Product?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              You are about to delete{" "}
-                              <span className="font-semibold text-foreground">
-                                {product.name}
-                              </span>
-                              . This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={(e) => handleDelete(e, product.id)}
-                            >
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      {/* ← DeleteToRecycleBinDialog trigger */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => setDeleteTarget(product)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -670,9 +495,7 @@ export default function TaskflowProductsPage() {
       {!loading && totalPages > 0 && (
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">
-              Rows per page:
-            </span>
+            <span className="text-sm text-muted-foreground">Rows per page:</span>
             <Input
               type="number"
               min={1}
@@ -691,47 +514,36 @@ export default function TaskflowProductsPage() {
                   setRowsPerPageInput(String(itemsPerPage));
                 }
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  (e.target as HTMLInputElement).blur();
-                }
-              }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             />
           </div>
-
           <div className="flex items-center gap-1">
             <Button
-              variant="outline"
-              size="sm"
+              variant="outline" size="sm"
               disabled={currentPage === 1}
-              onClick={() => setCurrentPage((prev) => prev - 1)}
+              onClick={() => setCurrentPage((p) => p - 1)}
               className="gap-1"
             >
-              <ChevronLeft className="h-4 w-4" />
-              Prev
+              <ChevronLeft className="h-4 w-4" /> Prev
             </Button>
-
-            {getPaginationPages().map((pageNum) => (
+            {getPaginationPages().map((p) => (
               <Button
-                key={pageNum}
-                variant={currentPage === pageNum ? "default" : "outline"}
+                key={p}
+                variant={currentPage === p ? "default" : "outline"}
                 size="sm"
-                onClick={() => setCurrentPage(pageNum)}
+                onClick={() => setCurrentPage(p)}
                 className="w-9"
               >
-                {pageNum}
+                {p}
               </Button>
             ))}
-
             <Button
-              variant="outline"
-              size="sm"
+              variant="outline" size="sm"
               disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage((prev) => prev + 1)}
+              onClick={() => setCurrentPage((p) => p + 1)}
               className="gap-1"
             >
-              Next
-              <ChevronRight className="h-4 w-4" />
+              Next <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -756,11 +568,7 @@ export default function TaskflowProductsPage() {
                   <BreadcrumbSeparator className="hidden md:block" />
                   <BreadcrumbItem>
                     <BreadcrumbPage>
-                      {isEditing
-                        ? selectedProduct
-                          ? "Edit Product"
-                          : "Add Product"
-                        : "Taskflow Products"}
+                      {isEditing ? (selectedProduct ? "Edit Product" : "Add Product") : "Taskflow Products"}
                     </BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
@@ -773,31 +581,23 @@ export default function TaskflowProductsPage() {
         </SidebarInset>
       </SidebarProvider>
 
-      {/* BULK DELETE CONFIRMATION */}
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Selected Products?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You are about to delete{" "}
-              <span className="font-semibold text-foreground">
-                {selectedIds.size}
-              </span>{" "}
-              product
-              {selectedIds.size > 1 ? "s" : ""}. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleBulkDelete} disabled={isDeleting}>
-              {isDeleting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* ── SINGLE ITEM: Move to Recycle Bin ── */}
+      <DeleteToRecycleBinDialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        itemName={deleteTarget?.name ?? ""}
+        onConfirm={() => handleSoftDelete(deleteTarget)}
+      />
+
+      {/* ── BULK: Move to Recycle Bin ── */}
+      <DeleteToRecycleBinDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        itemName={`${selectedIds.size} products`}
+        confirmText={`${selectedIds.size} products`}
+        count={selectedIds.size}
+        onConfirm={handleBulkSoftDelete}
+      />
     </TooltipProvider>
   );
 }

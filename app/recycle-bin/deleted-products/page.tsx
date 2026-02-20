@@ -87,7 +87,12 @@ interface RestoreDialogProps {
   onConfirm: () => Promise<void>;
 }
 
-function RestoreDialog({ open, onOpenChange, item, onConfirm }: RestoreDialogProps) {
+function RestoreDialog({
+  open,
+  onOpenChange,
+  item,
+  onConfirm,
+}: RestoreDialogProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -136,14 +141,20 @@ function RestoreDialog({ open, onOpenChange, item, onConfirm }: RestoreDialogPro
           <div className="flex items-center gap-3 rounded-none bg-muted/50 border px-3 py-2.5">
             <div className="w-10 h-10 shrink-0 bg-background border rounded-none overflow-hidden flex items-center justify-center">
               {item?.mainImage ? (
-                <img src={item.mainImage} alt={item.name} className="w-full h-full object-contain" />
+                <img
+                  src={item.mainImage}
+                  alt={item.name}
+                  className="w-full h-full object-contain"
+                />
               ) : (
                 <Package className="h-4 w-4 text-muted-foreground/40" />
               )}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{item?.name}</p>
-              <p className="text-[11px] text-muted-foreground font-mono">{item?.itemCode || "---"}</p>
+              <p className="text-[11px] text-muted-foreground font-mono">
+                {item?.itemCode || "---"}
+              </p>
             </div>
           </div>
 
@@ -151,7 +162,9 @@ function RestoreDialog({ open, onOpenChange, item, onConfirm }: RestoreDialogPro
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">
               Type{" "}
-              <span className="font-bold text-foreground font-mono">{required}</span>{" "}
+              <span className="font-bold text-foreground font-mono">
+                {required}
+              </span>{" "}
               to restore
             </Label>
             <Input
@@ -159,27 +172,38 @@ function RestoreDialog({ open, onOpenChange, item, onConfirm }: RestoreDialogPro
               placeholder={required}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && isMatch) handleConfirm(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && isMatch) handleConfirm();
+              }}
               className={cn(
                 "rounded-none font-mono text-sm transition-colors",
-                inputValue.length > 0 && (
-                  isMatch
+                inputValue.length > 0 &&
+                  (isMatch
                     ? "border-emerald-500 focus-visible:ring-emerald-500/20"
-                    : "border-destructive/50 focus-visible:ring-destructive/20"
-                ),
+                    : "border-destructive/50 focus-visible:ring-destructive/20"),
               )}
             />
             {inputValue.length > 0 && !isMatch && (
-              <p className="text-[10px] text-destructive">Name doesn't match. Type exactly as shown.</p>
+              <p className="text-[10px] text-destructive">
+                Name doesn't match. Type exactly as shown.
+              </p>
             )}
             {isMatch && (
-              <p className="text-[10px] text-emerald-600 font-medium">✓ Confirmed — ready to restore.</p>
+              <p className="text-[10px] text-emerald-600 font-medium">
+                ✓ Confirmed — ready to restore.
+              </p>
             )}
           </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" size="sm" className="rounded-none" onClick={() => onOpenChange(false)} disabled={isLoading}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-none"
+            onClick={() => onOpenChange(false)}
+            disabled={isLoading}
+          >
             Cancel
           </Button>
           <Button
@@ -188,8 +212,12 @@ function RestoreDialog({ open, onOpenChange, item, onConfirm }: RestoreDialogPro
             onClick={handleConfirm}
             disabled={!isMatch || isLoading}
           >
-            {isLoading ? <span className="animate-pulse">Restoring...</span> : (
-              <><RotateCcw className="mr-1.5 h-3 w-3" /> Restore Item</>
+            {isLoading ? (
+              <span className="animate-pulse">Restoring...</span>
+            ) : (
+              <>
+                <RotateCcw className="mr-1.5 h-3 w-3" /> Restore Item
+              </>
             )}
           </Button>
         </DialogFooter>
@@ -206,7 +234,12 @@ interface PermanentDeleteDialogProps {
   onConfirm: () => Promise<void>;
 }
 
-function PermanentDeleteDialog({ open, onOpenChange, item, onConfirm }: PermanentDeleteDialogProps) {
+function PermanentDeleteDialog({
+  open,
+  onOpenChange,
+  item,
+  onConfirm,
+}: PermanentDeleteDialogProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -254,21 +287,29 @@ function PermanentDeleteDialog({ open, onOpenChange, item, onConfirm }: Permanen
           <div className="flex items-center gap-3 rounded-none bg-muted/50 border px-3 py-2.5">
             <div className="w-10 h-10 shrink-0 bg-background border rounded-none overflow-hidden flex items-center justify-center">
               {item?.mainImage ? (
-                <img src={item.mainImage} alt={item.name} className="w-full h-full object-contain" />
+                <img
+                  src={item.mainImage}
+                  alt={item.name}
+                  className="w-full h-full object-contain"
+                />
               ) : (
                 <Package className="h-4 w-4 text-muted-foreground/40" />
               )}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{item?.name}</p>
-              <p className="text-[11px] text-muted-foreground font-mono">{item?.itemCode || "---"}</p>
+              <p className="text-[11px] text-muted-foreground font-mono">
+                {item?.itemCode || "---"}
+              </p>
             </div>
           </div>
 
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">
               Type{" "}
-              <span className="font-bold text-foreground font-mono">{required}</span>{" "}
+              <span className="font-bold text-foreground font-mono">
+                {required}
+              </span>{" "}
               to permanently delete
             </Label>
             <Input
@@ -276,34 +317,46 @@ function PermanentDeleteDialog({ open, onOpenChange, item, onConfirm }: Permanen
               placeholder={required}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && isMatch) handleConfirm(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && isMatch) handleConfirm();
+              }}
               className={cn(
                 "rounded-none font-mono text-sm transition-colors",
-                inputValue.length > 0 && (
-                  isMatch
+                inputValue.length > 0 &&
+                  (isMatch
                     ? "border-emerald-500 focus-visible:ring-emerald-500/20"
-                    : "border-destructive/50 focus-visible:ring-destructive/20"
-                ),
+                    : "border-destructive/50 focus-visible:ring-destructive/20"),
               )}
             />
             {inputValue.length > 0 && !isMatch && (
-              <p className="text-[10px] text-destructive">Name doesn't match. Type exactly as shown.</p>
+              <p className="text-[10px] text-destructive">
+                Name doesn't match. Type exactly as shown.
+              </p>
             )}
             {isMatch && (
-              <p className="text-[10px] text-emerald-600 font-medium">✓ Confirmed — this will be deleted permanently.</p>
+              <p className="text-[10px] text-emerald-600 font-medium">
+                ✓ Confirmed — this will be deleted permanently.
+              </p>
             )}
           </div>
 
           <div className="flex items-start gap-2 rounded-none bg-destructive/5 border border-destructive/20 px-3 py-2.5">
             <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
             <p className="text-[10px] text-destructive leading-relaxed">
-              Permanent deletion cannot be reversed. This item will not be recoverable.
+              Permanent deletion cannot be reversed. This item will not be
+              recoverable.
             </p>
           </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" size="sm" className="rounded-none" onClick={() => onOpenChange(false)} disabled={isLoading}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-none"
+            onClick={() => onOpenChange(false)}
+            disabled={isLoading}
+          >
             Cancel
           </Button>
           <Button
@@ -313,8 +366,12 @@ function PermanentDeleteDialog({ open, onOpenChange, item, onConfirm }: Permanen
             onClick={handleConfirm}
             disabled={!isMatch || isLoading}
           >
-            {isLoading ? <span className="animate-pulse">Deleting...</span> : (
-              <><Trash2 className="mr-1.5 h-3 w-3" /> Delete Forever</>
+            {isLoading ? (
+              <span className="animate-pulse">Deleting...</span>
+            ) : (
+              <>
+                <Trash2 className="mr-1.5 h-3 w-3" /> Delete Forever
+              </>
             )}
           </Button>
         </DialogFooter>
@@ -345,14 +402,18 @@ export default function RecycleBinPage() {
       collection(db, "recycle_bin"),
       orderBy("deletedAt", "desc"),
     );
-    const unsub = onSnapshot(q, (snapshot) => {
-      setItems(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, (err) => {
-      console.error(err);
-      toast.error("Failed to load recycle bin.");
-      setLoading(false);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        setItems(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        toast.error("Failed to load recycle bin.");
+        setLoading(false);
+      },
+    );
     return () => unsub();
   }, []);
 
@@ -362,23 +423,33 @@ export default function RecycleBinPage() {
   }, [searchQuery]);
 
   // ── Filter + paginate ───────────────────────────────────────────────────
-  const filtered = useMemo(() =>
-    items.filter((item) =>
-      item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.itemCode?.toLowerCase().includes(searchQuery.toLowerCase()),
-    ), [items, searchQuery]);
+  const filtered = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.itemCode?.toLowerCase().includes(searchQuery.toLowerCase()),
+      ),
+    [items, searchQuery],
+  );
 
   const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
-  const paginated = useMemo(() =>
-    filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE),
-    [filtered, currentPage]);
+  const paginated = useMemo(
+    () =>
+      filtered.slice(
+        (currentPage - 1) * ITEMS_PER_PAGE,
+        currentPage * ITEMS_PER_PAGE,
+      ),
+    [filtered, currentPage],
+  );
 
   // ── Handlers ────────────────────────────────────────────────────────────
   const handleRestore = async (item: any) => {
     // Move back to original collection (determined by item.originalCollection)
     const targetCollection = item.originalCollection || "products";
     const batch = writeBatch(db);
-    const { id, deletedAt, deletedBy, originalCollection, ...originalData } = item;
+    const { id, deletedAt, deletedBy, originalCollection, ...originalData } =
+      item;
     batch.set(doc(db, targetCollection, id), originalData);
     batch.delete(doc(db, "recycle_bin", id));
     await batch.commit();
@@ -413,7 +484,8 @@ export default function RecycleBinPage() {
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     setSelectedIds(next);
   };
 
@@ -421,14 +493,19 @@ export default function RecycleBinPage() {
     if (!ts) return "---";
     try {
       return ts.toDate().toLocaleDateString("en-US", {
-        month: "short", day: "numeric", year: "numeric",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
       });
-    } catch { return "---"; }
+    } catch {
+      return "---";
+    }
   };
 
   const getPaginationPages = () => {
     const max = 5;
-    if (totalPages <= max) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    if (totalPages <= max)
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages: number[] = [];
     let start = Math.max(1, currentPage - 2);
     let end = Math.min(totalPages, start + max - 1);
@@ -468,8 +545,15 @@ export default function RecycleBinPage() {
                   Recycle Bin
                 </h1>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {loading ? "Loading..." : (
-                    <><span className="font-semibold text-foreground">{filtered.length}</span> item{filtered.length !== 1 ? "s" : ""} in recycle bin</>
+                  {loading ? (
+                    "Loading..."
+                  ) : (
+                    <>
+                      <span className="font-semibold text-foreground">
+                        {filtered.length}
+                      </span>{" "}
+                      item{filtered.length !== 1 ? "s" : ""} in recycle bin
+                    </>
                   )}
                 </p>
               </div>
@@ -477,12 +561,25 @@ export default function RecycleBinPage() {
               {/* Bulk delete */}
               {selectedIds.size > 0 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">{selectedIds.size} selected</span>
-                  <Button variant="ghost" size="sm" className="rounded-none" onClick={() => setSelectedIds(new Set())}>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedIds.size} selected
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-none"
+                    onClick={() => setSelectedIds(new Set())}
+                  >
                     <X className="h-3.5 w-3.5 mr-1" /> Clear
                   </Button>
-                  <Button variant="destructive" size="sm" className="rounded-none" onClick={() => setBulkDeleteOpen(true)}>
-                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete {selectedIds.size} Forever
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="rounded-none"
+                    onClick={() => setBulkDeleteOpen(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete{" "}
+                    {selectedIds.size} Forever
                   </Button>
                 </div>
               )}
@@ -503,7 +600,9 @@ export default function RecycleBinPage() {
             <div className="flex items-start gap-2 rounded-none bg-amber-50 border border-amber-200 px-4 py-3 dark:bg-amber-950/20 dark:border-amber-900">
               <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                Items in the recycle bin are soft-deleted and can be restored. To restore or permanently delete, you must type the item's exact name to confirm.
+                Items in the recycle bin are soft-deleted and can be restored.
+                To restore or permanently delete, you must type the item's exact
+                name to confirm.
               </p>
             </div>
 
@@ -514,7 +613,10 @@ export default function RecycleBinPage() {
                   <TableRow>
                     <TableHead className="w-12">
                       <Checkbox
-                        checked={selectedIds.size === paginated.length && paginated.length > 0}
+                        checked={
+                          selectedIds.size === paginated.length &&
+                          paginated.length > 0
+                        }
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
@@ -540,7 +642,9 @@ export default function RecycleBinPage() {
                         <div className="flex flex-col items-center gap-2 text-muted-foreground">
                           <Trash2 className="h-8 w-8 opacity-20" />
                           <p className="text-sm">Recycle bin is empty</p>
-                          <p className="text-xs opacity-60">Deleted items will appear here</p>
+                          <p className="text-xs opacity-60">
+                            Deleted items will appear here
+                          </p>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -563,7 +667,11 @@ export default function RecycleBinPage() {
                         <TableCell>
                           <div className="w-12 h-12 bg-background rounded-none border overflow-hidden flex items-center justify-center grayscale">
                             {item.mainImage ? (
-                              <img src={item.mainImage} alt={item.name} className="w-full h-full object-contain" />
+                              <img
+                                src={item.mainImage}
+                                alt={item.name}
+                                className="w-full h-full object-contain"
+                              />
                             ) : (
                               <Package className="h-5 w-5 text-muted-foreground/30" />
                             )}
@@ -573,9 +681,13 @@ export default function RecycleBinPage() {
                         {/* PRODUCT INFO */}
                         <TableCell>
                           <div className="flex flex-col max-w-[250px]">
-                            <span className="font-medium text-sm line-clamp-1 text-muted-foreground">{item.name}</span>
+                            <span className="font-medium text-sm line-clamp-1 text-muted-foreground">
+                              {item.name}
+                            </span>
                             <span className="text-xs text-muted-foreground/70">
-                              {item.productFamily || item.categories || "No Category"}
+                              {item.productFamily ||
+                                item.categories ||
+                                "No Category"}
                             </span>
                           </div>
                         </TableCell>
@@ -590,10 +702,18 @@ export default function RecycleBinPage() {
                         {/* SOURCE */}
                         <TableCell>
                           <div className="flex flex-col gap-1">
-                            <Badge variant="outline" className="w-fit text-xs opacity-60">
-                              {Array.isArray(item.brands) ? item.brands.join(", ") : item.brand || "Generic"}
+                            <Badge
+                              variant="outline"
+                              className="w-fit text-xs opacity-60"
+                            >
+                              {Array.isArray(item.brands)
+                                ? item.brands.join(", ")
+                                : item.brand || "Generic"}
                             </Badge>
-                            <Badge variant="secondary" className="w-fit text-xs opacity-60">
+                            <Badge
+                              variant="secondary"
+                              className="w-fit text-xs opacity-60"
+                            >
                               {item.originalCollection || "products"}
                             </Badge>
                           </div>
@@ -638,18 +758,38 @@ export default function RecycleBinPage() {
             {!loading && totalPages > 1 && (
               <div className="flex items-center justify-between border-t pt-4">
                 <p className="text-xs text-muted-foreground">
-                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filtered.length)} of {filtered.length}
+                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
+                  {Math.min(currentPage * ITEMS_PER_PAGE, filtered.length)} of{" "}
+                  {filtered.length}
                 </p>
                 <div className="flex items-center gap-1">
-                  <Button variant="outline" size="icon" className="h-8 w-8 rounded-none" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 rounded-none"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage((p) => p - 1)}
+                  >
                     <ChevronLeft size={14} />
                   </Button>
                   {getPaginationPages().map((p) => (
-                    <Button key={p} variant={currentPage === p ? "default" : "outline"} size="icon" className="h-8 w-8 rounded-none text-xs" onClick={() => setCurrentPage(p)}>
+                    <Button
+                      key={p}
+                      variant={currentPage === p ? "default" : "outline"}
+                      size="icon"
+                      className="h-8 w-8 rounded-none text-xs"
+                      onClick={() => setCurrentPage(p)}
+                    >
                       {p}
                     </Button>
                   ))}
-                  <Button variant="outline" size="icon" className="h-8 w-8 rounded-none" disabled={currentPage === totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 rounded-none"
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage((p) => p + 1)}
+                  >
                     <ChevronRight size={14} />
                   </Button>
                 </div>
@@ -684,18 +824,25 @@ export default function RecycleBinPage() {
             </AlertDialogTitle>
             <AlertDialogDescription className="text-xs">
               This will permanently delete{" "}
-              <span className="font-semibold text-foreground">{selectedIds.size}</span>{" "}
-              selected item{selectedIds.size > 1 ? "s" : ""}. This action cannot be undone.
+              <span className="font-semibold text-foreground">
+                {selectedIds.size}
+              </span>{" "}
+              selected item{selectedIds.size > 1 ? "s" : ""}. This action cannot
+              be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-none text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="rounded-none text-xs">
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               className="rounded-none bg-destructive text-xs"
               onClick={handleBulkPermanentDelete}
               disabled={isBulkDeleting}
             >
-              {isBulkDeleting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+              {isBulkDeleting ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : null}
               Delete Forever
             </AlertDialogAction>
           </AlertDialogFooter>

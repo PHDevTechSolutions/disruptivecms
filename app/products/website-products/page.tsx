@@ -27,7 +27,6 @@ import {
   X,
 } from "lucide-react";
 
-// Sidebar Components
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import {
   Breadcrumb,
@@ -44,8 +43,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-
-// UI Components
 import {
   Table,
   TableBody,
@@ -67,19 +64,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 
-// Firebase
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -87,17 +72,16 @@ import {
   query,
   orderBy,
   doc,
-  deleteDoc,
   writeBatch,
+  serverTimestamp,
   where,
 } from "firebase/firestore";
 import { toast } from "sonner";
 
-// Components
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
+import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
-// --- TYPES ---
 export type Product = {
   id: string;
   name: string;
@@ -111,30 +95,25 @@ export type Product = {
   createdAt: any;
 };
 
-// --- CUSTOM FILTER FUNCTION ---
 const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   const value = row.getValue(columnId);
   const filter = filterValue.toLowerCase();
-
-  if (Array.isArray(value)) {
+  if (Array.isArray(value))
     return value.some((v: string) => v.toLowerCase().includes(filter));
-  }
   return String(value).toLowerCase().includes(filter);
 };
 
 export default function AllProductsPage() {
-  // Data States
   const [data, setData] = React.useState<Product[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  // View States
   const [isEditing, setIsEditing] = React.useState(false);
   const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(
     null,
   );
   const [isDeleting, setIsDeleting] = React.useState(false);
 
-  // Table States
+  // TanStack table state
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     [],
@@ -143,15 +122,16 @@ export default function AllProductsPage() {
     React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
-
-  // Rows per page input state
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
 
-  // Search suggestions state
+  // Search suggestions
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // Close suggestions on outside click
+  // ── Delete dialog state ──────────────────────────────────────────────────
+  const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -165,7 +145,6 @@ export default function AllProductsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Compute suggestions from current data based on globalFilter
   const suggestions = React.useMemo(() => {
     const q = (globalFilter ?? "").trim().toLowerCase();
     if (!q) return [];
@@ -179,10 +158,6 @@ export default function AllProductsPage() {
       .slice(0, 7);
   }, [data, globalFilter]);
 
-  // --- FETCH DATA ---
-  // ✅ FIX: Use array-contains-any on the `websites` array field so products
-  // that belong to multiple websites (e.g. ["Ecoshift Corporation", "Taskflow"])
-  // are still returned, instead of the old `in` operator which did an exact match.
   React.useEffect(() => {
     setLoading(true);
     const q = query(
@@ -195,15 +170,12 @@ export default function AllProductsPage() {
       ]),
       orderBy("createdAt", "desc"),
     );
-
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const productList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Product[];
-        setData(productList);
+        setData(
+          snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[],
+        );
         setLoading(false);
       },
       (error) => {
@@ -212,40 +184,53 @@ export default function AllProductsPage() {
         setLoading(false);
       },
     );
-
     return () => unsubscribe();
   }, []);
 
-  // --- ACTIONS ---
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, "products", id));
-      toast.success("Product deleted successfully");
-    } catch (error) {
-      toast.error("Failed to delete product");
-    }
+  // ── Soft-delete single → recycle_bin ────────────────────────────────────
+  const handleSoftDelete = async (product: Product) => {
+    const batch = writeBatch(db);
+    const { id, ...rest } = product;
+    batch.set(doc(db, "recycle_bin", id), {
+      ...rest,
+      originalCollection: "products",
+      originPage: "/admin/products/all",
+      deletedAt: serverTimestamp(),
+    });
+    batch.delete(doc(db, "products", id));
+    await batch.commit();
+    toast.success(`"${product.name}" moved to recycle bin.`);
   };
 
-  const handleBulkDelete = async (selectedIds: string[]) => {
-    if (selectedIds.length === 0) return;
+  // ── Bulk soft-delete → recycle_bin ──────────────────────────────────────
+  const handleBulkSoftDelete = async () => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
     setIsDeleting(true);
-    const deleteToast = toast.loading(
-      `Deleting ${selectedIds.length} products...`,
+    const loadingToast = toast.loading(
+      `Moving ${selectedRows.length} products to recycle bin...`,
     );
-
     try {
       const batch = writeBatch(db);
-      selectedIds.forEach((id) => {
+      selectedRows.forEach(({ original: product }) => {
+        const { id, ...rest } = product;
+        batch.set(doc(db, "recycle_bin", id), {
+          ...rest,
+          originalCollection: "products",
+          originPage: "/admin/products/all",
+          deletedAt: serverTimestamp(),
+        });
         batch.delete(doc(db, "products", id));
       });
       await batch.commit();
-      toast.success(`Deleted ${selectedIds.length} products!`, {
-        id: deleteToast,
+      toast.success(`${selectedRows.length} products moved to recycle bin.`, {
+        id: loadingToast,
       });
       setRowSelection({});
     } catch (error) {
-      console.error("Bulk delete error:", error);
-      toast.error("Failed to delete products", { id: deleteToast });
+      console.error("Bulk soft-delete error:", error);
+      toast.error("Failed to move products to recycle bin.", {
+        id: loadingToast,
+      });
     } finally {
       setIsDeleting(false);
     }
@@ -256,7 +241,7 @@ export default function AllProductsPage() {
     setIsEditing(true);
   };
 
-  // --- COLUMNS DEFINITION ---
+  // ── Columns ──────────────────────────────────────────────────────────────
   const columns: ColumnDef<Product>[] = [
     {
       id: "select",
@@ -343,7 +328,6 @@ export default function AllProductsPage() {
         const websites = Array.isArray(row.original.websites)
           ? row.original.websites
           : [row.original.website || "N/A"];
-
         return (
           <div className="flex flex-col gap-1 items-start">
             <Badge variant="outline" className="text-xs font-medium">
@@ -363,7 +347,6 @@ export default function AllProductsPage() {
       ),
       cell: ({ row }) => {
         const product = row.original;
-
         return (
           <div
             className="flex justify-end gap-1"
@@ -377,43 +360,21 @@ export default function AllProductsPage() {
             >
               <Pencil className="h-4 w-4" />
             </Button>
-
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete Product?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    You are about to delete{" "}
-                    <span className="font-semibold text-foreground">
-                      {product.name}
-                    </span>
-                    . This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => handleDelete(product.id)}>
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {/* ← DeleteToRecycleBinDialog trigger */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive"
+              onClick={() => setDeleteTarget(product)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
         );
       },
     },
   ];
 
-  // --- TABLE INSTANCE ---
   const table = useReactTable({
     data,
     columns,
@@ -433,28 +394,25 @@ export default function AllProductsPage() {
       rowSelection,
       globalFilter,
     },
-    filterFns: {
-      multiValue: multiValueFilter,
-    },
+    filterFns: { multiValue: multiValueFilter },
   });
 
-  // Extract Unique Brands/Websites for Filters
   const uniqueBrands = React.useMemo(() => {
-    const set = new Set<string>();
+    const s = new Set<string>();
     data.forEach((p) => {
-      if (Array.isArray(p.brands)) p.brands.forEach((b) => set.add(b));
-      else if (p.brand) set.add(p.brand as string);
+      if (Array.isArray(p.brands)) p.brands.forEach((b) => s.add(b));
+      else if (p.brand) s.add(p.brand as string);
     });
-    return Array.from(set).sort();
+    return Array.from(s).sort();
   }, [data]);
 
   const uniqueWebsites = React.useMemo(() => {
-    const set = new Set<string>();
+    const s = new Set<string>();
     data.forEach((p) => {
-      if (Array.isArray(p.websites)) p.websites.forEach((w) => set.add(w));
-      else if (p.website) set.add(p.website as string);
+      if (Array.isArray(p.websites)) p.websites.forEach((w) => s.add(w));
+      else if (p.website) s.add(p.website as string);
     });
-    return Array.from(set).sort();
+    return Array.from(s).sort();
   }, [data]);
 
   const selectedCount = Object.keys(rowSelection).length;
@@ -462,7 +420,7 @@ export default function AllProductsPage() {
   const totalCount = data.length;
   const isFiltered = filteredCount !== totalCount;
 
-  // --- RENDER: EDIT MODE ---
+  // ── EDIT MODE ────────────────────────────────────────────────────────────
   const renderEditMode = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -494,7 +452,7 @@ export default function AllProductsPage() {
     </div>
   );
 
-  // --- RENDER: TABLE MODE ---
+  // ── TABLE MODE ───────────────────────────────────────────────────────────
   const renderTableMode = () => (
     <div className="w-full space-y-4">
       {/* HEADER */}
@@ -523,7 +481,6 @@ export default function AllProductsPage() {
             )}
           </p>
         </div>
-
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
           <Button
@@ -533,8 +490,7 @@ export default function AllProductsPage() {
             }}
             className="gap-2"
           >
-            <PlusCircle className="h-4 w-4" />
-            Add Product
+            <PlusCircle className="h-4 w-4" /> Add Product
           </Button>
         </div>
       </div>
@@ -557,7 +513,6 @@ export default function AllProductsPage() {
               </p>
             </div>
           </div>
-
           <div className="flex gap-2">
             <Button
               variant="ghost"
@@ -565,64 +520,35 @@ export default function AllProductsPage() {
               onClick={() => table.resetRowSelection()}
               className="gap-2"
             >
-              <X className="h-4 w-4" />
-              Clear
+              <X className="h-4 w-4" /> Clear
             </Button>
-
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={isDeleting}
-                  className="gap-2"
-                >
-                  {isDeleting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                  Delete Selected
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Delete {selectedCount} Products?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This action cannot be undone. This will permanently delete
-                    the selected products.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      const ids = table
-                        .getFilteredSelectedRowModel()
-                        .rows.map((row) => row.original.id);
-                      handleBulkDelete(ids);
-                    }}
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={isDeleting}
+              className="gap-2"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Move {selectedCount} to Bin
+            </Button>
           </div>
         </div>
       )}
 
-      {/* FILTERS TOOLBAR */}
+      {/* FILTERS */}
       <div className="flex flex-wrap gap-3 items-center">
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
             placeholder="Search products..."
             value={globalFilter ?? ""}
-            onChange={(event) => {
-              setGlobalFilter(event.target.value);
+            onChange={(e) => {
+              setGlobalFilter(e.target.value);
               setShowSuggestions(true);
             }}
             onFocus={() => setShowSuggestions(true)}
@@ -631,7 +557,6 @@ export default function AllProductsPage() {
             }}
             className="pl-9"
           />
-          {/* SUGGESTIONS DROPDOWN */}
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-popover border rounded-lg shadow-lg overflow-hidden">
               {suggestions.map((product) => {
@@ -696,12 +621,10 @@ export default function AllProductsPage() {
           )}
         </div>
 
-        {/* Brand Filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
-              Brands
-              <ChevronDown className="h-4 w-4" />
+              Brands <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -727,12 +650,10 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Website Filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
-              Websites
-              <ChevronDown className="h-4 w-4" />
+              Websites <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -756,7 +677,6 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Column Visibility */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="ml-auto">
@@ -768,21 +688,17 @@ export default function AllProductsPage() {
             <DropdownMenuSeparator />
             {table
               .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) =>
-                      column.toggleVisibility(!!value)
-                    }
-                  >
-                    {column.id}
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
+              .filter((c) => c.getCanHide())
+              .map((column) => (
+                <DropdownMenuCheckboxItem
+                  key={column.id}
+                  className="capitalize"
+                  checked={column.getIsVisible()}
+                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                >
+                  {column.id}
+                </DropdownMenuCheckboxItem>
+              ))}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -791,20 +707,18 @@ export default function AllProductsPage() {
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext(),
-                          )}
-                    </TableHead>
-                  );
-                })}
+            {table.getHeaderGroups().map((hg) => (
+              <TableRow key={hg.id}>
+                {hg.headers.map((header) => (
+                  <TableHead key={header.id}>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
+                  </TableHead>
+                ))}
               </TableRow>
             ))}
           </TableHeader>
@@ -868,9 +782,7 @@ export default function AllProductsPage() {
               max={500}
               className="h-9 w-20 text-sm text-center"
               value={rowsPerPageInput}
-              onChange={(e) => {
-                setRowsPerPageInput(e.target.value);
-              }}
+              onChange={(e) => setRowsPerPageInput(e.target.value)}
               onBlur={(e) => {
                 const parsed = parseInt(e.target.value, 10);
                 if (!isNaN(parsed) && parsed >= 1) {
@@ -883,13 +795,10 @@ export default function AllProductsPage() {
                 }
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  (e.target as HTMLInputElement).blur();
-                }
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               }}
             />
           </div>
-
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -946,6 +855,24 @@ export default function AllProductsPage() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+
+      {/* ── SINGLE ITEM: Move to Recycle Bin ── */}
+      <DeleteToRecycleBinDialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        itemName={deleteTarget?.name ?? ""}
+        onConfirm={() => handleSoftDelete(deleteTarget!)}
+      />
+
+      {/* ── BULK: Move to Recycle Bin ── */}
+      <DeleteToRecycleBinDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        itemName={`${selectedCount} products`}
+        confirmText={`${selectedCount} products`}
+        count={selectedCount}
+        onConfirm={handleBulkSoftDelete}
+      />
     </TooltipProvider>
   );
 }
