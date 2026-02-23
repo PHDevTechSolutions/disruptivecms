@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { logAuditEvent } from "@/lib/logger";
 import {
   Upload,
   CheckCircle,
@@ -1057,7 +1058,7 @@ export default function BulkUploader({
 
         const slug = p.productCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-        await addDoc(collection(db, "products"), {
+        const docRef = await addDoc(collection(db, "products"), {
           name: resolvedName,
           shortDescription: "",
           slug,
@@ -1085,6 +1086,22 @@ export default function BulkUploader({
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           importSource: "bulk-uploader",
+        });
+
+        await logAuditEvent({
+          action: "create",
+          entityType: "product",
+          entityId: docRef.id,
+          entityName: resolvedName,
+          context: {
+            page: "/products/all-products",
+            source: "bulk-uploader:excel",
+            collection: "products",
+          },
+          metadata: {
+            itemCode: p.productCode,
+            ecoItemCode: p.csvSku || null,
+          },
         });
 
         addLog("ok", `✅ ${p.productCode} — ${resolvedName}`);
@@ -1153,10 +1170,26 @@ export default function BulkUploader({
           addLog("info", msg),
         );
 
-        await addDoc(collection(db, "products"), {
+        const docRef = await addDoc(collection(db, "products"), {
           ...normalized,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+        });
+
+        await logAuditEvent({
+          action: "create",
+          entityType: "product",
+          entityId: docRef.id,
+          entityName: normalized.itemDescription,
+          context: {
+            page: "/products/all-products",
+            source: "bulk-uploader:shopify",
+            collection: "products",
+          },
+          metadata: {
+            ecoItemCode: normalized.ecoItemCode,
+            shopifyProductId: normalized.shopifyProductId,
+          },
         });
 
         addLog("ok", `✅ ${p.title} (SKU: ${normalized.ecoItemCode})`);

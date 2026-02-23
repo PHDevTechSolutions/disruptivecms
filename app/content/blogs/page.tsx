@@ -12,6 +12,7 @@ import {
   addDoc,
   updateDoc,
   serverTimestamp,
+  getDoc,
 } from "firebase/firestore";
 import {
   Plus,
@@ -50,6 +51,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { toast } from "sonner";
+import { logAuditEvent } from "@/lib/logger";
 
 import BlogCreator, { BlogPayload } from "./BlogCreator";
 
@@ -118,10 +120,32 @@ export default function BlogManager() {
     const base = { ...payload, updatedAt: serverTimestamp() };
     if (editingId) {
       await updateDoc(doc(db, "blogs", editingId), base);
+      await logAuditEvent({
+        action: "update",
+        entityType: "blog",
+        entityId: editingId,
+        entityName: payload.title,
+        context: {
+          page: "/content/blogs",
+          source: "blogs:edit",
+          collection: "blogs",
+        },
+      });
     } else {
-      await addDoc(collection(db, "blogs"), {
+      const docRef = await addDoc(collection(db, "blogs"), {
         ...base,
         createdAt: serverTimestamp(),
+      });
+      await logAuditEvent({
+        action: "create",
+        entityType: "blog",
+        entityId: docRef.id,
+        entityName: payload.title,
+        context: {
+          page: "/content/blogs",
+          source: "blogs:create",
+          collection: "blogs",
+        },
       });
     }
   };
@@ -129,7 +153,24 @@ export default function BlogManager() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this story permanently?")) return;
     try {
-      await deleteDoc(doc(db, "blogs", id));
+      const ref = doc(db, "blogs", id);
+      const snapshot = await getDoc(ref).catch(() => null);
+      const existing = snapshot?.exists() ? snapshot.data() : null;
+
+      await deleteDoc(ref);
+
+      await logAuditEvent({
+        action: "delete",
+        entityType: "blog",
+        entityId: id,
+        entityName: existing?.title ?? null,
+        context: {
+          page: "/content/blogs",
+          source: "blogs:delete",
+          collection: "blogs",
+        },
+      });
+
       toast.success("Story deleted");
     } catch {
       toast.error("Failed to delete");

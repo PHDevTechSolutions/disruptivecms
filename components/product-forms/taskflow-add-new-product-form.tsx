@@ -38,6 +38,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { logAuditEvent } from "@/lib/logger";
 
 // --- TYPES ---
 interface MasterItem {
@@ -554,10 +555,32 @@ export default function TaskflowAddNewProduct({
 
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
+        await logAuditEvent({
+          action: "update",
+          entityType: "product",
+          entityId: editData.id,
+          entityName: productName || editData.name || "",
+          context: {
+            page: "/products/taskflow-products",
+            source: "taskflow-add-new-product-form",
+            collection: "products",
+          },
+        });
       } else {
-        await addDoc(collection(db, "products"), {
+        const docRef = await addDoc(collection(db, "products"), {
           ...payload,
           createdAt: serverTimestamp(),
+        });
+        await logAuditEvent({
+          action: "create",
+          entityType: "product",
+          entityId: docRef.id,
+          entityName: productName,
+          context: {
+            page: "/products/taskflow-products",
+            source: "taskflow-add-new-product-form",
+            collection: "products",
+          },
         });
       }
 

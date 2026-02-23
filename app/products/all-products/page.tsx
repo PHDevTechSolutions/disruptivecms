@@ -87,8 +87,11 @@ import {
   serverTimestamp,
   where,
   arrayUnion,
+  setDoc,
+  getDoc,
 } from "firebase/firestore";
 import { toast } from "sonner";
+import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
 
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
@@ -113,6 +116,66 @@ export type Product = {
   websites?: string[];
   createdAt: any;
 };
+
+// ─── Taskflow schema builder ──────────────────────────────────────────────────
+
+function buildTaskflowProduct(product: Product, newWebsites: string[]) {
+  // Derive the merged websites list (existing + newly assigned)
+  const existingWebsites: string[] = Array.isArray(product.websites)
+    ? product.websites
+    : product.website
+      ? [product.website as string]
+      : [];
+  const mergedWebsites = Array.from(
+    new Set([...existingWebsites, ...newWebsites]),
+  );
+
+  // Scalar helpers
+  const itemCode =
+    product.ecoItemCode || product.litItemCode || product.itemCode || "";
+  const name = product.itemDescription || product.name || "";
+  const brand = Array.isArray(product.brands)
+    ? (product.brands[0] ?? "")
+    : Array.isArray(product.brand)
+      ? ((product.brand as string[])[0] ?? "")
+      : ((product.brand as string) ?? "");
+  const productFamily = (product.categories as string) || "";
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const now = new Date().toISOString();
+
+  return {
+    applications: [],
+    brand,
+    createdAt: serverTimestamp(),
+    galleryImages: [],
+    importSource: "bulk-assign",
+    itemCode,
+    mainImage: product.mainImage || "",
+    name,
+    productFamily,
+    qrCodeImage: "",
+    regularPrice: 0,
+    salePrice: 0,
+    seo: {
+      canonical: "",
+      description: "",
+      lastUpdated: now,
+      ogImage: product.mainImage || "",
+      robots: "index, follow",
+      title: name,
+    },
+    shortDescription: "",
+    slug,
+    status: "draft",
+    technicalSpecs: [],
+    updatedAt: serverTimestamp(),
+    website: mergedWebsites,
+    websites: mergedWebsites,
+  };
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -150,6 +213,8 @@ const WEBSITE_OPTIONS = [
     dot: "bg-violet-500",
   },
 ];
+
+const TASKFLOW = "Taskflow";
 
 // ─── Custom filter (handles arrays) ──────────────────────────────────────────
 
@@ -197,7 +262,6 @@ function AssignToWebsiteDialog({
   const [selectedWebsites, setSelectedWebsites] = React.useState<string[]>([]);
   const [isAssigning, setIsAssigning] = React.useState(false);
 
-  // Reset selections when dialog opens
   React.useEffect(() => {
     if (open) setSelectedWebsites([]);
   }, [open]);
@@ -218,6 +282,8 @@ function AssignToWebsiteDialog({
       setIsAssigning(false);
     }
   };
+
+  const includesTaskflow = selectedWebsites.includes(TASKFLOW);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -255,19 +321,19 @@ function AssignToWebsiteDialog({
                       : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
                   }`}
               >
-                {/* Colored dot */}
                 <span
                   className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
                 />
-
-                {/* Label */}
                 <span
                   className={`flex-1 text-sm font-medium ${isSelected ? "" : "text-foreground"}`}
                 >
                   {site.label}
                 </span>
-
-                {/* Check indicator */}
+                {site.value === TASKFLOW && (
+                  <span className="text-[10px] text-violet-500 font-semibold mr-1">
+                    Schema transform
+                  </span>
+                )}
                 <span
                   className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
                     ${isSelected ? "bg-current/20 opacity-100" : "opacity-0"}`}
@@ -278,6 +344,19 @@ function AssignToWebsiteDialog({
             );
           })}
         </div>
+
+        {/* Taskflow notice */}
+        {includesTaskflow && (
+          <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
+            <p className="font-semibold">Taskflow schema transformation</p>
+            <p className="text-violet-600 leading-snug">
+              Products assigned to Taskflow will be written to{" "}
+              <span className="font-mono font-semibold">taskflow_products</span>{" "}
+              with a transformed schema — item codes, names, and images are
+              remapped and defaults are set for slug, SEO, pricing, and status.
+            </p>
+          </div>
+        )}
 
         {selectedWebsites.length > 0 && (
           <div className="bg-muted/50 rounded-lg px-4 py-3 border">
@@ -341,7 +420,6 @@ export default function AllProductsPage() {
   );
   const [isDeleting, setIsDeleting] = React.useState(false);
 
-  // TanStack table state
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     [],
@@ -352,15 +430,11 @@ export default function AllProductsPage() {
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
 
-  // Search suggestions
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // Delete dialog state
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
-
-  // ── NEW: Assign to website dialog state ──────────────────────────────────
   const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -394,7 +468,37 @@ export default function AllProductsPage() {
   // ── Firestore listener ────────────────────────────────────────────────────
   React.useEffect(() => {
     setLoading(true);
-    const q = query(
+
+    const mergeAndSort = (a: Product[], b: Product[]): Product[] => {
+      const seen = new Set<string>();
+      const merged: Product[] = [];
+      for (const p of [...a, ...b]) {
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          merged.push(p);
+        }
+      }
+      merged.sort((x, y) => {
+        const tx = x.createdAt?.toMillis?.() ?? x.createdAt ?? 0;
+        const ty = y.createdAt?.toMillis?.() ?? y.createdAt ?? 0;
+        return ty - tx;
+      });
+      return merged;
+    };
+
+    let assignedData: Product[] = [];
+    let unassignedData: Product[] = [];
+    let assignedReady = false;
+    let unassignedReady = false;
+
+    const flush = () => {
+      if (assignedReady && unassignedReady) {
+        setData(mergeAndSort(assignedData, unassignedData));
+        setLoading(false);
+      }
+    };
+
+    const qAssigned = query(
       collection(db, "products"),
       where("websites", "array-contains-any", [
         "Disruptive Solutions Inc",
@@ -404,35 +508,88 @@ export default function AllProductsPage() {
       ]),
       orderBy("createdAt", "desc"),
     );
-    const unsubscribe = onSnapshot(
-      q,
+
+    const qUnassigned = query(
+      collection(db, "products"),
+      where("websites", "==", []),
+      orderBy("createdAt", "desc"),
+    );
+
+    const unsubAssigned = onSnapshot(
+      qAssigned,
       (snapshot) => {
-        setData(
-          snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[],
-        );
-        setLoading(false);
+        assignedData = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Product[];
+        assignedReady = true;
+        flush();
       },
       (error) => {
-        console.error("Fetch error:", error);
+        console.error("Fetch error (assigned):", error);
         toast.error("Failed to load products");
         setLoading(false);
       },
     );
-    return () => unsubscribe();
+
+    const unsubUnassigned = onSnapshot(
+      qUnassigned,
+      (snapshot) => {
+        unassignedData = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Product[];
+        unassignedReady = true;
+        flush();
+      },
+      (error) => {
+        console.warn("Could not fetch unassigned products:", error);
+        unassignedReady = true;
+        flush();
+      },
+    );
+
+    return () => {
+      unsubAssigned();
+      unsubUnassigned();
+    };
   }, []);
 
   // ── Soft-delete helpers ───────────────────────────────────────────────────
   const handleSoftDelete = async (product: Product) => {
     const batch = writeBatch(db);
     const { id, ...rest } = product;
+    const actor = getCurrentAdminUser();
+
     batch.set(doc(db, "recycle_bin", id), {
       ...rest,
       originalCollection: "products",
-      originPage: "/admin/products/all",
+      originPage: "/products/all-products",
       deletedAt: serverTimestamp(),
+      deletedBy: actor
+        ? {
+            uid: actor.uid ?? null,
+            name: actor.name ?? null,
+            email: actor.email ?? null,
+            role: actor.role ?? null,
+          }
+        : null,
     });
     batch.delete(doc(db, "products", id));
     await batch.commit();
+
+    await logAuditEvent({
+      action: "delete",
+      entityType: "product",
+      entityId: product.id,
+      entityName: product.itemDescription || product.name,
+      context: {
+        page: "/products/all-products",
+        source: "all-products:soft-delete",
+        collection: "products",
+      },
+    });
+
     toast.success(
       `"${product.itemDescription || product.name}" moved to recycle bin.`,
     );
@@ -446,17 +603,43 @@ export default function AllProductsPage() {
     );
     try {
       const batch = writeBatch(db);
+      const actor = getCurrentAdminUser();
+      const ids: string[] = [];
+
       selectedRows.forEach(({ original: product }) => {
         const { id, ...rest } = product;
+        ids.push(id);
         batch.set(doc(db, "recycle_bin", id), {
           ...rest,
           originalCollection: "products",
-          originPage: "/admin/products/all",
+          originPage: "/products/all-products",
           deletedAt: serverTimestamp(),
+          deletedBy: actor
+            ? {
+                uid: actor.uid ?? null,
+                name: actor.name ?? null,
+                email: actor.email ?? null,
+                role: actor.role ?? null,
+              }
+            : null,
         });
         batch.delete(doc(db, "products", id));
       });
       await batch.commit();
+
+      await logAuditEvent({
+        action: "delete",
+        entityType: "product",
+        entityId: null,
+        entityName: `${selectedRows.length} products`,
+        context: {
+          page: "/products/all-products",
+          source: "all-products:bulk-soft-delete",
+          collection: "products",
+          bulk: true,
+        },
+        metadata: { ids },
+      });
       toast.success(`${selectedRows.length} products moved to recycle bin.`, {
         id: loadingToast,
       });
@@ -471,25 +654,61 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── NEW: Bulk assign to website handler ───────────────────────────────────
+  // ── Bulk assign to website handler ────────────────────────────────────────
+  // When Taskflow is among the selected websites, we:
+  //   1. Write a transformed document to `taskflow_products` (same doc ID)
+  //   2. Update the source `products` doc's websites/website arrays as usual
+  // For non-Taskflow websites we only do step 2.
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
+    const includesTaskflow = websites.includes(TASKFLOW);
+
     const loadingToast = toast.loading(
       `Assigning ${count} product${count !== 1 ? "s" : ""} to ${websites.length} website${websites.length !== 1 ? "s" : ""}...`,
     );
+
     try {
-      const batch = writeBatch(db);
-      selectedRows.forEach(({ original: product }) => {
-        batch.update(doc(db, "products", product.id), {
-          websites: arrayUnion(...websites),
-          website: arrayUnion(...websites),
-          updatedAt: serverTimestamp(),
+      // Firestore batches are limited to 500 writes. Each product that includes
+      // Taskflow needs 2 writes (taskflow_products set + products update), so we
+      // chunk conservatively at 200 products per batch to stay safe.
+      const CHUNK = 200;
+      const rows = selectedRows.map((r) => r.original);
+
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+
+        chunk.forEach((product) => {
+          // Always update the source products doc
+          batch.update(doc(db, "products", product.id), {
+            websites: arrayUnion(...websites),
+            website: arrayUnion(...websites),
+            updatedAt: serverTimestamp(),
+          });
+
+          // If Taskflow is selected, write the transformed document
+          if (includesTaskflow) {
+            const taskflowData = buildTaskflowProduct(product, websites);
+            // Use setDoc with merge:true so re-assigning doesn't wipe existing
+            // Taskflow-specific edits (e.g. filled-in technicalSpecs, pricing).
+            // Only the base fields are set on first write; subsequent calls
+            // won't overwrite fields that exist in the target doc.
+            batch.set(doc(db, "products", product.id), taskflowData, {
+              merge: true,
+            });
+          }
         });
-      });
-      await batch.commit();
+
+        await batch.commit();
+      }
+
       toast.success(
-        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.`,
+        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.${
+          includesTaskflow
+            ? ` Taskflow schema written to taskflow_products.`
+            : ""
+        }`,
         { id: loadingToast },
       );
       setRowSelection({});
@@ -508,7 +727,6 @@ export default function AllProductsPage() {
 
   // ── Columns ───────────────────────────────────────────────────────────────
   const columns: ColumnDef<Product>[] = [
-    // 0 — Select
     {
       id: "select",
       header: ({ table }) => (
@@ -533,7 +751,6 @@ export default function AllProductsPage() {
       enableHiding: false,
     },
 
-    // 1 — Image
     {
       accessorKey: "mainImage",
       header: () => <div className="text-xs font-medium">Main Image</div>,
@@ -580,7 +797,6 @@ export default function AllProductsPage() {
       enableHiding: false,
     },
 
-    // 2 — Ecoshift Item Code
     {
       accessorKey: "ecoItemCode",
       header: () => <div className="text-xs font-medium">Eco Item Code</div>,
@@ -591,7 +807,6 @@ export default function AllProductsPage() {
       ),
     },
 
-    // 3 — LIT Item Code
     {
       accessorKey: "litItemCode",
       header: () => <div className="text-xs font-medium">LIT Item Code</div>,
@@ -602,7 +817,6 @@ export default function AllProductsPage() {
       ),
     },
 
-    // 4 — Item Description
     {
       accessorKey: "itemDescription",
       header: () => <div className="text-xs font-medium">Item Description</div>,
@@ -624,7 +838,6 @@ export default function AllProductsPage() {
       },
     },
 
-    // 5 — Product Class
     {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Product Class</div>,
@@ -639,7 +852,6 @@ export default function AllProductsPage() {
       },
     },
 
-    // 6 — Brand / Website
     {
       id: "details",
       accessorFn: (row) => {
@@ -658,22 +870,32 @@ export default function AllProductsPage() {
           : [row.original.brand || "Generic"];
         const websites = Array.isArray(row.original.websites)
           ? row.original.websites
-          : [row.original.website || "N/A"];
+          : row.original.website
+            ? [row.original.website as string]
+            : [];
         return (
           <div className="flex flex-col gap-1 items-start">
             <Badge variant="outline" className="text-xs font-medium">
               {brands.join(", ")}
             </Badge>
-            <Badge variant="secondary" className="text-xs">
-              {websites.join(", ")}
-            </Badge>
+            {websites.length > 0 ? (
+              <Badge variant="secondary" className="text-xs">
+                {websites.join(", ")}
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="text-xs text-muted-foreground border-dashed"
+              >
+                No website
+              </Badge>
+            )}
           </div>
         );
       },
       filterFn: multiValueFilter,
     },
 
-    // 7 — Actions
     {
       id: "actions",
       header: () => (
@@ -730,7 +952,6 @@ export default function AllProductsPage() {
     filterFns: { multiValue: multiValueFilter },
   });
 
-  // ── Derived filter values ─────────────────────────────────────────────────
   const uniqueBrands = React.useMemo(() => {
     const s = new Set<string>();
     data.forEach((p) => {
@@ -754,7 +975,6 @@ export default function AllProductsPage() {
   const totalCount = data.length;
   const isFiltered = filteredCount !== totalCount;
 
-  // ── Edit view ─────────────────────────────────────────────────────────────
   const renderEditMode = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -786,7 +1006,6 @@ export default function AllProductsPage() {
     </div>
   );
 
-  // ── Table view ────────────────────────────────────────────────────────────
   const renderTableMode = () => (
     <div className="w-full space-y-4">
       {/* Header */}
@@ -818,7 +1037,6 @@ export default function AllProductsPage() {
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
 
-          {/* ── NEW: Assign to Website button ── */}
           <Button
             variant="outline"
             onClick={() => setAssignWebsiteOpen(true)}
@@ -878,7 +1096,6 @@ export default function AllProductsPage() {
             >
               <X className="h-4 w-4" /> Clear
             </Button>
-            {/* ── NEW: Assign to Website in bulk bar ── */}
             <Button
               variant="outline"
               size="sm"
@@ -908,7 +1125,6 @@ export default function AllProductsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        {/* Search */}
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
@@ -991,7 +1207,6 @@ export default function AllProductsPage() {
           )}
         </div>
 
-        {/* Product Class filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -1025,7 +1240,6 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Brands filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -1055,7 +1269,6 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Websites filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -1083,7 +1296,6 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Column visibility */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="ml-auto">
@@ -1229,7 +1441,6 @@ export default function AllProductsPage() {
     </div>
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
@@ -1264,7 +1475,6 @@ export default function AllProductsPage() {
         </SidebarInset>
       </SidebarProvider>
 
-      {/* Single delete */}
       <DeleteToRecycleBinDialog
         open={!!deleteTarget}
         onOpenChange={(v) => !v && setDeleteTarget(null)}
@@ -1272,7 +1482,6 @@ export default function AllProductsPage() {
         onConfirm={() => handleSoftDelete(deleteTarget!)}
       />
 
-      {/* Bulk delete */}
       <DeleteToRecycleBinDialog
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
@@ -1282,7 +1491,6 @@ export default function AllProductsPage() {
         onConfirm={handleBulkSoftDelete}
       />
 
-      {/* ── NEW: Assign to Website dialog ── */}
       <AssignToWebsiteDialog
         open={assignWebsiteOpen}
         onOpenChange={setAssignWebsiteOpen}

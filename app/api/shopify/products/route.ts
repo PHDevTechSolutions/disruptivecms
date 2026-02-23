@@ -4,9 +4,15 @@ export async function GET(request: NextRequest) {
   // ── Read env vars INSIDE the handler, not at module level ──────────────────
   // Reading at module level in Next.js App Router can evaluate before the
   // runtime environment is fully injected, causing false "missing" errors.
-  const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN ?? "";
+  // Support both naming conventions (e.g. .env.local: SHOPIFY_STORE_DOMAIN, SHOPIFY_ACCESS_TOKEN).
+  const SHOPIFY_STORE_DOMAIN =
+    process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN ??
+    process.env.SHOPIFY_STORE_DOMAIN ??
+    "";
   const SHOPIFY_ADMIN_ACCESS_TOKEN =
-    process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? "";
+    process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ??
+    process.env.SHOPIFY_ACCESS_TOKEN ??
+    "";
 
   if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_ADMIN_ACCESS_TOKEN) {
     return NextResponse.json(

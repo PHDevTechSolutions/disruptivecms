@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { logAuditEvent } from "@/lib/logger";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -201,11 +202,33 @@ export default function SolutionsManager() {
 
       if (editId) {
         await updateDoc(doc(db, "solutions", editId), payload);
+        await logAuditEvent({
+          action: "update",
+          entityType: "solution",
+          entityId: editId,
+          entityName: title,
+          context: {
+            page: "/products/solutions",
+            source: "solutions:edit",
+            collection: "solutions",
+          },
+        });
         toast.success("Solution & SEO Updated");
       } else {
-        await addDoc(collection(db, "solutions"), {
+        const docRef = await addDoc(collection(db, "solutions"), {
           ...payload,
           createdAt: serverTimestamp(),
+        });
+        await logAuditEvent({
+          action: "create",
+          entityType: "solution",
+          entityId: docRef.id,
+          entityName: title,
+          context: {
+            page: "/products/solutions",
+            source: "solutions:create",
+            collection: "solutions",
+          },
         });
         toast.success("Solution & SEO Saved");
       }
@@ -582,7 +605,20 @@ export default function SolutionsManager() {
                                   <AlertDialogAction
                                     className="rounded-none bg-destructive text-[10px] font-black uppercase"
                                     onClick={() =>
-                                      deleteDoc(doc(db, "solutions", sol.id))
+                                      deleteDoc(doc(db, "solutions", sol.id)).then(
+                                        () =>
+                                          logAuditEvent({
+                                            action: "delete",
+                                            entityType: "solution",
+                                            entityId: sol.id,
+                                            entityName: sol.title,
+                                            context: {
+                                              page: "/products/solutions",
+                                              source: "solutions:delete",
+                                              collection: "solutions",
+                                            },
+                                          }),
+                                      )
                                     }
                                   >
                                     Delete

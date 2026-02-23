@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { logAuditEvent } from "@/lib/logger";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Disruptive Solutions Inc",
   "Value Acquisitions Holdings",
+  "Taskflow",
 ];
 
 const WEBSITE_PRODUCT_PATH: Record<string, string> = {
@@ -563,10 +565,32 @@ export default function AddNewProduct({
 
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
+        await logAuditEvent({
+          action: "update",
+          entityType: "product",
+          entityId: editData.id,
+          entityName: itemDescription || editData.itemDescription || "",
+          context: {
+            page: "/products/all-products",
+            source: "add-new-product-form",
+            collection: "products",
+          },
+        });
       } else {
-        await addDoc(collection(db, "products"), {
+        const docRef = await addDoc(collection(db, "products"), {
           ...payload,
           createdAt: serverTimestamp(),
+        });
+        await logAuditEvent({
+          action: "create",
+          entityType: "product",
+          entityId: docRef.id,
+          entityName: itemDescription,
+          context: {
+            page: "/products/all-products",
+            source: "add-new-product-form",
+            collection: "products",
+          },
         });
       }
 

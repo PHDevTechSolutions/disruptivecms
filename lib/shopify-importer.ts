@@ -29,8 +29,14 @@ import { db } from "@/lib/firebase";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
-const SHOPIFY_STORE_DOMAIN = process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN ?? "";
-const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? "";
+const SHOPIFY_STORE_DOMAIN =
+  process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN ??
+  process.env.SHOPIFY_STORE_DOMAIN ??
+  "";
+const SHOPIFY_ADMIN_TOKEN =
+  process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ??
+  process.env.SHOPIFY_ACCESS_TOKEN ??
+  "";
 const CLOUDINARY_CLOUD_NAME =
   process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
 const CLOUDINARY_UPLOAD_PRESET =
