@@ -1,5 +1,5 @@
 import admin from "firebase-admin";
-import serviceAccount from "../lib/firebase/adminsdk.json";
+import serviceAccount from "@/lib/firebase/admin";
 
 // Initialize admin SDK
 if (!admin.apps.length) {
