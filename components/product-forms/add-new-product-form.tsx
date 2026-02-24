@@ -8,9 +8,11 @@ import {
   collection,
   addDoc,
   serverTimestamp,
+  deleteDoc,
   doc,
   onSnapshot,
   updateDoc,
+  arrayUnion,
   query,
   where,
   getDocs,
@@ -38,6 +40,8 @@ import {
   Check,
   ChevronsUpDown,
   FileImage,
+  Settings2,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -58,6 +62,17 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
@@ -88,6 +103,19 @@ interface PendingItem {
 interface SpecValue {
   specGroup: string;
   specs: { name: string; value: string }[];
+}
+
+// ── Custom Section types ──────────────────────────────────────────────────────
+interface CustomSectionItem {
+  id: string;
+  name: string;
+}
+
+interface CustomSectionData {
+  id: string;
+  title: string;
+  items: CustomSectionItem[];
+  selected: string[];
 }
 
 type ProductClass = "spf" | "standard" | "";
@@ -164,6 +192,11 @@ export default function AddNewProduct({
   const [availableApps, setAvailableApps] = useState<MasterItem[]>([]);
   const [catOpen, setCatOpen] = useState(false);
 
+  // ── Custom Sections state ─────────────────────────────────────────────────
+  const [customSections, setCustomSections] = useState<CustomSectionData[]>([]);
+  const [isAddingNewSection, setIsAddingNewSection] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+
   const pendingItemsRef = useRef<PendingItem[]>([]);
 
   // Selections
@@ -211,7 +244,7 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Fetch ALL master data — no website gate ───────────────────────────────
+  // ── Fetch ALL master data ─────────────────────────────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -273,10 +306,30 @@ export default function AddNewProduct({
       },
     );
 
+    // ── Custom Sections listener ──────────────────────────────────────────
+    const unsubCustom = onSnapshot(
+      collection(db, "custom_sections"),
+      (snap) => {
+        const sections = snap.docs.map((d) => ({
+          id: d.id,
+          title: d.data().title || "Untitled",
+          items: d.data().items || [],
+          selected: [],
+        }));
+        setCustomSections((prev) =>
+          sections.map((sec) => {
+            const existing = prev.find((p) => p.id === sec.id);
+            return { ...sec, selected: existing?.selected || [] };
+          }),
+        );
+      },
+    );
+
     return () => {
       unsubCats();
       unsubBrands();
       unsubApps();
+      unsubCustom();
     };
   }, []);
 
@@ -364,6 +417,7 @@ export default function AddNewProduct({
     setExistingQrImage(editData.qrCodeImage || "");
   }, [editData]);
 
+  // ── Load edit data for custom sections & specs ────────────────────────────
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
@@ -389,6 +443,74 @@ export default function AddNewProduct({
       if (match) setSelectedCatId(match.id);
     }
   }, [editData, availableCats]);
+
+  // ── Restore custom section selections in edit mode ────────────────────────
+  useEffect(() => {
+    if (!editData?.dynamicSpecs || customSections.length === 0) return;
+    setCustomSections((prev) =>
+      prev.map((section) => {
+        const matchingValues = (editData.dynamicSpecs as any[])
+          .filter((spec: any) => spec.title === section.title)
+          .map((spec: any) => spec.value);
+        return matchingValues.length > 0
+          ? { ...section, selected: matchingValues }
+          : section;
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editData, customSections.length]);
+
+  // ── Custom section handlers ───────────────────────────────────────────────
+  const handleAddChoiceToCustom = async (sectionId: string, choiceName: string) => {
+    if (!choiceName.trim()) return;
+    try {
+      const sectionRef = doc(db, "custom_sections", sectionId);
+      await updateDoc(sectionRef, {
+        items: arrayUnion({ id: Date.now().toString(), name: choiceName.trim() }),
+      });
+    } catch {
+      toast.error("Error adding choice");
+    }
+  };
+
+  const handleCreateNewSection = async () => {
+    if (!newSectionTitle.trim()) return;
+    try {
+      await addDoc(collection(db, "custom_sections"), {
+        title: newSectionTitle.trim().toUpperCase(),
+        items: [],
+        createdAt: serverTimestamp(),
+      });
+      setNewSectionTitle("");
+      setIsAddingNewSection(false);
+      toast.success("New section added");
+    } catch {
+      toast.error("Error creating section");
+    }
+  };
+
+  const handleDeleteCustomSection = async (sectionId: string) => {
+    try {
+      await deleteDoc(doc(db, "custom_sections", sectionId));
+      toast.success("Section deleted");
+    } catch {
+      toast.error("Delete failed");
+    }
+  };
+
+  const handleDeleteCustomSectionItem = async (
+    section: CustomSectionData,
+    itemId: string,
+  ) => {
+    try {
+      const sRef = doc(db, "custom_sections", section.id);
+      await updateDoc(sRef, {
+        items: section.items.filter((i) => i.id !== itemId),
+      });
+    } catch {
+      toast.error("Delete failed");
+    }
+  };
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const uploadToCloudinary = async (file: File) => {
@@ -523,6 +645,11 @@ export default function AddNewProduct({
         ([specGroup, specs]) => ({ specGroup, specs }),
       );
 
+      // ── Serialize custom section selections ───────────────────────────────
+      const dynamicSpecs = customSections.flatMap((section) =>
+        section.selected.map((val) => ({ title: section.title, value: val })),
+      );
+
       const resolvedCatId = pendingIdMap[selectedCatId] || selectedCatId;
       const productFamilyTitle = resolvedCatId
         ? availableCats.find((c) => c.id === selectedCatId)?.name || ""
@@ -540,6 +667,7 @@ export default function AddNewProduct({
         regularPrice: Number(regPrice) || 0,
         salePrice: Number(salePrice) || 0,
         technicalSpecs,
+        dynamicSpecs,
         mainImage: mainUrl,
         rawImage: rawUrl,
         qrCodeImage: qrUrl,
@@ -692,11 +820,7 @@ export default function AddNewProduct({
                           : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
                       }`}
                   >
-                    <span
-                      className={
-                        active ? "text-primary" : "text-muted-foreground"
-                      }
-                    >
+                    <span className={active ? "text-primary" : "text-muted-foreground"}>
                       {opt.icon}
                     </span>
                     <div>
@@ -732,11 +856,7 @@ export default function AddNewProduct({
                   {mainImage || existingMainImage ? (
                     <div className="relative w-full h-full group">
                       <img
-                        src={
-                          mainImage
-                            ? URL.createObjectURL(mainImage)
-                            : existingMainImage
-                        }
+                        src={mainImage ? URL.createObjectURL(mainImage) : existingMainImage}
                         className="w-full h-full object-contain rounded"
                         alt="Main"
                       />
@@ -754,9 +874,7 @@ export default function AddNewProduct({
                   ) : (
                     <div className="flex flex-col items-center gap-1">
                       <ImagePlus className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Main
-                      </p>
+                      <p className="text-[10px] font-medium text-muted-foreground">Main</p>
                     </div>
                   )}
                 </div>
@@ -775,11 +893,7 @@ export default function AddNewProduct({
                   {rawImage || existingRawImage ? (
                     <div className="relative w-full h-full group">
                       <img
-                        src={
-                          rawImage
-                            ? URL.createObjectURL(rawImage)
-                            : existingRawImage
-                        }
+                        src={rawImage ? URL.createObjectURL(rawImage) : existingRawImage}
                         className="w-full h-full object-contain rounded"
                         alt="Raw"
                       />
@@ -797,9 +911,7 @@ export default function AddNewProduct({
                   ) : (
                     <div className="flex flex-col items-center gap-1">
                       <FileImage className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Raw
-                      </p>
+                      <p className="text-[10px] font-medium text-muted-foreground">Raw</p>
                     </div>
                   )}
                 </div>
@@ -807,27 +919,18 @@ export default function AddNewProduct({
 
               {/* QR Code */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  QR Code
-                </Label>
+                <Label className="text-xs font-medium text-muted-foreground">QR Code</Label>
                 <QrDropzone
                   file={qrImage}
                   existingUrl={existingQrImage}
-                  onRemove={() => {
-                    setQrImage(null);
-                    setExistingQrImage("");
-                  }}
-                  onDrop={(files) => {
-                    if (files[0]) setQrImage(files[0]);
-                  }}
+                  onRemove={() => { setQrImage(null); setExistingQrImage(""); }}
+                  onDrop={(files) => { if (files[0]) setQrImage(files[0]); }}
                 />
               </div>
 
               {/* Gallery Add */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Add Gallery
-                </Label>
+                <Label className="text-xs font-medium text-muted-foreground">Add Gallery</Label>
                 <div
                   {...galleryRoot()}
                   className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
@@ -835,12 +938,8 @@ export default function AddNewProduct({
                   <input {...galleryInput()} />
                   <div className="flex flex-col items-center gap-1">
                     <Images className="h-7 w-7 text-muted-foreground" />
-                    <p className="text-[10px] font-medium text-muted-foreground">
-                      Gallery
-                    </p>
-                    <p className="text-[9px] text-muted-foreground/60">
-                      Multi-select
-                    </p>
+                    <p className="text-[10px] font-medium text-muted-foreground">Gallery</p>
+                    <p className="text-[9px] text-muted-foreground/60">Multi-select</p>
                   </div>
                 </div>
               </div>
@@ -853,21 +952,10 @@ export default function AddNewProduct({
                 </Label>
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
                   {existingGalleryImages.map((img, i) => (
-                    <div
-                      key={`exist-${i}`}
-                      className="aspect-square relative border rounded-md overflow-hidden group"
-                    >
-                      <img
-                        src={img}
-                        className="object-cover w-full h-full"
-                        alt={`Gallery ${i + 1}`}
-                      />
+                    <div key={`exist-${i}`} className="aspect-square relative border rounded-md overflow-hidden group">
+                      <img src={img} className="object-cover w-full h-full" alt={`Gallery ${i + 1}`} />
                       <button
-                        onClick={() =>
-                          setExistingGalleryImages((p) =>
-                            p.filter((_, idx) => idx !== i),
-                          )
-                        }
+                        onClick={() => setExistingGalleryImages((p) => p.filter((_, idx) => idx !== i))}
                         className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="h-3 w-3" />
@@ -875,21 +963,10 @@ export default function AddNewProduct({
                     </div>
                   ))}
                   {galleryImages.map((img, i) => (
-                    <div
-                      key={`new-${i}`}
-                      className="aspect-square relative border rounded-md overflow-hidden group"
-                    >
-                      <img
-                        src={URL.createObjectURL(img)}
-                        className="object-cover w-full h-full"
-                        alt={`New ${i + 1}`}
-                      />
+                    <div key={`new-${i}`} className="aspect-square relative border rounded-md overflow-hidden group">
+                      <img src={URL.createObjectURL(img)} className="object-cover w-full h-full" alt={`New ${i + 1}`} />
                       <button
-                        onClick={() =>
-                          setGalleryImages((p) =>
-                            p.filter((_, idx) => idx !== i),
-                          )
-                        }
+                        onClick={() => setGalleryImages((p) => p.filter((_, idx) => idx !== i))}
                         className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="h-3 w-3" />
@@ -952,28 +1029,22 @@ export default function AddNewProduct({
               </div>
             </div>
 
-            {/* Technical Specs — single column */}
+            {/* Technical Specs */}
             {selectedCatId && (
               <div className="pt-4 border-t">
                 <div className="flex items-center gap-2 mb-4">
                   <Zap className="h-4 w-4 text-primary" />
-                  <Label className="text-sm font-medium">
-                    Technical Specifications
-                  </Label>
+                  <Label className="text-sm font-medium">Technical Specifications</Label>
                 </div>
 
                 {specsLoading ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    <p className="text-xs font-medium text-muted-foreground">
-                      Loading specifications...
-                    </p>
+                    <p className="text-xs font-medium text-muted-foreground">Loading specifications...</p>
                   </div>
                 ) : availableSpecs.length === 0 ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      No specs for this product family
-                    </p>
+                    <p className="text-xs font-medium text-muted-foreground">No specs for this product family</p>
                   </div>
                 ) : (
                   <div className="space-y-6">
@@ -991,27 +1062,18 @@ export default function AddNewProduct({
                             <Zap className="h-3 w-3" />
                             {groupName}
                           </h4>
-                          {/* ── Single column — no grid ── */}
                           <div className="space-y-3 pl-5">
                             {visible.map((spec) => {
                               const specKey = `${spec.specGroupId}-${spec.label}`;
                               return (
-                                <div
-                                  key={spec.id}
-                                  className="space-y-1.5 p-3 rounded-lg border bg-card"
-                                >
-                                  <Label className="text-xs font-medium">
-                                    {spec.label}
-                                  </Label>
+                                <div key={spec.id} className="space-y-1.5 p-3 rounded-lg border bg-card">
+                                  <Label className="text-xs font-medium">{spec.label}</Label>
                                   <Input
                                     placeholder={`Enter ${spec.label}...`}
                                     className="h-9 text-sm"
                                     value={specValues[specKey] || ""}
                                     onChange={(e) =>
-                                      setSpecValues((p) => ({
-                                        ...p,
-                                        [specKey]: e.target.value,
-                                      }))
+                                      setSpecValues((p) => ({ ...p, [specKey]: e.target.value }))
                                     }
                                   />
                                 </div>
@@ -1052,16 +1114,12 @@ export default function AddNewProduct({
                           : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
                       }`}
                   >
-                    <span
-                      className={active ? opt.color : "text-muted-foreground"}
-                    >
+                    <span className={active ? opt.color : "text-muted-foreground"}>
                       {opt.icon}
                     </span>
                     <div>
                       <p className="text-sm font-semibold">{opt.label}</p>
-                      <p className="text-[11px] font-normal opacity-70">
-                        {opt.desc}
-                      </p>
+                      <p className="text-[11px] font-normal opacity-70">{opt.desc}</p>
                     </div>
                   </button>
                 );
@@ -1073,15 +1131,13 @@ export default function AddNewProduct({
 
       {/* ═══════════════════════ SIDEBAR ═══════════════════════════ */}
       <div className="space-y-6">
-        {/* Targeted Websites — optional */}
+        {/* Targeted Websites */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Globe className="h-4 w-4" />
               Targeted Websites
-              <span className="ml-auto text-[10px] font-normal text-muted-foreground">
-                Optional
-              </span>
+              <span className="ml-auto text-[10px] font-normal text-muted-foreground">Optional</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -1100,9 +1156,7 @@ export default function AddNewProduct({
                   onCheckedChange={() => toggleWebsite(web)}
                   onClick={(e) => e.stopPropagation()}
                 />
-                <span
-                  className={`text-sm font-medium ${selectedWebs.includes(web) ? "text-primary" : "text-muted-foreground"}`}
-                >
+                <span className={`text-sm font-medium ${selectedWebs.includes(web) ? "text-primary" : "text-muted-foreground"}`}>
                   {web}
                 </span>
               </div>
@@ -1110,22 +1164,19 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* Classification */}
+        {/* Classification + Custom Sections */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-center">
-              Classification
-            </CardTitle>
+            <CardTitle className="text-sm font-medium text-center">Classification</CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-8">
-            {/* PRODUCT FAMILY — single select */}
+            {/* PRODUCT FAMILY */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-primary">
                 <Tag className="h-3 w-3" />
                 <Label className="text-xs font-medium">Product Family</Label>
               </div>
-
               <Popover open={catOpen} onOpenChange={setCatOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -1139,59 +1190,36 @@ export default function AddNewProduct({
                     <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-
-                <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
-                  align="start"
-                >
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                   <Command>
-                    <CommandInput
-                      placeholder="Search families..."
-                      className="h-9 text-xs"
-                    />
+                    <CommandInput placeholder="Search families..." className="h-9 text-xs" />
                     <CommandList>
                       <CommandEmpty>No family found.</CommandEmpty>
                       <CommandGroup>
                         {selectedCatId && (
                           <CommandItem
-                            onSelect={() => {
-                              setSelectedCatId("");
-                              setCatOpen(false);
-                            }}
+                            onSelect={() => { setSelectedCatId(""); setCatOpen(false); }}
                             className="text-xs text-muted-foreground italic"
                           >
                             <X className="mr-2 h-3 w-3" />
                             Clear selection
                           </CommandItem>
                         )}
-
                         {availableCats.map((cat) => (
                           <CommandItem
                             key={cat.id}
                             value={cat.name}
-                            onSelect={() => {
-                              setSelectedCatId(cat.id);
-                              setCatOpen(false);
-                            }}
-                            className={cn(
-                              "text-xs",
-                              cat.isTemp && "italic text-muted-foreground",
-                            )}
+                            onSelect={() => { setSelectedCatId(cat.id); setCatOpen(false); }}
+                            className={cn("text-xs", cat.isTemp && "italic text-muted-foreground")}
                           >
                             <Check
                               className={cn(
                                 "mr-2 h-3 w-3",
-                                selectedCatId === cat.id
-                                  ? "opacity-100 text-primary"
-                                  : "opacity-0",
+                                selectedCatId === cat.id ? "opacity-100 text-primary" : "opacity-0",
                               )}
                             />
                             {cat.name}
-                            {cat.isTemp && (
-                              <span className="ml-1 text-[10px] opacity-60">
-                                *new
-                              </span>
-                            )}
+                            {cat.isTemp && <span className="ml-1 text-[10px] opacity-60">*new</span>}
                           </CommandItem>
                         ))}
                       </CommandGroup>
@@ -1201,13 +1229,12 @@ export default function AddNewProduct({
               </Popover>
             </div>
 
-            {/* BRAND — multi select (same structure) */}
+            {/* BRAND */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-primary">
                 <Factory className="h-3 w-3" />
                 <Label className="text-xs font-medium">Brand</Label>
               </div>
-
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -1215,23 +1242,14 @@ export default function AddNewProduct({
                     className="w-full justify-between h-9 text-xs font-medium"
                   >
                     <span className="truncate text-left">
-                      {selectedBrands.length
-                        ? `${selectedBrands.length} selected`
-                        : "Select brands..."}
+                      {selectedBrands.length ? `${selectedBrands.length} selected` : "Select brands..."}
                     </span>
                     <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-
-                <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
-                  align="start"
-                >
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                   <Command>
-                    <CommandInput
-                      placeholder="Search brands..."
-                      className="h-9 text-xs"
-                    />
+                    <CommandInput placeholder="Search brands..." className="h-9 text-xs" />
                     <CommandList>
                       <CommandEmpty>No brand found.</CommandEmpty>
                       <CommandGroup>
@@ -1241,9 +1259,7 @@ export default function AddNewProduct({
                             value={brand.name}
                             onSelect={() =>
                               setSelectedBrands((p) =>
-                                p.includes(brand.id)
-                                  ? p.filter((i) => i !== brand.id)
-                                  : [...p, brand.id],
+                                p.includes(brand.id) ? p.filter((i) => i !== brand.id) : [...p, brand.id],
                               )
                             }
                             className="text-xs"
@@ -1251,9 +1267,7 @@ export default function AddNewProduct({
                             <Check
                               className={cn(
                                 "mr-2 h-3 w-3",
-                                selectedBrands.includes(brand.id)
-                                  ? "opacity-100 text-primary"
-                                  : "opacity-0",
+                                selectedBrands.includes(brand.id) ? "opacity-100 text-primary" : "opacity-0",
                               )}
                             />
                             {brand.name}
@@ -1266,69 +1280,186 @@ export default function AddNewProduct({
               </Popover>
             </div>
 
-            {/* APPLICATIONS — multi select (same structure) */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-primary">
-                <LayoutGrid className="h-3 w-3" />
-                <Label className="text-xs font-medium">Applications</Label>
+            {/* ── CUSTOM ATTRIBUTE SECTIONS ── */}
+            <div className="pt-4 border-t space-y-4">
+              <div className="flex items-center gap-2">
+                <Settings2 className="h-3.5 w-3.5 text-primary" />
+                <Label className="text-xs font-semibold uppercase tracking-wide text-primary">
+                  Attribute Sections
+                </Label>
               </div>
 
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-between h-9 text-xs font-medium"
-                  >
-                    <span className="truncate text-left">
-                      {selectedApps.length
-                        ? `${selectedApps.length} selected`
-                        : "Select applications..."}
-                    </span>
-                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
+              {customSections.length === 0 && (
+                <p className="text-xs text-muted-foreground italic px-1">
+                  No custom sections yet. Add one below.
+                </p>
+              )}
 
-                <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
-                  align="start"
-                >
-                  <Command>
-                    <CommandInput
-                      placeholder="Search applications..."
-                      className="h-9 text-xs"
-                    />
-                    <CommandList>
-                      <CommandEmpty>No application found.</CommandEmpty>
-                      <CommandGroup>
-                        {availableApps.map((app) => (
-                          <CommandItem
-                            key={app.id}
-                            value={app.name}
-                            onSelect={() =>
-                              setSelectedApps((p) =>
-                                p.includes(app.id)
-                                  ? p.filter((a) => a !== app.id)
-                                  : [...p, app.id],
+              {customSections.map((sec) => (
+                <div key={sec.id} className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                  {/* Section header */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
+                      {sec.title}
+                    </span>
+                    {/* Delete entire section */}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <button className="text-muted-foreground/40 hover:text-destructive transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="rounded-2xl">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle className="font-black uppercase">Delete Section?</AlertDialogTitle>
+                          <AlertDialogDescription className="text-xs">
+                            This will permanently remove the <b>{sec.title}</b> section and all its items.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="rounded-xl text-xs font-bold">Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => handleDeleteCustomSection(sec.id)}
+                            className="rounded-xl bg-destructive text-xs font-bold"
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+
+                  {/* Items list */}
+                  {sec.items.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground italic">No items yet.</p>
+                  ) : (
+                    <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                      {sec.items.map((item) => {
+                        const checked = sec.selected.includes(item.name);
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex items-center justify-between group rounded-md px-2 py-1.5 transition-colors cursor-pointer ${
+                              checked ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"
+                            }`}
+                            onClick={() =>
+                              setCustomSections((prev) =>
+                                prev.map((s) =>
+                                  s.id === sec.id
+                                    ? {
+                                        ...s,
+                                        selected: checked
+                                          ? s.selected.filter((v) => v !== item.name)
+                                          : [...s.selected, item.name],
+                                      }
+                                    : s,
+                                ),
                               )
                             }
-                            className="text-xs"
                           >
-                            <Check
-                              className={cn(
-                                "mr-2 h-3 w-3",
-                                selectedApps.includes(app.id)
-                                  ? "opacity-100 text-primary"
-                                  : "opacity-0",
-                              )}
-                            />
-                            {app.name}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() =>
+                                  setCustomSections((prev) =>
+                                    prev.map((s) =>
+                                      s.id === sec.id
+                                        ? {
+                                            ...s,
+                                            selected: checked
+                                              ? s.selected.filter((v) => v !== item.name)
+                                              : [...s.selected, item.name],
+                                          }
+                                        : s,
+                                    ),
+                                  )
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <span className={`text-xs font-medium ${checked ? "text-primary" : "text-foreground"}`}>
+                                {item.name}
+                              </span>
+                            </div>
+                            {/* Delete item */}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <button
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/40 hover:text-destructive"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent className="rounded-2xl">
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle className="font-black uppercase">Delete Item?</AlertDialogTitle>
+                                  <AlertDialogDescription className="text-xs">
+                                    Remove <b>{item.name}</b> from {sec.title}?
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel className="rounded-xl text-xs font-bold">Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteCustomSectionItem(sec, item.id)}
+                                    className="rounded-xl bg-destructive text-xs font-bold"
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Add choice to section */}
+                  <AddCustomSectionItem
+                    placeholder={`Add to ${sec.title}...`}
+                    onAdd={(val) => handleAddChoiceToCustom(sec.id, val)}
+                  />
+                </div>
+              ))}
+
+              {/* Add new section */}
+              {!isAddingNewSection ? (
+                <Button
+                  variant="outline"
+                  className="w-full h-9 border-dashed border-2 text-xs font-semibold text-muted-foreground hover:text-primary hover:border-primary bg-transparent"
+                  onClick={() => setIsAddingNewSection(true)}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1.5" />
+                  Add Custom Section
+                </Button>
+              ) : (
+                <div className="p-3 bg-card rounded-lg border-2 border-primary/20 shadow-sm space-y-2">
+                  <Input
+                    placeholder="Section title..."
+                    className="h-8 text-xs font-semibold"
+                    value={newSectionTitle}
+                    onChange={(e) => setNewSectionTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleCreateNewSection(); }}
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleCreateNewSection}
+                      disabled={!newSectionTitle.trim()}
+                      className="flex-1 h-7 text-xs font-bold"
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      onClick={() => { setIsAddingNewSection(false); setNewSectionTitle(""); }}
+                      variant="ghost"
+                      className="h-7 text-xs font-bold"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -1338,9 +1469,7 @@ export default function AddNewProduct({
           <CardContent className="pt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Regular Price
-                </Label>
+                <Label className="text-xs font-medium text-muted-foreground">Regular Price</Label>
                 <Input
                   className="h-9 font-semibold"
                   value={regPrice}
@@ -1349,9 +1478,7 @@ export default function AddNewProduct({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Sale Price
-                </Label>
+                <Label className="text-xs font-medium text-muted-foreground">Sale Price</Label>
                 <Input
                   className="h-9 font-semibold text-destructive"
                   value={salePrice}
@@ -1379,27 +1506,20 @@ export default function AddNewProduct({
                   className="h-10"
                   placeholder="Item description for Google"
                   value={seoData.title}
-                  onChange={(e) =>
-                    setSeoData((p) => ({ ...p, title: e.target.value }))
-                  }
+                  onChange={(e) => setSeoData((p) => ({ ...p, title: e.target.value }))}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium flex justify-between">
                   URL Slug
-                  <span className="text-[10px] text-destructive font-normal">
-                    No forward slash (/)
-                  </span>
+                  <span className="text-[10px] text-destructive font-normal">No forward slash (/)</span>
                 </Label>
                 <Input
                   className="h-10 font-mono text-sm"
                   placeholder="product-name-slug"
                   value={seoData.slug}
                   onChange={(e) => {
-                    const s = e.target.value
-                      .toLowerCase()
-                      .replace(/\//g, "")
-                      .replace(/\s+/g, "-");
+                    const s = e.target.value.toLowerCase().replace(/\//g, "").replace(/\s+/g, "-");
                     setSeoData((p) => ({ ...p, slug: s }));
                   }}
                 />
@@ -1411,24 +1531,17 @@ export default function AddNewProduct({
                   className="w-full px-3 py-2 bg-background border rounded-md focus:outline-none focus:ring-2 focus:ring-ring text-sm resize-none"
                   placeholder="Brief summary for search results..."
                   value={seoData.description}
-                  onChange={(e) =>
-                    setSeoData((p) => ({ ...p, description: e.target.value }))
-                  }
+                  onChange={(e) => setSeoData((p) => ({ ...p, description: e.target.value }))}
                 />
               </div>
             </div>
 
             <div className="pt-2">
               <div className="flex items-center gap-6 mb-4">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Google Preview:
-                </span>
+                <span className="text-xs font-medium text-muted-foreground">Google Preview:</span>
                 <div className="flex gap-4">
                   {(["mobile", "desktop"] as const).map((mode) => (
-                    <label
-                      key={mode}
-                      className="flex items-center gap-2 cursor-pointer text-xs font-medium"
-                    >
+                    <label key={mode} className="flex items-center gap-2 cursor-pointer text-xs font-medium">
                       <input
                         type="radio"
                         name="view"
@@ -1444,17 +1557,15 @@ export default function AddNewProduct({
 
               {seoData.canonical && (
                 <div className="mb-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
-                  <p className="text-[10px] font-semibold text-primary mb-1">
-                    Canonical URL
-                  </p>
-                  <p className="text-xs text-primary/80 font-mono break-all">
-                    {seoData.canonical}
-                  </p>
+                  <p className="text-[10px] font-semibold text-primary mb-1">Canonical URL</p>
+                  <p className="text-xs text-primary/80 font-mono break-all">{seoData.canonical}</p>
                 </div>
               )}
 
               <div
-                className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${previewMode === "mobile" ? "max-w-[360px]" : "max-w-[600px]"}`}
+                className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${
+                  previewMode === "mobile" ? "max-w-[360px]" : "max-w-[600px]"
+                }`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center">
@@ -1462,13 +1573,13 @@ export default function AddNewProduct({
                   </div>
                   <p className="text-[12px] text-foreground/70 font-medium truncate">
                     {selectedWebs.length > 0
-                      ? `${WEBSITE_DOMAINS[selectedWebs[0]]?.replace("https://", "")} › ${WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace("/", "") || "products"} › ${seoData.slug || "..."}`
+                      ? `${WEBSITE_DOMAINS[selectedWebs[0]]?.replace("https://", "")} › ${
+                          WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace("/", "") || "products"
+                        } › ${seoData.slug || "..."}`
                       : "No website selected"}
                   </p>
                 </div>
-                <div
-                  className={`mt-2 ${previewMode === "mobile" ? "flex flex-col-reverse gap-2" : "flex gap-4"}`}
-                >
+                <div className={`mt-2 ${previewMode === "mobile" ? "flex flex-col-reverse gap-2" : "flex gap-4"}`}>
                   <div className="flex-1">
                     <a
                       href="#"
@@ -1478,18 +1589,13 @@ export default function AddNewProduct({
                       {seoData.title || "Enter an SEO Title..."}
                     </a>
                     <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                      {seoData.description ||
-                        "Enter a meta description to see how it looks here."}
+                      {seoData.description || "Enter a meta description to see how it looks here."}
                     </p>
                   </div>
                   <div className="w-[104px] h-[104px] flex-shrink-0 bg-muted/50 rounded-md overflow-hidden border relative group">
                     {mainImage || existingMainImage ? (
                       <img
-                        src={
-                          mainImage
-                            ? URL.createObjectURL(mainImage)
-                            : existingMainImage
-                        }
+                        src={mainImage ? URL.createObjectURL(mainImage) : existingMainImage}
                         className="w-full h-full object-contain p-1"
                         alt="SEO Preview"
                       />
@@ -1499,9 +1605,7 @@ export default function AddNewProduct({
                       </div>
                     )}
                     <div className="absolute inset-0 bg-foreground/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="text-[8px] text-background font-semibold">
-                        PREVIEW ONLY
-                      </span>
+                      <span className="text-[8px] text-background font-semibold">PREVIEW ONLY</span>
                     </div>
                   </div>
                 </div>
@@ -1533,66 +1637,7 @@ export default function AddNewProduct({
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SidebarList({
-  label,
-  icon,
-  items,
-  selected,
-  onToggle,
-  onAdd,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  items: MasterItem[];
-  selected: string[];
-  onToggle: (id: string) => void;
-  onAdd: (name: string) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-primary">
-        {icon}
-        <Label className="text-xs font-medium">{label}</Label>
-      </div>
-      <div className="space-y-1 max-h-48 overflow-y-auto pr-2 min-h-[50px]">
-        {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic py-2">
-            No items found.
-          </p>
-        ) : (
-          items.map((item) => {
-            const isSelected = selected.includes(item.id);
-            return (
-              <div
-                key={item.id}
-                onClick={() => onToggle(item.id)}
-                className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors
-                  ${isSelected ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"}
-                  ${item.isTemp ? "bg-primary/5 border border-primary/30" : ""}`}
-              >
-                <Checkbox
-                  checked={isSelected}
-                  onCheckedChange={() => onToggle(item.id)}
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <span
-                  className={`text-sm font-medium ${isSelected ? "text-primary" : "text-foreground"} ${item.isTemp ? "italic" : ""}`}
-                >
-                  {item.name} {item.isTemp && "*"}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-      <div className="pt-2 border-t">
-        <AddCustomItem placeholder={`Add ${label}...`} onAdd={onAdd} />
-      </div>
-    </div>
-  );
-}
-
-function AddCustomItem({
+function AddCustomSectionItem({
   placeholder,
   onAdd,
 }: {
@@ -1607,27 +1652,22 @@ function AddCustomItem({
     }
   };
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 pt-1 border-t">
       <Input
         placeholder={placeholder}
         value={val}
         onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            go();
-          }
-        }}
-        className="h-8 text-xs"
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
+        className="h-7 text-xs"
       />
       <Button
         disabled={!val.trim()}
         size="icon"
         variant="ghost"
         onClick={go}
-        className="h-8 w-8 hover:bg-primary/10"
+        className="h-7 w-7 hover:bg-primary/10 flex-shrink-0"
       >
-        <Plus className="h-4 w-4" />
+        <Plus className="h-3.5 w-3.5" />
       </Button>
     </div>
   );
@@ -1659,10 +1699,7 @@ function QrDropzone({
             alt="QR"
           />
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
             className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
           >
             <X className="h-3 w-3" />
@@ -1671,9 +1708,7 @@ function QrDropzone({
       ) : (
         <div className="flex flex-col items-center gap-1">
           <Zap className="h-7 w-7 text-muted-foreground" />
-          <p className="text-[10px] font-medium text-muted-foreground">
-            QR Code
-          </p>
+          <p className="text-[10px] font-medium text-muted-foreground">QR Code</p>
         </div>
       )}
     </div>

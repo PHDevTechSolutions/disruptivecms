@@ -38,6 +38,7 @@ const allNavItems = {
     items: [
       { title: "All Products", url: "/products/all-products" },
       { title: "Taskflow Products", url: "/products/taskflow-products" },
+      { title: "Shopify Products", url: "/products/shopify-products" },
       { title: "Applications", url: "/products/applications" },
       { title: "Brands", url: "/products/brands" },
       { title: "Product Families", url: "/products/product-families" },

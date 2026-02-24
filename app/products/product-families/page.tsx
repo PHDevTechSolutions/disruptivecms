@@ -81,6 +81,7 @@ const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Value Acquisitions Holdings",
   "Taskflow",
+  "Shopify"
 ];
 
 export default function CategoryMaintenance() {
@@ -103,6 +104,28 @@ export default function CategoryMaintenance() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
 
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+const handleBulkUpdateWebsites = async () => {
+  if (selectedWebsites.length === 0)
+    return toast.error("Select at least one website first.");
+
+  setIsBulkUpdating(true);
+  try {
+    const batch = categories.map((cat) =>
+      updateDoc(doc(db, "productfamilies", cat.id), {
+        websites: selectedWebsites,
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await Promise.all(batch);
+    toast.success(`Updated ${categories.length} categories to: ${selectedWebsites.join(", ")}`);
+  } catch (err) {
+    toast.error("Bulk update failed");
+  } finally {
+    setIsBulkUpdating(false);
+  }
+};
   useEffect(() => {
     const q = query(
       collection(db, "productfamilies"),
@@ -226,6 +249,7 @@ export default function CategoryMaintenance() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              
               {/* ── FORM ── */}
               <div className="lg:col-span-4 sticky top-6 z-10">
                 <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
