@@ -160,6 +160,8 @@ const WEBSITE_DOMAINS: Record<string, string> = {
   "Value Acquisitions Holdings": "https://vah.com.ph",
 };
 
+const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AddNewProduct({
@@ -211,6 +213,10 @@ export default function AddNewProduct({
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
+  const [productUsage, setProductUsage] = useState<string[]>(
+    editData?.productUsage || [],
+  );
+  const [usageOpen, setUsageOpen] = useState(false);
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
   // Images
@@ -429,6 +435,7 @@ export default function AddNewProduct({
     );
     setSelectedBrands(editData.brand ? [editData.brand] : []);
     setSelectedApps(editData.applications || []);
+    setProductUsage(editData.productUsage || []);
     setExistingMainImage(editData.mainImage || "");
     setExistingRawImage(editData.rawImage || "");
     setExistingGalleryImages(editData.galleryImages || []);
@@ -748,6 +755,7 @@ export default function AddNewProduct({
         productFamily: productFamilyTitle,
         brand: brandName,
         applications: resolveApps(selectedApps),
+        productUsage,
         status,
         seo: {
           itemDescription: seoData.description || itemDescription,
@@ -1678,6 +1686,88 @@ export default function AddNewProduct({
                   </Command>
                 </PopoverContent>
               </Popover>
+            </div>
+
+            {/* PRODUCT USAGE */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-primary">
+                <LayoutGrid className="h-3 w-3" />
+                <Label className="text-xs font-medium">Product Usage</Label>
+              </div>
+              <Popover open={usageOpen} onOpenChange={setUsageOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between h-9 text-xs font-medium"
+                  >
+                    <span className="truncate text-left">
+                      {productUsage.length
+                        ? productUsage.join(", ")
+                        : "Select usage..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  align="start"
+                >
+                  <Command>
+                    <CommandList>
+                      <CommandGroup>
+                        {PRODUCT_USAGE_OPTIONS.map((opt) => (
+                          <CommandItem
+                            key={opt}
+                            value={opt}
+                            onSelect={() =>
+                              setProductUsage((p) =>
+                                p.includes(opt)
+                                  ? p.filter((v) => v !== opt)
+                                  : [...p, opt],
+                              )
+                            }
+                            className="text-xs"
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-3 w-3",
+                                productUsage.includes(opt)
+                                  ? "opacity-100 text-primary"
+                                  : "opacity-0",
+                              )}
+                            />
+                            {opt}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+
+              {/* Selected badges */}
+              {productUsage.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {productUsage.map((u) => (
+                    <span
+                      key={u}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold border border-primary/20"
+                    >
+                      {u}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setProductUsage((p) => p.filter((v) => v !== u))
+                        }
+                        className="hover:text-destructive transition-colors"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* ── CUSTOM ATTRIBUTE SECTIONS ── */}
