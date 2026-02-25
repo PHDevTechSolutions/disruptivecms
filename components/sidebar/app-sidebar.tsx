@@ -21,7 +21,7 @@ import {
   Settings,
   Settings2Icon,
   BriefcaseBusiness,
-  Trash
+  LockIcon
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
@@ -94,11 +94,12 @@ const allNavItems = {
 
   },
   "recycle-bin": {
-    title: "Recycle Bin",
-    url: "/recycle-bin",
-    icon: <Trash />,
+    title: "Admin",
+    url: "/admin",
+    icon: <LockIcon />,
     items: [
-      { title: "Deleted Products", url: "/recycle-bin/deleted-products" },
+      { title: "Audit Logs", url: "/admin/audit-logs" },
+      { title: "Deleted Products", url: "/admin/deleted-products" },
     ],
   },
 };

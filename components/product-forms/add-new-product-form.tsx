@@ -42,6 +42,9 @@ import {
   FileImage,
   Settings2,
   Trash2,
+  Ruler,
+  ArrowUpDown,
+  FileText,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -76,6 +79,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
+import { generateTdsPdf } from "@/lib/generateTdsPdf";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +188,9 @@ export default function AddNewProduct({
     editData?.status || "draft",
   );
 
+  // TDS PDF
+  const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
+
   // Master data
   const [availableSpecs, setAvailableSpecs] = useState<SpecItem[]>([]);
   const [specsLoading, setSpecsLoading] = useState(false);
@@ -211,12 +218,22 @@ export default function AddNewProduct({
   const [rawImage, setRawImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
   const [qrImage, setQrImage] = useState<File | null>(null);
+  const [dimensionDrawingImage, setDimensionDrawingImage] =
+    useState<File | null>(null);
+  const [mountingHeightImage, setMountingHeightImage] = useState<File | null>(
+    null,
+  );
+
   const [existingMainImage, setExistingMainImage] = useState("");
   const [existingRawImage, setExistingRawImage] = useState("");
   const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>(
     [],
   );
   const [existingQrImage, setExistingQrImage] = useState("");
+  const [existingDimensionDrawingImage, setExistingDimensionDrawingImage] =
+    useState("");
+  const [existingMountingHeightImage, setExistingMountingHeightImage] =
+    useState("");
 
   // SEO
   const [seoData, setSeoData] = useState({
@@ -402,6 +419,7 @@ export default function AddNewProduct({
     setRegPrice(editData.regularPrice?.toString() || "");
     setSalePrice(editData.salePrice?.toString() || "");
     setStatus(editData.status || "draft");
+    setTdsUrl(editData.tdsFileUrl || "");
     setSelectedWebs(
       Array.isArray(editData.website)
         ? editData.website
@@ -415,6 +433,8 @@ export default function AddNewProduct({
     setExistingRawImage(editData.rawImage || "");
     setExistingGalleryImages(editData.galleryImages || []);
     setExistingQrImage(editData.qrCodeImage || "");
+    setExistingDimensionDrawingImage(editData.dimensionDrawingImage || "");
+    setExistingMountingHeightImage(editData.mountingHeightImage || "");
   }, [editData]);
 
   // ── Load edit data for custom sections & specs ────────────────────────────
@@ -461,12 +481,18 @@ export default function AddNewProduct({
   }, [editData, customSections.length]);
 
   // ── Custom section handlers ───────────────────────────────────────────────
-  const handleAddChoiceToCustom = async (sectionId: string, choiceName: string) => {
+  const handleAddChoiceToCustom = async (
+    sectionId: string,
+    choiceName: string,
+  ) => {
     if (!choiceName.trim()) return;
     try {
       const sectionRef = doc(db, "custom_sections", sectionId);
       await updateDoc(sectionRef, {
-        items: arrayUnion({ id: Date.now().toString(), name: choiceName.trim() }),
+        items: arrayUnion({
+          id: Date.now().toString(),
+          name: choiceName.trim(),
+        }),
       });
     } catch {
       toast.error("Error adding choice");
@@ -513,7 +539,12 @@ export default function AddNewProduct({
   };
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const uploadToCloudinary = async (file: File) => {
+
+  /**
+   * Generic Cloudinary image upload.
+   * Uses resource_type "image" (default preset behaviour).
+   */
+  const uploadToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
@@ -522,6 +553,30 @@ export default function AddNewProduct({
       { method: "POST", body: fd },
     );
     return (await res.json()).secure_url as string;
+  };
+
+  /**
+   * Cloudinary raw upload for PDF files.
+   * Requires the upload preset to allow "Auto" resource type,
+   * or use a dedicated raw preset.
+   * Throws explicitly when Cloudinary does not return a secure_url so callers
+   * never receive undefined (which would cause Firestore to reject the write).
+   */
+  const uploadPdfToCloudinary = async (file: File): Promise<string> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`,
+      { method: "POST", body: fd },
+    );
+    const json = await res.json();
+    if (!json?.secure_url) {
+      throw new Error(
+        `Cloudinary PDF upload failed: ${json?.error?.message ?? "no secure_url returned"}`,
+      );
+    }
+    return json.secure_url as string;
   };
 
   const handleAddItem = (
@@ -558,6 +613,7 @@ export default function AddNewProduct({
     }
   };
 
+  // ── Main publish handler ───────────────────────────────────────────────────
   const handlePublish = async () => {
     if (!itemDescription)
       return toast.error("Please enter an item description!");
@@ -565,6 +621,7 @@ export default function AddNewProduct({
     const tid = toast.loading("Validating...");
 
     try {
+      // ── Duplicate check ──────────────────────────────────────────────────
       if (!editData || editData.itemDescription !== itemDescription) {
         const dupSnap = await getDocs(
           query(
@@ -588,6 +645,7 @@ export default function AddNewProduct({
         }
       }
 
+      // ── Flush pending tags to Firestore ──────────────────────────────────
       const pendingIdMap: Record<string, string> = {};
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: tid });
@@ -615,6 +673,7 @@ export default function AddNewProduct({
         pendingItemsRef.current = [];
       }
 
+      // ── Upload images ────────────────────────────────────────────────────
       toast.loading("Uploading images...", { id: tid });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -625,8 +684,15 @@ export default function AddNewProduct({
       const qrUrl = qrImage
         ? await uploadToCloudinary(qrImage)
         : existingQrImage;
+      const dimensionDrawingUrl = dimensionDrawingImage
+        ? await uploadToCloudinary(dimensionDrawingImage)
+        : existingDimensionDrawingImage;
+      const mountingHeightUrl = mountingHeightImage
+        ? await uploadToCloudinary(mountingHeightImage)
+        : existingMountingHeightImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
+      // ── Build technicalSpecs payload ─────────────────────────────────────
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
       Object.entries(specValues).forEach(([key, value]) => {
@@ -657,6 +723,9 @@ export default function AddNewProduct({
       const resolveApps = (ids: string[]) =>
         ids.map((id) => pendingIdMap[id] || id);
 
+      const brandName =
+        availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
+
       const payload = {
         productClass,
         itemDescription,
@@ -671,13 +740,13 @@ export default function AddNewProduct({
         mainImage: mainUrl,
         rawImage: rawUrl,
         qrCodeImage: qrUrl,
+        dimensionDrawingImage: dimensionDrawingUrl,
+        mountingHeightImage: mountingHeightUrl,
         galleryImages: [...existingGalleryImages, ...gallery],
         website: selectedWebs,
         websites: selectedWebs,
         productFamily: productFamilyTitle,
-        brand: selectedBrands[0]
-          ? availableBrands.find((b) => b.id === selectedBrands[0])?.name || ""
-          : "",
+        brand: brandName,
         applications: resolveApps(selectedApps),
         status,
         seo: {
@@ -690,6 +759,9 @@ export default function AddNewProduct({
         },
         updatedAt: serverTimestamp(),
       };
+
+      // ── Save product to Firestore ─────────────────────────────────────────
+      let savedDocId: string = editData?.id ?? "";
 
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
@@ -709,6 +781,7 @@ export default function AddNewProduct({
           ...payload,
           createdAt: serverTimestamp(),
         });
+        savedDocId = docRef.id;
         await logAuditEvent({
           action: "create",
           entityType: "product",
@@ -719,6 +792,63 @@ export default function AddNewProduct({
             source: "add-new-product-form",
             collection: "products",
           },
+        });
+      }
+
+      // ── Auto-generate TDS PDF ─────────────────────────────────────────────
+      // Wrapped in its own try/catch so a PDF failure never breaks the save.
+      // Every path that could produce undefined is caught before updateDoc —
+      // Firestore rejects undefined field values outright.
+      try {
+        toast.loading("Generating TDS PDF...", { id: tid });
+
+        // .catch() converts internal throws into undefined so the guard below
+        // handles them cleanly without a second unhandled rejection.
+        const generatedTdsUrl: string | undefined = await generateTdsPdf(
+          {
+            itemDescription,
+            litItemCode,
+            ecoItemCode,
+            brand: brandName,
+            technicalSpecs,
+            dynamicSpecs,
+          },
+          {
+            mainImageUrl: mainUrl,
+            dimensionDrawingUrl,
+            mountingHeightUrl,
+            cloudinaryUploadFn: uploadPdfToCloudinary,
+          },
+        ).catch((err: unknown) => {
+          console.error("generateTdsPdf internal error:", err);
+          return undefined;
+        });
+
+        // Triple-guard before writing to Firestore:
+        // 1. savedDocId must be a real doc ID
+        // 2. result must be a non-empty string (not undefined / null / "")
+        // 3. result must look like a URL (catches cast-to-string edge cases)
+        if (
+          savedDocId &&
+          typeof generatedTdsUrl === "string" &&
+          generatedTdsUrl.startsWith("http")
+        ) {
+          await updateDoc(doc(db, "products", savedDocId), {
+            tdsFileUrl: generatedTdsUrl,
+            updatedAt: serverTimestamp(),
+          });
+          setTdsUrl(generatedTdsUrl);
+        } else {
+          console.warn(
+            "TDS PDF skipped — invalid or missing Cloudinary URL:",
+            generatedTdsUrl,
+          );
+        }
+      } catch (pdfErr) {
+        // Non-blocking — product is already saved successfully.
+        console.error("TDS PDF generation failed:", pdfErr);
+        toast.warning("Product saved, but TDS PDF could not be generated.", {
+          id: tid,
         });
       }
 
@@ -743,6 +873,12 @@ export default function AddNewProduct({
     (f: File[]) => setGalleryImages((p) => [...p, ...f]),
     [],
   );
+  const onDropDimensionDrawing = useCallback((f: File[]) => {
+    if (f[0]) setDimensionDrawingImage(f[0]);
+  }, []);
+  const onDropMountingHeight = useCallback((f: File[]) => {
+    if (f[0]) setMountingHeightImage(f[0]);
+  }, []);
 
   const { getRootProps: mainRoot, getInputProps: mainInput } = useDropzone({
     onDrop: onDropMain,
@@ -754,6 +890,14 @@ export default function AddNewProduct({
   });
   const { getRootProps: galleryRoot, getInputProps: galleryInput } =
     useDropzone({ onDrop: onDropGallery });
+  const {
+    getRootProps: dimensionDrawingRoot,
+    getInputProps: dimensionDrawingInput,
+  } = useDropzone({ onDrop: onDropDimensionDrawing, maxFiles: 1 });
+  const {
+    getRootProps: mountingHeightRoot,
+    getInputProps: mountingHeightInput,
+  } = useDropzone({ onDrop: onDropMountingHeight, maxFiles: 1 });
 
   const toggleWebsite = (web: string) =>
     setSelectedWebs((p) =>
@@ -820,7 +964,11 @@ export default function AddNewProduct({
                           : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
                       }`}
                   >
-                    <span className={active ? "text-primary" : "text-muted-foreground"}>
+                    <span
+                      className={
+                        active ? "text-primary" : "text-muted-foreground"
+                      }
+                    >
                       {opt.icon}
                     </span>
                     <div>
@@ -842,6 +990,7 @@ export default function AddNewProduct({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Row 1 — Main / Raw / QR / Gallery */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {/* Main Image */}
               <div className="space-y-2">
@@ -856,7 +1005,11 @@ export default function AddNewProduct({
                   {mainImage || existingMainImage ? (
                     <div className="relative w-full h-full group">
                       <img
-                        src={mainImage ? URL.createObjectURL(mainImage) : existingMainImage}
+                        src={
+                          mainImage
+                            ? URL.createObjectURL(mainImage)
+                            : existingMainImage
+                        }
                         className="w-full h-full object-contain rounded"
                         alt="Main"
                       />
@@ -874,7 +1027,9 @@ export default function AddNewProduct({
                   ) : (
                     <div className="flex flex-col items-center gap-1">
                       <ImagePlus className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">Main</p>
+                      <p className="text-[10px] font-medium text-muted-foreground">
+                        Main
+                      </p>
                     </div>
                   )}
                 </div>
@@ -893,7 +1048,11 @@ export default function AddNewProduct({
                   {rawImage || existingRawImage ? (
                     <div className="relative w-full h-full group">
                       <img
-                        src={rawImage ? URL.createObjectURL(rawImage) : existingRawImage}
+                        src={
+                          rawImage
+                            ? URL.createObjectURL(rawImage)
+                            : existingRawImage
+                        }
                         className="w-full h-full object-contain rounded"
                         alt="Raw"
                       />
@@ -911,7 +1070,9 @@ export default function AddNewProduct({
                   ) : (
                     <div className="flex flex-col items-center gap-1">
                       <FileImage className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">Raw</p>
+                      <p className="text-[10px] font-medium text-muted-foreground">
+                        Raw
+                      </p>
                     </div>
                   )}
                 </div>
@@ -919,18 +1080,27 @@ export default function AddNewProduct({
 
               {/* QR Code */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">QR Code</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  QR Code
+                </Label>
                 <QrDropzone
                   file={qrImage}
                   existingUrl={existingQrImage}
-                  onRemove={() => { setQrImage(null); setExistingQrImage(""); }}
-                  onDrop={(files) => { if (files[0]) setQrImage(files[0]); }}
+                  onRemove={() => {
+                    setQrImage(null);
+                    setExistingQrImage("");
+                  }}
+                  onDrop={(files) => {
+                    if (files[0]) setQrImage(files[0]);
+                  }}
                 />
               </div>
 
               {/* Gallery Add */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Add Gallery</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Add Gallery
+                </Label>
                 <div
                   {...galleryRoot()}
                   className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
@@ -938,9 +1108,114 @@ export default function AddNewProduct({
                   <input {...galleryInput()} />
                   <div className="flex flex-col items-center gap-1">
                     <Images className="h-7 w-7 text-muted-foreground" />
-                    <p className="text-[10px] font-medium text-muted-foreground">Gallery</p>
-                    <p className="text-[9px] text-muted-foreground/60">Multi-select</p>
+                    <p className="text-[10px] font-medium text-muted-foreground">
+                      Gallery
+                    </p>
+                    <p className="text-[9px] text-muted-foreground/60">
+                      Multi-select
+                    </p>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2 — Dimension Drawing / Mounting Height */}
+            <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+              <p className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide -mb-1">
+                Technical Drawings
+              </p>
+
+              {/* Dimension Drawing */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <Ruler className="h-3 w-3" />
+                  Dimension Drawing
+                </Label>
+                <div
+                  {...dimensionDrawingRoot()}
+                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                >
+                  <input {...dimensionDrawingInput()} />
+                  {dimensionDrawingImage || existingDimensionDrawingImage ? (
+                    <div className="relative w-full h-full group">
+                      <img
+                        src={
+                          dimensionDrawingImage
+                            ? URL.createObjectURL(dimensionDrawingImage)
+                            : existingDimensionDrawingImage
+                        }
+                        className="w-full h-full object-contain rounded"
+                        alt="Dimension Drawing"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDimensionDrawingImage(null);
+                          setExistingDimensionDrawingImage("");
+                        }}
+                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-1.5">
+                      <Ruler className="h-8 w-8 text-muted-foreground/60" />
+                      <p className="text-[10px] font-medium text-muted-foreground">
+                        Dimension Drawing
+                      </p>
+                      <p className="text-[9px] text-muted-foreground/50">
+                        Drop or click to upload
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Mounting Height */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <ArrowUpDown className="h-3 w-3" />
+                  Mounting Height
+                </Label>
+                <div
+                  {...mountingHeightRoot()}
+                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                >
+                  <input {...mountingHeightInput()} />
+                  {mountingHeightImage || existingMountingHeightImage ? (
+                    <div className="relative w-full h-full group">
+                      <img
+                        src={
+                          mountingHeightImage
+                            ? URL.createObjectURL(mountingHeightImage)
+                            : existingMountingHeightImage
+                        }
+                        className="w-full h-full object-contain rounded"
+                        alt="Mounting Height"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMountingHeightImage(null);
+                          setExistingMountingHeightImage("");
+                        }}
+                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-1.5">
+                      <ArrowUpDown className="h-8 w-8 text-muted-foreground/60" />
+                      <p className="text-[10px] font-medium text-muted-foreground">
+                        Mounting Height
+                      </p>
+                      <p className="text-[9px] text-muted-foreground/50">
+                        Drop or click to upload
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -952,10 +1227,21 @@ export default function AddNewProduct({
                 </Label>
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
                   {existingGalleryImages.map((img, i) => (
-                    <div key={`exist-${i}`} className="aspect-square relative border rounded-md overflow-hidden group">
-                      <img src={img} className="object-cover w-full h-full" alt={`Gallery ${i + 1}`} />
+                    <div
+                      key={`exist-${i}`}
+                      className="aspect-square relative border rounded-md overflow-hidden group"
+                    >
+                      <img
+                        src={img}
+                        className="object-cover w-full h-full"
+                        alt={`Gallery ${i + 1}`}
+                      />
                       <button
-                        onClick={() => setExistingGalleryImages((p) => p.filter((_, idx) => idx !== i))}
+                        onClick={() =>
+                          setExistingGalleryImages((p) =>
+                            p.filter((_, idx) => idx !== i),
+                          )
+                        }
                         className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="h-3 w-3" />
@@ -963,10 +1249,21 @@ export default function AddNewProduct({
                     </div>
                   ))}
                   {galleryImages.map((img, i) => (
-                    <div key={`new-${i}`} className="aspect-square relative border rounded-md overflow-hidden group">
-                      <img src={URL.createObjectURL(img)} className="object-cover w-full h-full" alt={`New ${i + 1}`} />
+                    <div
+                      key={`new-${i}`}
+                      className="aspect-square relative border rounded-md overflow-hidden group"
+                    >
+                      <img
+                        src={URL.createObjectURL(img)}
+                        className="object-cover w-full h-full"
+                        alt={`New ${i + 1}`}
+                      />
                       <button
-                        onClick={() => setGalleryImages((p) => p.filter((_, idx) => idx !== i))}
+                        onClick={() =>
+                          setGalleryImages((p) =>
+                            p.filter((_, idx) => idx !== i),
+                          )
+                        }
                         className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="h-3 w-3" />
@@ -1034,17 +1331,23 @@ export default function AddNewProduct({
               <div className="pt-4 border-t">
                 <div className="flex items-center gap-2 mb-4">
                   <Zap className="h-4 w-4 text-primary" />
-                  <Label className="text-sm font-medium">Technical Specifications</Label>
+                  <Label className="text-sm font-medium">
+                    Technical Specifications
+                  </Label>
                 </div>
 
                 {specsLoading ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    <p className="text-xs font-medium text-muted-foreground">Loading specifications...</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Loading specifications...
+                    </p>
                   </div>
                 ) : availableSpecs.length === 0 ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-xs font-medium text-muted-foreground">No specs for this product family</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      No specs for this product family
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-6">
@@ -1066,14 +1369,22 @@ export default function AddNewProduct({
                             {visible.map((spec) => {
                               const specKey = `${spec.specGroupId}-${spec.label}`;
                               return (
-                                <div key={spec.id} className="space-y-1.5 p-3 rounded-lg border bg-card">
-                                  <Label className="text-xs font-medium">{spec.label}</Label>
+                                <div
+                                  key={spec.id}
+                                  className="space-y-1.5 p-3 rounded-lg border bg-card"
+                                >
+                                  <Label className="text-xs font-medium">
+                                    {spec.label}
+                                  </Label>
                                   <Input
                                     placeholder={`Enter ${spec.label}...`}
                                     className="h-9 text-sm"
                                     value={specValues[specKey] || ""}
                                     onChange={(e) =>
-                                      setSpecValues((p) => ({ ...p, [specKey]: e.target.value }))
+                                      setSpecValues((p) => ({
+                                        ...p,
+                                        [specKey]: e.target.value,
+                                      }))
                                     }
                                   />
                                 </div>
@@ -1114,12 +1425,16 @@ export default function AddNewProduct({
                           : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
                       }`}
                   >
-                    <span className={active ? opt.color : "text-muted-foreground"}>
+                    <span
+                      className={active ? opt.color : "text-muted-foreground"}
+                    >
                       {opt.icon}
                     </span>
                     <div>
                       <p className="text-sm font-semibold">{opt.label}</p>
-                      <p className="text-[11px] font-normal opacity-70">{opt.desc}</p>
+                      <p className="text-[11px] font-normal opacity-70">
+                        {opt.desc}
+                      </p>
                     </div>
                   </button>
                 );
@@ -1127,6 +1442,52 @@ export default function AddNewProduct({
             </div>
           </CardContent>
         </Card>
+
+        {/* TDS PDF — shown only when a URL exists (after save or in edit mode) */}
+        {tdsUrl && (
+          <Card className="border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-800">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                <FileText className="h-4 w-4" />
+                Technical Data Sheet
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-3 p-3 bg-white dark:bg-emerald-950/30 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex-shrink-0 w-8 h-8 bg-red-100 dark:bg-red-900/30 rounded-md flex items-center justify-center">
+                    <FileText className="h-4 w-4 text-red-600 dark:text-red-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-foreground truncate">
+                      {itemDescription ||
+                        editData?.itemDescription ||
+                        "Product"}
+                      _TDS.pdf
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Auto-generated · Stored on Cloudinary
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={tdsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/40"
+                  >
+                    View PDF
+                  </Button>
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* ═══════════════════════ SIDEBAR ═══════════════════════════ */}
@@ -1137,7 +1498,9 @@ export default function AddNewProduct({
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Globe className="h-4 w-4" />
               Targeted Websites
-              <span className="ml-auto text-[10px] font-normal text-muted-foreground">Optional</span>
+              <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+                Optional
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -1156,7 +1519,9 @@ export default function AddNewProduct({
                   onCheckedChange={() => toggleWebsite(web)}
                   onClick={(e) => e.stopPropagation()}
                 />
-                <span className={`text-sm font-medium ${selectedWebs.includes(web) ? "text-primary" : "text-muted-foreground"}`}>
+                <span
+                  className={`text-sm font-medium ${selectedWebs.includes(web) ? "text-primary" : "text-muted-foreground"}`}
+                >
                   {web}
                 </span>
               </div>
@@ -1167,7 +1532,9 @@ export default function AddNewProduct({
         {/* Classification + Custom Sections */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-center">Classification</CardTitle>
+            <CardTitle className="text-sm font-medium text-center">
+              Classification
+            </CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-8">
@@ -1190,15 +1557,24 @@ export default function AddNewProduct({
                     <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <PopoverContent
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  align="start"
+                >
                   <Command>
-                    <CommandInput placeholder="Search families..." className="h-9 text-xs" />
+                    <CommandInput
+                      placeholder="Search families..."
+                      className="h-9 text-xs"
+                    />
                     <CommandList>
                       <CommandEmpty>No family found.</CommandEmpty>
                       <CommandGroup>
                         {selectedCatId && (
                           <CommandItem
-                            onSelect={() => { setSelectedCatId(""); setCatOpen(false); }}
+                            onSelect={() => {
+                              setSelectedCatId("");
+                              setCatOpen(false);
+                            }}
                             className="text-xs text-muted-foreground italic"
                           >
                             <X className="mr-2 h-3 w-3" />
@@ -1209,17 +1585,29 @@ export default function AddNewProduct({
                           <CommandItem
                             key={cat.id}
                             value={cat.name}
-                            onSelect={() => { setSelectedCatId(cat.id); setCatOpen(false); }}
-                            className={cn("text-xs", cat.isTemp && "italic text-muted-foreground")}
+                            onSelect={() => {
+                              setSelectedCatId(cat.id);
+                              setCatOpen(false);
+                            }}
+                            className={cn(
+                              "text-xs",
+                              cat.isTemp && "italic text-muted-foreground",
+                            )}
                           >
                             <Check
                               className={cn(
                                 "mr-2 h-3 w-3",
-                                selectedCatId === cat.id ? "opacity-100 text-primary" : "opacity-0",
+                                selectedCatId === cat.id
+                                  ? "opacity-100 text-primary"
+                                  : "opacity-0",
                               )}
                             />
                             {cat.name}
-                            {cat.isTemp && <span className="ml-1 text-[10px] opacity-60">*new</span>}
+                            {cat.isTemp && (
+                              <span className="ml-1 text-[10px] opacity-60">
+                                *new
+                              </span>
+                            )}
                           </CommandItem>
                         ))}
                       </CommandGroup>
@@ -1242,14 +1630,22 @@ export default function AddNewProduct({
                     className="w-full justify-between h-9 text-xs font-medium"
                   >
                     <span className="truncate text-left">
-                      {selectedBrands.length ? `${selectedBrands.length} selected` : "Select brands..."}
+                      {selectedBrands.length
+                        ? `${selectedBrands.length} selected`
+                        : "Select brands..."}
                     </span>
                     <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <PopoverContent
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  align="start"
+                >
                   <Command>
-                    <CommandInput placeholder="Search brands..." className="h-9 text-xs" />
+                    <CommandInput
+                      placeholder="Search brands..."
+                      className="h-9 text-xs"
+                    />
                     <CommandList>
                       <CommandEmpty>No brand found.</CommandEmpty>
                       <CommandGroup>
@@ -1259,7 +1655,9 @@ export default function AddNewProduct({
                             value={brand.name}
                             onSelect={() =>
                               setSelectedBrands((p) =>
-                                p.includes(brand.id) ? p.filter((i) => i !== brand.id) : [...p, brand.id],
+                                p.includes(brand.id)
+                                  ? p.filter((i) => i !== brand.id)
+                                  : [...p, brand.id],
                               )
                             }
                             className="text-xs"
@@ -1267,7 +1665,9 @@ export default function AddNewProduct({
                             <Check
                               className={cn(
                                 "mr-2 h-3 w-3",
-                                selectedBrands.includes(brand.id) ? "opacity-100 text-primary" : "opacity-0",
+                                selectedBrands.includes(brand.id)
+                                  ? "opacity-100 text-primary"
+                                  : "opacity-0",
                               )}
                             />
                             {brand.name}
@@ -1296,7 +1696,10 @@ export default function AddNewProduct({
               )}
 
               {customSections.map((sec) => (
-                <div key={sec.id} className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                <div
+                  key={sec.id}
+                  className="rounded-lg border bg-muted/30 p-3 space-y-3"
+                >
                   {/* Section header */}
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
@@ -1311,13 +1714,18 @@ export default function AddNewProduct({
                       </AlertDialogTrigger>
                       <AlertDialogContent className="rounded-2xl">
                         <AlertDialogHeader>
-                          <AlertDialogTitle className="font-black uppercase">Delete Section?</AlertDialogTitle>
+                          <AlertDialogTitle className="font-black uppercase">
+                            Delete Section?
+                          </AlertDialogTitle>
                           <AlertDialogDescription className="text-xs">
-                            This will permanently remove the <b>{sec.title}</b> section and all its items.
+                            This will permanently remove the <b>{sec.title}</b>{" "}
+                            section and all its items.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
-                          <AlertDialogCancel className="rounded-xl text-xs font-bold">Cancel</AlertDialogCancel>
+                          <AlertDialogCancel className="rounded-xl text-xs font-bold">
+                            Cancel
+                          </AlertDialogCancel>
                           <AlertDialogAction
                             onClick={() => handleDeleteCustomSection(sec.id)}
                             className="rounded-xl bg-destructive text-xs font-bold"
@@ -1331,7 +1739,9 @@ export default function AddNewProduct({
 
                   {/* Items list */}
                   {sec.items.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground italic">No items yet.</p>
+                    <p className="text-[11px] text-muted-foreground italic">
+                      No items yet.
+                    </p>
                   ) : (
                     <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
                       {sec.items.map((item) => {
@@ -1340,7 +1750,9 @@ export default function AddNewProduct({
                           <div
                             key={item.id}
                             className={`flex items-center justify-between group rounded-md px-2 py-1.5 transition-colors cursor-pointer ${
-                              checked ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"
+                              checked
+                                ? "bg-primary/10 border border-primary/20"
+                                : "hover:bg-muted/50"
                             }`}
                             onClick={() =>
                               setCustomSections((prev) =>
@@ -1349,7 +1761,9 @@ export default function AddNewProduct({
                                     ? {
                                         ...s,
                                         selected: checked
-                                          ? s.selected.filter((v) => v !== item.name)
+                                          ? s.selected.filter(
+                                              (v) => v !== item.name,
+                                            )
                                           : [...s.selected, item.name],
                                       }
                                     : s,
@@ -1367,7 +1781,9 @@ export default function AddNewProduct({
                                         ? {
                                             ...s,
                                             selected: checked
-                                              ? s.selected.filter((v) => v !== item.name)
+                                              ? s.selected.filter(
+                                                  (v) => v !== item.name,
+                                                )
                                               : [...s.selected, item.name],
                                           }
                                         : s,
@@ -1376,7 +1792,9 @@ export default function AddNewProduct({
                                 }
                                 onClick={(e) => e.stopPropagation()}
                               />
-                              <span className={`text-xs font-medium ${checked ? "text-primary" : "text-foreground"}`}>
+                              <span
+                                className={`text-xs font-medium ${checked ? "text-primary" : "text-foreground"}`}
+                              >
                                 {item.name}
                               </span>
                             </div>
@@ -1392,15 +1810,24 @@ export default function AddNewProduct({
                               </AlertDialogTrigger>
                               <AlertDialogContent className="rounded-2xl">
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle className="font-black uppercase">Delete Item?</AlertDialogTitle>
+                                  <AlertDialogTitle className="font-black uppercase">
+                                    Delete Item?
+                                  </AlertDialogTitle>
                                   <AlertDialogDescription className="text-xs">
                                     Remove <b>{item.name}</b> from {sec.title}?
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel className="rounded-xl text-xs font-bold">Cancel</AlertDialogCancel>
+                                  <AlertDialogCancel className="rounded-xl text-xs font-bold">
+                                    Cancel
+                                  </AlertDialogCancel>
                                   <AlertDialogAction
-                                    onClick={() => handleDeleteCustomSectionItem(sec, item.id)}
+                                    onClick={() =>
+                                      handleDeleteCustomSectionItem(
+                                        sec,
+                                        item.id,
+                                      )
+                                    }
                                     className="rounded-xl bg-destructive text-xs font-bold"
                                   >
                                     Delete
@@ -1439,7 +1866,9 @@ export default function AddNewProduct({
                     className="h-8 text-xs font-semibold"
                     value={newSectionTitle}
                     onChange={(e) => setNewSectionTitle(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleCreateNewSection(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleCreateNewSection();
+                    }}
                     autoFocus
                   />
                   <div className="flex gap-2">
@@ -1451,7 +1880,10 @@ export default function AddNewProduct({
                       Save
                     </Button>
                     <Button
-                      onClick={() => { setIsAddingNewSection(false); setNewSectionTitle(""); }}
+                      onClick={() => {
+                        setIsAddingNewSection(false);
+                        setNewSectionTitle("");
+                      }}
                       variant="ghost"
                       className="h-7 text-xs font-bold"
                     >
@@ -1469,7 +1901,9 @@ export default function AddNewProduct({
           <CardContent className="pt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Regular Price</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Regular Price
+                </Label>
                 <Input
                   className="h-9 font-semibold"
                   value={regPrice}
@@ -1478,7 +1912,9 @@ export default function AddNewProduct({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Sale Price</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Sale Price
+                </Label>
                 <Input
                   className="h-9 font-semibold text-destructive"
                   value={salePrice}
@@ -1506,20 +1942,27 @@ export default function AddNewProduct({
                   className="h-10"
                   placeholder="Item description for Google"
                   value={seoData.title}
-                  onChange={(e) => setSeoData((p) => ({ ...p, title: e.target.value }))}
+                  onChange={(e) =>
+                    setSeoData((p) => ({ ...p, title: e.target.value }))
+                  }
                 />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium flex justify-between">
                   URL Slug
-                  <span className="text-[10px] text-destructive font-normal">No forward slash (/)</span>
+                  <span className="text-[10px] text-destructive font-normal">
+                    No forward slash (/)
+                  </span>
                 </Label>
                 <Input
                   className="h-10 font-mono text-sm"
                   placeholder="product-name-slug"
                   value={seoData.slug}
                   onChange={(e) => {
-                    const s = e.target.value.toLowerCase().replace(/\//g, "").replace(/\s+/g, "-");
+                    const s = e.target.value
+                      .toLowerCase()
+                      .replace(/\//g, "")
+                      .replace(/\s+/g, "-");
                     setSeoData((p) => ({ ...p, slug: s }));
                   }}
                 />
@@ -1531,17 +1974,24 @@ export default function AddNewProduct({
                   className="w-full px-3 py-2 bg-background border rounded-md focus:outline-none focus:ring-2 focus:ring-ring text-sm resize-none"
                   placeholder="Brief summary for search results..."
                   value={seoData.description}
-                  onChange={(e) => setSeoData((p) => ({ ...p, description: e.target.value }))}
+                  onChange={(e) =>
+                    setSeoData((p) => ({ ...p, description: e.target.value }))
+                  }
                 />
               </div>
             </div>
 
             <div className="pt-2">
               <div className="flex items-center gap-6 mb-4">
-                <span className="text-xs font-medium text-muted-foreground">Google Preview:</span>
+                <span className="text-xs font-medium text-muted-foreground">
+                  Google Preview:
+                </span>
                 <div className="flex gap-4">
                   {(["mobile", "desktop"] as const).map((mode) => (
-                    <label key={mode} className="flex items-center gap-2 cursor-pointer text-xs font-medium">
+                    <label
+                      key={mode}
+                      className="flex items-center gap-2 cursor-pointer text-xs font-medium"
+                    >
                       <input
                         type="radio"
                         name="view"
@@ -1557,8 +2007,12 @@ export default function AddNewProduct({
 
               {seoData.canonical && (
                 <div className="mb-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
-                  <p className="text-[10px] font-semibold text-primary mb-1">Canonical URL</p>
-                  <p className="text-xs text-primary/80 font-mono break-all">{seoData.canonical}</p>
+                  <p className="text-[10px] font-semibold text-primary mb-1">
+                    Canonical URL
+                  </p>
+                  <p className="text-xs text-primary/80 font-mono break-all">
+                    {seoData.canonical}
+                  </p>
                 </div>
               )}
 
@@ -1574,12 +2028,17 @@ export default function AddNewProduct({
                   <p className="text-[12px] text-foreground/70 font-medium truncate">
                     {selectedWebs.length > 0
                       ? `${WEBSITE_DOMAINS[selectedWebs[0]]?.replace("https://", "")} › ${
-                          WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace("/", "") || "products"
+                          WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace(
+                            "/",
+                            "",
+                          ) || "products"
                         } › ${seoData.slug || "..."}`
                       : "No website selected"}
                   </p>
                 </div>
-                <div className={`mt-2 ${previewMode === "mobile" ? "flex flex-col-reverse gap-2" : "flex gap-4"}`}>
+                <div
+                  className={`mt-2 ${previewMode === "mobile" ? "flex flex-col-reverse gap-2" : "flex gap-4"}`}
+                >
                   <div className="flex-1">
                     <a
                       href="#"
@@ -1589,13 +2048,18 @@ export default function AddNewProduct({
                       {seoData.title || "Enter an SEO Title..."}
                     </a>
                     <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                      {seoData.description || "Enter a meta description to see how it looks here."}
+                      {seoData.description ||
+                        "Enter a meta description to see how it looks here."}
                     </p>
                   </div>
                   <div className="w-[104px] h-[104px] flex-shrink-0 bg-muted/50 rounded-md overflow-hidden border relative group">
                     {mainImage || existingMainImage ? (
                       <img
-                        src={mainImage ? URL.createObjectURL(mainImage) : existingMainImage}
+                        src={
+                          mainImage
+                            ? URL.createObjectURL(mainImage)
+                            : existingMainImage
+                        }
                         className="w-full h-full object-contain p-1"
                         alt="SEO Preview"
                       />
@@ -1605,7 +2069,9 @@ export default function AddNewProduct({
                       </div>
                     )}
                     <div className="absolute inset-0 bg-foreground/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="text-[8px] text-background font-semibold">PREVIEW ONLY</span>
+                      <span className="text-[8px] text-background font-semibold">
+                        PREVIEW ONLY
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1657,7 +2123,12 @@ function AddCustomSectionItem({
         placeholder={placeholder}
         value={val}
         onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            go();
+          }
+        }}
         className="h-7 text-xs"
       />
       <Button
@@ -1699,7 +2170,10 @@ function QrDropzone({
             alt="QR"
           />
           <button
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
             className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
           >
             <X className="h-3 w-3" />
@@ -1708,7 +2182,9 @@ function QrDropzone({
       ) : (
         <div className="flex flex-col items-center gap-1">
           <Zap className="h-7 w-7 text-muted-foreground" />
-          <p className="text-[10px] font-medium text-muted-foreground">QR Code</p>
+          <p className="text-[10px] font-medium text-muted-foreground">
+            QR Code
+          </p>
         </div>
       )}
     </div>

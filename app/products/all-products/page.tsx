@@ -28,6 +28,12 @@ import {
   Sparkles,
   Globe,
   Check,
+  Tag,
+  FileText,
+  FilePlus2,
+  CheckCircle2,
+  AlertCircle,
+  CircleDashed,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -45,7 +51,12 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  TooltipProvider,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -58,6 +69,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -89,6 +101,7 @@ import {
   arrayUnion,
   setDoc,
   getDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { toast } from "sonner";
 import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
@@ -96,6 +109,8 @@ import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
+import { generateTdsPdf } from "@/lib/generateTdsPdf";
+import { uploadToCloudinary } from "@/lib/cloudinary";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,13 +129,28 @@ export type Product = {
   website: string | string[];
   brands?: string[];
   websites?: string[];
+  tdsFileUrl?: string;
+  technicalSpecs?: any[];
+  dynamicSpecs?: { title: string; value: string }[];
+  dimensionDrawingUrl?: string;
+  mountingHeightUrl?: string;
   createdAt: any;
 };
+
+// ─── TDS Generation Types ─────────────────────────────────────────────────────
+
+type TdsJobStatus = "pending" | "generating" | "done" | "error";
+
+interface TdsJob {
+  productId: string;
+  productName: string;
+  status: TdsJobStatus;
+  error?: string;
+}
 
 // ─── Taskflow schema builder ──────────────────────────────────────────────────
 
 function buildTaskflowProduct(product: Product, newWebsites: string[]) {
-  // Derive the merged websites list (existing + newly assigned)
   const existingWebsites: string[] = Array.isArray(product.websites)
     ? product.websites
     : product.website
@@ -130,7 +160,6 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
     new Set([...existingWebsites, ...newWebsites]),
   );
 
-  // Scalar helpers
   const itemCode =
     product.ecoItemCode || product.litItemCode || product.itemCode || "";
   const name = product.itemDescription || product.name || "";
@@ -216,6 +245,35 @@ const WEBSITE_OPTIONS = [
 
 const TASKFLOW = "Taskflow";
 
+const PRODUCT_CLASS_OPTIONS: {
+  value: "spf" | "standard";
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  color: string;
+  activeColor: string;
+  dot: string;
+}[] = [
+  {
+    value: "spf",
+    label: "SPF",
+    description: "Special product family items",
+    icon: <Sparkles className="w-4 h-4" />,
+    color: "bg-violet-50 border-violet-200 text-violet-700",
+    activeColor: "bg-violet-100 border-violet-500 text-violet-800",
+    dot: "bg-violet-500",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "Regular inventory items",
+    icon: <Package className="w-4 h-4" />,
+    color: "bg-slate-50 border-slate-200 text-slate-700",
+    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+    dot: "bg-slate-500",
+  },
+];
+
 // ─── Custom filter (handles arrays) ──────────────────────────────────────────
 
 const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
@@ -243,6 +301,257 @@ function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
       <Package className="w-2.5 h-2.5 mr-1" />
       Standard
     </Badge>
+  );
+}
+
+// ─── TDS Preview Dialog ───────────────────────────────────────────────────────
+
+function TdsPreviewDialog({
+  open,
+  onOpenChange,
+  product,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  product: Product | null;
+}) {
+  if (!product) return null;
+
+  const tdsUrl = product.tdsFileUrl;
+  const productName = product.itemDescription || product.name || "Product";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl w-full h-[90vh] flex flex-col p-0 gap-0">
+        <DialogHeader className="px-5 py-4 border-b flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center flex-shrink-0">
+              <FileText className="w-4 h-4 text-red-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-sm font-semibold truncate">
+                {productName}_TDS.pdf
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5 truncate">
+                Technical Data Sheet · Auto-generated
+              </DialogDescription>
+            </div>
+            {tdsUrl && (
+              <a
+                href={tdsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-xs flex-shrink-0"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Open in new tab
+                </Button>
+              </a>
+            )}
+          </div>
+        </DialogHeader>
+        <div className="flex-1 overflow-hidden bg-muted/30">
+          {tdsUrl ? (
+            <iframe
+              src={`${tdsUrl}#toolbar=1&navpanes=0`}
+              className="w-full h-full border-0"
+              title={`${productName} TDS`}
+            />
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center gap-4 text-muted-foreground p-8">
+              <div className="w-16 h-16 rounded-2xl bg-muted border-2 border-dashed flex items-center justify-center">
+                <FileText className="w-7 h-7 text-muted-foreground/40" />
+              </div>
+              <div className="text-center space-y-1">
+                <p className="text-sm font-semibold">No TDS file available</p>
+                <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
+                  This product doesn't have a Technical Data Sheet yet. Save or
+                  update the product to auto-generate one.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Bulk Generate TDS Dialog ─────────────────────────────────────────────────
+
+function BulkGenerateTdsDialog({
+  open,
+  onOpenChange,
+  jobs,
+  onStart,
+  isRunning,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  jobs: TdsJob[];
+  onStart: () => void;
+  isRunning: boolean;
+}) {
+  const total = jobs.length;
+  const done = jobs.filter((j) => j.status === "done").length;
+  const errors = jobs.filter((j) => j.status === "error").length;
+  const inProgress = jobs.filter((j) => j.status === "generating").length;
+  const pending = jobs.filter((j) => j.status === "pending").length;
+  const isComplete = !isRunning && done + errors === total && total > 0;
+  const progressPct =
+    total > 0 ? Math.round(((done + errors) / total) * 100) : 0;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        // Prevent closing mid-run
+        if (!v && isRunning) return;
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center flex-shrink-0">
+              <FilePlus2 className="w-4 h-4 text-orange-600" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">
+                Bulk Generate TDS PDFs
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {isComplete
+                  ? `Finished — ${done} generated, ${errors} failed`
+                  : isRunning
+                    ? `Generating… ${done + errors} of ${total} complete`
+                    : `${total} product${total !== 1 ? "s" : ""} queued for TDS generation`}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* Progress bar */}
+        {(isRunning || isComplete) && (
+          <div className="space-y-1.5">
+            <Progress value={progressPct} className="h-2" />
+            <div className="flex justify-between text-[11px] text-muted-foreground">
+              <span>
+                {done} done · {errors} failed · {pending + inProgress} remaining
+              </span>
+              <span>{progressPct}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Job list */}
+        <div className="max-h-64 overflow-y-auto rounded-lg border divide-y text-sm">
+          {jobs.map((job) => (
+            <div
+              key={job.productId}
+              className="flex items-center gap-3 px-3 py-2.5"
+            >
+              {/* Status icon */}
+              <span className="flex-shrink-0">
+                {job.status === "pending" && (
+                  <CircleDashed className="w-4 h-4 text-muted-foreground/40" />
+                )}
+                {job.status === "generating" && (
+                  <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                )}
+                {job.status === "done" && (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                )}
+                {job.status === "error" && (
+                  <AlertCircle className="w-4 h-4 text-destructive" />
+                )}
+              </span>
+
+              {/* Name */}
+              <span
+                className={`flex-1 truncate text-xs ${
+                  job.status === "error"
+                    ? "text-destructive"
+                    : job.status === "done"
+                      ? "text-muted-foreground"
+                      : "text-foreground"
+                }`}
+              >
+                {job.productName}
+              </span>
+
+              {/* Status label */}
+              <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                {job.status === "pending" && "Queued"}
+                {job.status === "generating" && "Generating…"}
+                {job.status === "done" && "Done"}
+                {job.status === "error" && (job.error ?? "Failed")}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Summary callout when complete */}
+        {isComplete && (
+          <div
+            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${
+              errors === 0
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-amber-50 border-amber-200 text-amber-700"
+            }`}
+          >
+            <p className="font-semibold">
+              {errors === 0
+                ? "All TDS PDFs generated successfully"
+                : `${done} generated, ${errors} failed`}
+            </p>
+            <p className="opacity-80">
+              {errors === 0
+                ? "tdsFileUrl has been saved to each product in Firestore."
+                : "Failed products were skipped. Retry by selecting them again."}
+            </p>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          {isComplete ? (
+            <Button onClick={() => onOpenChange(false)}>Close</Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={isRunning}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={onStart}
+                disabled={isRunning || total === 0}
+                className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <FilePlus2 className="h-4 w-4" />
+                    Generate {total} TDS PDF{total !== 1 ? "s" : ""}
+                  </>
+                )}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -345,7 +654,6 @@ function AssignToWebsiteDialog({
           })}
         </div>
 
-        {/* Taskflow notice */}
         {includesTaskflow && (
           <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
             <p className="font-semibold">Taskflow schema transformation</p>
@@ -408,6 +716,168 @@ function AssignToWebsiteDialog({
   );
 }
 
+// ─── Assign Product Class Dialog ──────────────────────────────────────────────
+
+function AssignProductClassDialog({
+  open,
+  onOpenChange,
+  selectedCount,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  selectedCount: number;
+  onConfirm: (productClass: "spf" | "standard") => Promise<void>;
+}) {
+  const [selectedClass, setSelectedClass] = React.useState<
+    "spf" | "standard" | null
+  >(null);
+  const [isAssigning, setIsAssigning] = React.useState(false);
+
+  React.useEffect(() => {
+    if (open) setSelectedClass(null);
+  }, [open]);
+
+  const handleConfirm = async () => {
+    if (!selectedClass) return;
+    setIsAssigning(true);
+    try {
+      await onConfirm(selectedClass);
+      onOpenChange(false);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Tag className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">
+                Assign Product Class
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will
+                have their product class updated.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="py-2 space-y-2.5">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-0.5">
+            Select Class
+          </p>
+          {PRODUCT_CLASS_OPTIONS.map((option) => {
+            const isSelected = selectedClass === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSelectedClass(option.value)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150
+                  ${
+                    isSelected
+                      ? `${option.activeColor} shadow-sm`
+                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
+                  }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`}
+                />
+                <span
+                  className={`flex items-center gap-2 flex-1 ${isSelected ? "" : "text-foreground"}`}
+                >
+                  <span className="text-sm font-medium">{option.label}</span>
+                  <span
+                    className={`text-xs ${isSelected ? "opacity-80" : "text-muted-foreground"}`}
+                  >
+                    — {option.description}
+                  </span>
+                </span>
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
+                    ${isSelected ? "opacity-100" : "opacity-0"}`}
+                >
+                  <Check className="w-3 h-3" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedClass && (
+          <div
+            className={`rounded-lg px-4 py-3 border text-xs space-y-1 ${
+              selectedClass === "spf"
+                ? "bg-violet-50 border-violet-200 text-violet-700"
+                : "bg-slate-50 border-slate-200 text-slate-700"
+            }`}
+          >
+            <p className="font-semibold">
+              {selectedClass === "spf" ? "SPF" : "Standard"} class will be
+              applied
+            </p>
+            <p
+              className={
+                selectedClass === "spf"
+                  ? "text-violet-600 leading-snug"
+                  : "text-slate-600 leading-snug"
+              }
+            >
+              This will overwrite the existing{" "}
+              <span className="font-mono font-semibold">productClass</span>{" "}
+              field on all {selectedCount} selected product
+              {selectedCount !== 1 ? "s" : ""}.
+            </p>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={!selectedClass || isAssigning}
+            className={`gap-2 ${
+              selectedClass === "spf"
+                ? "bg-violet-600 hover:bg-violet-700 text-white"
+                : ""
+            }`}
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Assigning...
+              </>
+            ) : (
+              <>
+                <Tag className="h-4 w-4" />
+                Set as{" "}
+                {selectedClass === "spf"
+                  ? "SPF"
+                  : selectedClass === "standard"
+                    ? "Standard"
+                    : "…"}
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function AllProductsPage() {
@@ -436,6 +906,17 @@ export default function AllProductsPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
+  const [assignProductClassOpen, setAssignProductClassOpen] =
+    React.useState(false);
+
+  // TDS preview state
+  const [tdsPreviewProduct, setTdsPreviewProduct] =
+    React.useState<Product | null>(null);
+
+  // Bulk TDS generation state
+  const [bulkTdsOpen, setBulkTdsOpen] = React.useState(false);
+  const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
+  const [isTdsRunning, setIsTdsRunning] = React.useState(false);
 
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -655,10 +1136,6 @@ export default function AllProductsPage() {
   };
 
   // ── Bulk assign to website handler ────────────────────────────────────────
-  // When Taskflow is among the selected websites, we:
-  //   1. Write a transformed document to `taskflow_products` (same doc ID)
-  //   2. Update the source `products` doc's websites/website arrays as usual
-  // For non-Taskflow websites we only do step 2.
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
@@ -669,9 +1146,6 @@ export default function AllProductsPage() {
     );
 
     try {
-      // Firestore batches are limited to 500 writes. Each product that includes
-      // Taskflow needs 2 writes (taskflow_products set + products update), so we
-      // chunk conservatively at 200 products per batch to stay safe.
       const CHUNK = 200;
       const rows = selectedRows.map((r) => r.original);
 
@@ -680,20 +1154,14 @@ export default function AllProductsPage() {
         const batch = writeBatch(db);
 
         chunk.forEach((product) => {
-          // Always update the source products doc
           batch.update(doc(db, "products", product.id), {
             websites: arrayUnion(...websites),
             website: arrayUnion(...websites),
             updatedAt: serverTimestamp(),
           });
 
-          // If Taskflow is selected, write the transformed document
           if (includesTaskflow) {
             const taskflowData = buildTaskflowProduct(product, websites);
-            // Use setDoc with merge:true so re-assigning doesn't wipe existing
-            // Taskflow-specific edits (e.g. filled-in technicalSpecs, pricing).
-            // Only the base fields are set on first write; subsequent calls
-            // won't overwrite fields that exist in the target doc.
             batch.set(doc(db, "products", product.id), taskflowData, {
               merge: true,
             });
@@ -718,6 +1186,177 @@ export default function AllProductsPage() {
         id: loadingToast,
       });
     }
+  };
+
+  // ── Bulk assign product class handler ─────────────────────────────────────
+  const handleBulkAssignProductClass = async (
+    productClass: "spf" | "standard",
+  ) => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const count = selectedRows.length;
+
+    const loadingToast = toast.loading(
+      `Setting ${count} product${count !== 1 ? "s" : ""} to "${productClass}"...`,
+    );
+
+    try {
+      const CHUNK = 400;
+      const rows = selectedRows.map((r) => r.original);
+
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+
+        chunk.forEach((product) => {
+          batch.update(doc(db, "products", product.id), {
+            productClass,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        await batch.commit();
+      }
+
+      await logAuditEvent({
+        action: "update",
+        entityType: "product",
+        entityId: null,
+        entityName: `${count} products`,
+        context: {
+          page: "/products/all-products",
+          source: "all-products:bulk-assign-product-class",
+          collection: "products",
+          bulk: true,
+        },
+        metadata: {
+          productClass,
+          ids: rows.map((r) => r.id),
+        },
+      });
+
+      toast.success(
+        `${count} product${count !== 1 ? "s" : ""} set to "${productClass === "spf" ? "SPF" : "Standard"}".`,
+        { id: loadingToast },
+      );
+      setRowSelection({});
+    } catch (error) {
+      console.error("Bulk assign product class error:", error);
+      toast.error("Failed to assign product class.", { id: loadingToast });
+    }
+  };
+
+  // ── Open bulk TDS dialog — seed jobs list from current selection ──────────
+  const handleOpenBulkTds = () => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const jobs: TdsJob[] = selectedRows.map((row) => ({
+      productId: row.original.id,
+      productName:
+        row.original.itemDescription || row.original.name || row.original.id,
+      status: "pending",
+    }));
+    setTdsJobs(jobs);
+    setBulkTdsOpen(true);
+  };
+
+  // ── Run bulk TDS generation sequentially ──────────────────────────────────
+  const handleStartBulkTds = async () => {
+    setIsTdsRunning(true);
+
+    // Build a lookup for the actual product data
+    const productMap = new Map<string, Product>(
+      table
+        .getFilteredSelectedRowModel()
+        .rows.map((r) => [r.original.id, r.original]),
+    );
+
+    for (let i = 0; i < tdsJobs.length; i++) {
+      const job = tdsJobs[i];
+      const product = productMap.get(job.productId);
+
+      // Mark as generating
+      setTdsJobs((prev) =>
+        prev.map((j) =>
+          j.productId === job.productId ? { ...j, status: "generating" } : j,
+        ),
+      );
+
+      try {
+        if (!product) throw new Error("Product not found in selection");
+
+        const brandRaw = Array.isArray(product.brands)
+          ? (product.brands[0] ?? "")
+          : Array.isArray(product.brand)
+            ? ((product.brand as string[])[0] ?? "")
+            : ((product.brand as string) ?? "");
+
+        const tdsUrl = await generateTdsPdf(
+          {
+            itemDescription: product.itemDescription || product.name || "",
+            litItemCode: product.litItemCode,
+            ecoItemCode: product.ecoItemCode,
+            brand: brandRaw,
+            technicalSpecs: product.technicalSpecs ?? [],
+            dynamicSpecs: product.dynamicSpecs ?? [],
+          },
+          {
+            mainImageUrl: product.mainImage || undefined,
+            dimensionDrawingUrl: product.dimensionDrawingUrl || undefined,
+            mountingHeightUrl: product.mountingHeightUrl || undefined,
+            cloudinaryUploadFn: uploadToCloudinary,
+          },
+        );
+
+        // Persist tdsFileUrl back to Firestore
+        await updateDoc(doc(db, "products", product.id), {
+          tdsFileUrl: tdsUrl,
+          updatedAt: serverTimestamp(),
+        });
+
+        setTdsJobs((prev) =>
+          prev.map((j) =>
+            j.productId === job.productId ? { ...j, status: "done" } : j,
+          ),
+        );
+      } catch (err: any) {
+        console.error(`TDS generation failed for ${job.productId}:`, err);
+        setTdsJobs((prev) =>
+          prev.map((j) =>
+            j.productId === job.productId
+              ? {
+                  ...j,
+                  status: "error",
+                  error: err?.message ?? "Unknown error",
+                }
+              : j,
+          ),
+        );
+      }
+    }
+
+    setIsTdsRunning(false);
+
+    const finalJobs = tdsJobs; // stale on purpose — we log based on completed count
+    const doneCount = finalJobs.filter((j) => j.status === "done").length;
+    const errCount = finalJobs.filter((j) => j.status === "error").length;
+
+    await logAuditEvent({
+      action: "update",
+      entityType: "product",
+      entityId: null,
+      entityName: `${tdsJobs.length} products`,
+      context: {
+        page: "/products/all-products",
+        source: "all-products:bulk-generate-tds",
+        collection: "products",
+        bulk: true,
+      },
+      metadata: {
+        total: tdsJobs.length,
+        done: doneCount,
+        errors: errCount,
+        productIds: tdsJobs.map((j) => j.productId),
+      },
+    }).catch(console.warn);
   };
 
   const handleEdit = (product: Product) => {
@@ -903,27 +1542,67 @@ export default function AllProductsPage() {
       ),
       cell: ({ row }) => {
         const product = row.original;
+        const hasTds = !!product.tdsFileUrl;
+
         return (
           <div
-            className="flex justify-end gap-1"
+            className="flex justify-end items-center gap-1"
             onClick={(e) => e.stopPropagation()}
           >
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => handleEdit(product)}
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-destructive"
-              onClick={() => setDeleteTarget(product)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {/* TDS Preview */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={`h-8 w-8 transition-colors ${
+                    hasTds
+                      ? "text-red-500 hover:text-red-600 hover:bg-red-50"
+                      : "text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-muted/50"
+                  }`}
+                  onClick={() => setTdsPreviewProduct(product)}
+                >
+                  <FileText className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                {hasTds ? "Preview TDS" : "No TDS available"}
+              </TooltipContent>
+            </Tooltip>
+
+            {/* Edit */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => handleEdit(product)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                Edit product
+              </TooltipContent>
+            </Tooltip>
+
+            {/* Delete */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => setDeleteTarget(product)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                Move to recycle bin
+              </TooltipContent>
+            </Tooltip>
           </div>
         );
       },
@@ -1087,7 +1766,7 @@ export default function AllProductsPage() {
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
             <Button
               variant="ghost"
               size="sm"
@@ -1104,6 +1783,25 @@ export default function AllProductsPage() {
             >
               <Globe className="h-4 w-4" />
               Assign to Website
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-violet-300 text-violet-700 hover:bg-violet-50"
+              onClick={() => setAssignProductClassOpen(true)}
+            >
+              <Tag className="h-4 w-4" />
+              Set Product Class
+            </Button>
+            {/* ── NEW: Bulk Generate TDS ── */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50"
+              onClick={handleOpenBulkTds}
+            >
+              <FilePlus2 className="h-4 w-4" />
+              Generate TDS
             </Button>
             <Button
               variant="destructive"
@@ -1475,6 +2173,27 @@ export default function AllProductsPage() {
         </SidebarInset>
       </SidebarProvider>
 
+      {/* Dialogs */}
+      <TdsPreviewDialog
+        open={!!tdsPreviewProduct}
+        onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
+        product={tdsPreviewProduct}
+      />
+
+      <BulkGenerateTdsDialog
+        open={bulkTdsOpen}
+        onOpenChange={(v) => {
+          setBulkTdsOpen(v);
+          if (!v && !isTdsRunning) {
+            // Reset jobs when dialog is closed after completion
+            setTdsJobs([]);
+          }
+        }}
+        jobs={tdsJobs}
+        onStart={handleStartBulkTds}
+        isRunning={isTdsRunning}
+      />
+
       <DeleteToRecycleBinDialog
         open={!!deleteTarget}
         onOpenChange={(v) => !v && setDeleteTarget(null)}
@@ -1496,6 +2215,13 @@ export default function AllProductsPage() {
         onOpenChange={setAssignWebsiteOpen}
         selectedCount={selectedCount}
         onConfirm={handleBulkAssignWebsite}
+      />
+
+      <AssignProductClassDialog
+        open={assignProductClassOpen}
+        onOpenChange={setAssignProductClassOpen}
+        selectedCount={selectedCount}
+        onConfirm={handleBulkAssignProductClass}
       />
     </TooltipProvider>
   );
