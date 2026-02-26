@@ -40,6 +40,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
+import { uploadToCloudinary } from "@/lib/cloudinary";
 
 // --- TYPES ---
 interface MasterItem {
@@ -118,6 +119,35 @@ function mergeWithPending(
   return [...dbItems, ...currentPending];
 }
 
+// --- GALLERY PREVIEW ITEM (stable object URL per file) ---
+function GalleryPreviewItem({
+  file,
+  onRemove,
+}: {
+  file: File;
+  onRemove: () => void;
+}) {
+  const [src, setSrc] = useState("");
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  return (
+    <div className="aspect-square relative border rounded-md overflow-hidden shadow-sm group">
+      <img src={src} className="object-cover w-full h-full" alt="New gallery" />
+      <button
+        onClick={onRemove}
+        className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
 export default function ShopifyAddNewProduct({
   editData,
   onFinished,
@@ -125,9 +155,6 @@ export default function ShopifyAddNewProduct({
   editData?: any;
   onFinished?: () => void;
 }) {
-  const CLOUDINARY_UPLOAD_PRESET = "shopify_preset";
-  const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
-
   const [isPublishing, setIsPublishing] = useState(false);
 
   // FORM STATE
@@ -137,7 +164,7 @@ export default function ShopifyAddNewProduct({
   const [regPrice, setRegPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
 
-  // ── STATUS ───────────────────────────────────────────────────────────────────
+  // STATUS
   const [status, setStatus] = useState<"draft" | "public" | "">(
     editData?.status || "",
   );
@@ -158,13 +185,42 @@ export default function ShopifyAddNewProduct({
 
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
-  // IMAGES
+  // IMAGES — new files
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
   const [qrImage, setQrImage] = useState<File | null>(null);
+
+  // IMAGES — existing URLs (edit mode)
   const [existingMainImage, setExistingMainImage] = useState("");
-  const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>([]);
+  const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>(
+    [],
+  );
   const [existingQrImage, setExistingQrImage] = useState("");
+
+  // STABLE PREVIEW URLs (generated once per file, revoked on change)
+  const [mainImagePreview, setMainImagePreview] = useState<string>("");
+  const [qrImagePreview, setQrImagePreview] = useState<string>("");
+
+  // --- STABLE PREVIEW URL EFFECTS ---
+  useEffect(() => {
+    if (!mainImage) {
+      setMainImagePreview("");
+      return;
+    }
+    const url = URL.createObjectURL(mainImage);
+    setMainImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [mainImage]);
+
+  useEffect(() => {
+    if (!qrImage) {
+      setQrImagePreview("");
+      return;
+    }
+    const url = URL.createObjectURL(qrImage);
+    setQrImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [qrImage]);
 
   // --- 1. FETCH MASTER DATA ---
   useEffect(() => {
@@ -174,7 +230,13 @@ export default function ShopifyAddNewProduct({
       query(collection(db, "productfamilies"), qFilter),
       (snap) => {
         setAvailableCats((prev) =>
-          mergeWithPending(prev, snap, "category", "title", pendingItemsRef.current),
+          mergeWithPending(
+            prev,
+            snap,
+            "category",
+            "title",
+            pendingItemsRef.current,
+          ),
         );
       },
     );
@@ -183,18 +245,32 @@ export default function ShopifyAddNewProduct({
       query(collection(db, "brand_name"), qFilter),
       (snap) => {
         setAvailableBrands((prev) =>
-          mergeWithPending(prev, snap, "brand", "title", pendingItemsRef.current),
+          mergeWithPending(
+            prev,
+            snap,
+            "brand",
+            "title",
+            pendingItemsRef.current,
+          ),
         );
       },
     );
 
-    // Applications are shared across all websites — fetch all active ones
-    // (no website filter: ApplicationsPage stores "Disruptive Solutions Inc." etc., not "Shopify")
     const unsubApps = onSnapshot(
-      query(collection(db, "applications"), where("isActive", "==", true), orderBy("createdAt", "asc")),
+      query(
+        collection(db, "applications"),
+        where("isActive", "==", true),
+        orderBy("createdAt", "asc"),
+      ),
       (snap) => {
         setAvailableApps((prev) =>
-          mergeWithPending(prev, snap, "applications", "title", pendingItemsRef.current),
+          mergeWithPending(
+            prev,
+            snap,
+            "applications",
+            "title",
+            pendingItemsRef.current,
+          ),
         );
       },
     );
@@ -225,7 +301,10 @@ export default function ShopifyAddNewProduct({
           const catDoc = await getDoc(doc(db, "productfamilies", catId));
           if (catDoc.exists()) {
             const catData = catDoc.data();
-            if (catData.specifications && Array.isArray(catData.specifications)) {
+            if (
+              catData.specifications &&
+              Array.isArray(catData.specifications)
+            ) {
               catData.specifications.forEach((specId: string) => {
                 specIdsFromCategories.add(specId);
               });
@@ -298,10 +377,16 @@ export default function ShopifyAddNewProduct({
     setExistingMainImage(editData.mainImage || "");
     setExistingGalleryImages(editData.galleryImages || []);
     setExistingQrImage(editData.qrCodeImage || "");
+
+    // Reset any previously dropped new files when loading a different product
+    setMainImage(null);
+    setQrImage(null);
+    setGalleryImages([]);
   }, [editData]);
 
   useEffect(() => {
-    if (!editData || !editData.technicalSpecs || availableSpecs.length === 0) return;
+    if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
+      return;
 
     const values: Record<string, string> = {};
 
@@ -336,18 +421,6 @@ export default function ShopifyAddNewProduct({
   }, [editData, availableCats]);
 
   // --- 4. HANDLERS ---
-
-  const uploadToCloudinary = async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-    const res = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-      { method: "POST", body: formData },
-    );
-    const data = await res.json();
-    return data.secure_url;
-  };
 
   const handleAddItem = (
     type: PendingItem["type"],
@@ -463,17 +536,22 @@ export default function ShopifyAddNewProduct({
       }
 
       toast.loading("Uploading images...", { id: publishToast });
+
+      // FIX: only upload if a new file was dropped; otherwise keep existing URL
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
         : existingMainImage;
+
       const qrUrl = qrImage
         ? await uploadToCloudinary(qrImage)
         : existingQrImage;
+
       const uploadedGallery = await Promise.all(
         galleryImages.map(uploadToCloudinary),
       );
 
-      const specsGrouped: Record<string, { name: string; value: string }[]> = {};
+      const specsGrouped: Record<string, { name: string; value: string }[]> =
+        {};
 
       Object.entries(specValues).forEach(([key, value]) => {
         if (value.trim() !== "") {
@@ -522,7 +600,9 @@ export default function ShopifyAddNewProduct({
         technicalSpecs,
         mainImage: clean(mainUrl),
         qrCodeImage: clean(qrUrl),
-        galleryImages: [...existingGalleryImages, ...uploadedGallery].filter(Boolean),
+        galleryImages: [...existingGalleryImages, ...uploadedGallery].filter(
+          Boolean,
+        ),
         websites: SELECTED_WEBS,
         productFamily: clean(productFamilyTitle),
         brand: selectedBrands[0]
@@ -567,23 +647,29 @@ export default function ShopifyAddNewProduct({
       toast.success("Product Saved Successfully!", { id: publishToast });
 
       if (onFinished) onFinished();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("Error saving product", { id: publishToast });
+      toast.error(err?.message || "Error saving product", { id: publishToast });
     } finally {
       setIsPublishing(false);
     }
   };
 
+  // FIX: clear existing URL when a new file is dropped
   const onDropMain = useCallback((files: File[]) => {
-    if (files[0]) setMainImage(files[0]);
+    if (files[0]) {
+      setMainImage(files[0]);
+      setExistingMainImage(""); // clear stale existing URL
+    }
   }, []);
+
   const { getRootProps: getMainRootProps, getInputProps: getMainInputProps } =
     useDropzone({ onDrop: onDropMain, maxFiles: 1 });
 
   const onDropGallery = useCallback((files: File[]) => {
     setGalleryImages((prev) => [...prev, ...files]);
   }, []);
+
   const {
     getRootProps: getGalleryRootProps,
     getInputProps: getGalleryInputProps,
@@ -602,7 +688,7 @@ export default function ShopifyAddNewProduct({
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 min-h-screen">
       <div className="md:col-span-2 space-y-6">
-        {/* ── STATUS CARD ── */}
+        {/* STATUS CARD */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -626,12 +712,16 @@ export default function ShopifyAddNewProduct({
                           : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
                       }`}
                   >
-                    <span className={active ? opt.color : "text-muted-foreground"}>
+                    <span
+                      className={active ? opt.color : "text-muted-foreground"}
+                    >
                       {opt.icon}
                     </span>
                     <div>
                       <p className="text-sm font-semibold">{opt.label}</p>
-                      <p className="text-[11px] font-normal opacity-70">{opt.desc}</p>
+                      <p className="text-[11px] font-normal opacity-70">
+                        {opt.desc}
+                      </p>
                     </div>
                   </button>
                 );
@@ -660,10 +750,11 @@ export default function ShopifyAddNewProduct({
                   className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
                 >
                   <input {...getMainInputProps()} />
-                  {mainImage || existingMainImage ? (
+                  {/* FIX: use stable mainImagePreview instead of inline createObjectURL */}
+                  {mainImagePreview || existingMainImage ? (
                     <div className="relative w-full h-full group">
                       <img
-                        src={mainImage ? URL.createObjectURL(mainImage) : existingMainImage}
+                        src={mainImagePreview || existingMainImage}
                         className="w-full h-full object-contain rounded"
                         alt="Main product"
                       />
@@ -671,6 +762,7 @@ export default function ShopifyAddNewProduct({
                         onClick={(e) => {
                           e.stopPropagation();
                           setMainImage(null);
+                          setMainImagePreview("");
                           setExistingMainImage("");
                         }}
                         className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg hover:bg-destructive/90 z-10"
@@ -681,7 +773,9 @@ export default function ShopifyAddNewProduct({
                   ) : (
                     <div className="flex flex-col items-center">
                       <ImagePlus className="h-8 w-8 mb-2 text-muted-foreground" />
-                      <p className="text-xs font-medium text-muted-foreground">Main Image</p>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Main Image
+                      </p>
                     </div>
                   )}
                 </div>
@@ -689,16 +783,24 @@ export default function ShopifyAddNewProduct({
 
               {/* QR Code */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">QR Code</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  QR Code
+                </Label>
                 <QrDropzone
                   file={qrImage}
+                  preview={qrImagePreview}
                   existingUrl={existingQrImage}
                   onRemove={() => {
                     setQrImage(null);
+                    setQrImagePreview("");
                     setExistingQrImage("");
                   }}
+                  // FIX: clear existing URL when new file is dropped
                   onDrop={(files) => {
-                    if (files[0]) setQrImage(files[0]);
+                    if (files[0]) {
+                      setQrImage(files[0]);
+                      setExistingQrImage("");
+                    }
                   }}
                 />
               </div>
@@ -715,8 +817,12 @@ export default function ShopifyAddNewProduct({
                   <input {...getGalleryInputProps()} />
                   <div className="flex flex-col items-center">
                     <Images className="h-8 w-8 mb-2 text-muted-foreground" />
-                    <p className="text-xs font-medium text-muted-foreground">Drop Gallery Here</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-1">Multi-select supported</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Drop Gallery Here
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-1">
+                      Multi-select supported
+                    </p>
                   </div>
                 </div>
               </div>
@@ -740,7 +846,9 @@ export default function ShopifyAddNewProduct({
                       />
                       <button
                         onClick={() =>
-                          setExistingGalleryImages((prev) => prev.filter((_, idx) => idx !== i))
+                          setExistingGalleryImages((prev) =>
+                            prev.filter((_, idx) => idx !== i),
+                          )
                         }
                         className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
@@ -748,25 +856,18 @@ export default function ShopifyAddNewProduct({
                       </button>
                     </div>
                   ))}
+
+                  {/* FIX: use GalleryPreviewItem component for stable object URLs */}
                   {galleryImages.map((img, i) => (
-                    <div
+                    <GalleryPreviewItem
                       key={`new-${i}`}
-                      className="aspect-square relative border rounded-md overflow-hidden shadow-sm group"
-                    >
-                      <img
-                        src={URL.createObjectURL(img) || "/placeholder.svg"}
-                        className="object-cover w-full h-full"
-                        alt={`New gallery ${i + 1}`}
-                      />
-                      <button
-                        onClick={() =>
-                          setGalleryImages((prev) => prev.filter((_, idx) => idx !== i))
-                        }
-                        className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
+                      file={img}
+                      onRemove={() =>
+                        setGalleryImages((prev) =>
+                          prev.filter((_, idx) => idx !== i),
+                        )
+                      }
+                    />
                   ))}
                 </div>
               </div>
@@ -808,7 +909,9 @@ export default function ShopifyAddNewProduct({
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Zap className="h-4 w-4 text-primary" />
-                    <Label className="text-sm font-medium">Technical Specifications</Label>
+                    <Label className="text-sm font-medium">
+                      Technical Specifications
+                    </Label>
                   </div>
                 </div>
 
@@ -831,7 +934,9 @@ export default function ShopifyAddNewProduct({
                       const visibleSpecs = editData
                         ? specs.filter((spec) => {
                             const key = `${spec.specGroupId}-${spec.label}`;
-                            return specValues[key] && specValues[key].trim() !== "";
+                            return (
+                              specValues[key] && specValues[key].trim() !== ""
+                            );
                           })
                         : specs;
 
@@ -851,7 +956,9 @@ export default function ShopifyAddNewProduct({
                                   key={spec.id}
                                   className="space-y-1.5 p-3 rounded-lg border bg-card"
                                 >
-                                  <Label className="text-xs font-medium">{spec.label}</Label>
+                                  <Label className="text-xs font-medium">
+                                    {spec.label}
+                                  </Label>
                                   <Input
                                     placeholder={`Enter ${spec.label}...`}
                                     className="h-9 text-sm"
@@ -882,7 +989,9 @@ export default function ShopifyAddNewProduct({
       <div className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-center">Classification</CardTitle>
+            <CardTitle className="text-sm font-medium text-center">
+              Classification
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-8">
             <SidebarList
@@ -893,7 +1002,9 @@ export default function ShopifyAddNewProduct({
               disabled={false}
               onToggle={(id: string) =>
                 setSelectedCats((prev) =>
-                  prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((i) => i !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
@@ -908,7 +1019,9 @@ export default function ShopifyAddNewProduct({
               disabled={false}
               onToggle={(id: string) =>
                 setSelectedBrands((prev) =>
-                  prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((i) => i !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
@@ -923,7 +1036,9 @@ export default function ShopifyAddNewProduct({
               disabled={false}
               onToggle={(id: string) =>
                 setSelectedApps((prev) =>
-                  prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id],
+                  prev.includes(id)
+                    ? prev.filter((a) => a !== id)
+                    : [...prev, id],
                 )
               }
               onAdd={(name: string) =>
@@ -938,7 +1053,9 @@ export default function ShopifyAddNewProduct({
           <CardContent className="pt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Regular Price</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Regular Price
+                </Label>
                 <Input
                   className="h-9 font-semibold"
                   value={regPrice}
@@ -947,7 +1064,9 @@ export default function ShopifyAddNewProduct({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Sale Price</Label>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Sale Price
+                </Label>
                 <Input
                   className="h-9 font-semibold text-destructive"
                   value={salePrice}
@@ -957,7 +1076,9 @@ export default function ShopifyAddNewProduct({
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Item Code</Label>
+              <Label className="text-xs font-medium text-muted-foreground">
+                Item Code
+              </Label>
               <Input
                 className="h-9 font-mono"
                 value={itemCode}
@@ -991,7 +1112,15 @@ export default function ShopifyAddNewProduct({
 
 // --- SUBCOMPONENTS ---
 
-function SidebarList({ label, icon, items, selected, onToggle, onAdd, disabled }: any) {
+function SidebarList({
+  label,
+  icon,
+  items,
+  selected,
+  onToggle,
+  onAdd,
+  disabled,
+}: any) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -1003,7 +1132,9 @@ function SidebarList({ label, icon, items, selected, onToggle, onAdd, disabled }
 
       <div className="space-y-1 max-h-48 overflow-y-auto pr-2 min-h-[50px]">
         {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic py-2">No items found.</p>
+          <p className="text-xs text-muted-foreground italic py-2">
+            No items found.
+          </p>
         ) : (
           items.map((item: MasterItem) => {
             const isSelected = selected.includes(item.id);
@@ -1035,7 +1166,11 @@ function SidebarList({ label, icon, items, selected, onToggle, onAdd, disabled }
 
       {!disabled && (
         <div className="pt-2 border-t">
-          <AddCustomItem placeholder={`Add ${label}...`} onAdd={onAdd} disabled={disabled} />
+          <AddCustomItem
+            placeholder={`Add ${label}...`}
+            onAdd={onAdd}
+            disabled={disabled}
+          />
         </div>
       )}
     </div>
@@ -1086,28 +1221,33 @@ function AddCustomItem({
   );
 }
 
+// FIX: QrDropzone now accepts pre-computed preview URL from parent
+// (parent owns the useEffect that creates/revokes the object URL)
 function QrDropzone({
   file,
+  preview,
   existingUrl,
   onDrop,
   onRemove,
 }: {
   file: File | null;
+  preview: string;
   existingUrl: string;
   onDrop: (files: File[]) => void;
   onRemove: () => void;
 }) {
   const { getRootProps, getInputProps } = useDropzone({ onDrop, maxFiles: 1 });
+
   return (
     <div
       {...getRootProps()}
       className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
     >
       <input {...getInputProps()} />
-      {file || existingUrl ? (
+      {preview || existingUrl ? (
         <div className="relative w-full h-full group">
           <img
-            src={file ? URL.createObjectURL(file) : existingUrl}
+            src={preview || existingUrl}
             className="w-full h-full object-contain rounded"
             alt="QR Code"
           />
