@@ -392,9 +392,15 @@ export default function ShopifyAddNewProduct({
 
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
-        const specItem = availableSpecs.find(
+        // Primary match: label + group name (works when name unchanged)
+        let specItem = availableSpecs.find(
           (s) => s.label === spec.name && s.specGroup === group.specGroup,
         );
+        // Fallback: label only — handles renamed spec groups.
+        // specGroupId is stable even when the display name changes.
+        if (!specItem) {
+          specItem = availableSpecs.find((s) => s.label === spec.name);
+        }
 
         if (specItem) {
           const key = `${specItem.specGroupId}-${specItem.label}`;

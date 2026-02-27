@@ -445,15 +445,22 @@ export default function AddNewProduct({
   }, [editData]);
 
   // ── Load edit data for custom sections & specs ────────────────────────────
+  // AFTER — falls back to label-only match when group name has been renamed
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
-        const item = availableSpecs.find(
+        // Try exact match first (group name + label)
+        let item = availableSpecs.find(
           (s) => s.label === spec.name && s.specGroup === group.specGroup,
         );
+        // Fallback: match by label only — handles renamed spec groups.
+        // specGroupId is stable even when the display name changes.
+        if (!item) {
+          item = availableSpecs.find((s) => s.label === spec.name);
+        }
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
