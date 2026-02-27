@@ -75,7 +75,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
-import { ExcelTdsGenerator } from "@/components/product-forms/excel-tds-generator";
 
 const WEBSITE_OPTIONS = [
   "Disruptive Solutions Inc",
@@ -247,11 +246,6 @@ const handleBulkUpdateWebsites = async () => {
               <p className="text-sm text-muted-foreground">
                 Manage product families and specifications.
               </p>
-            </div>
-
-            {/* ── EXCEL TO TDS GENERATOR ── */}
-            <div className="border-t pt-6">
-              <ExcelTdsGenerator />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
