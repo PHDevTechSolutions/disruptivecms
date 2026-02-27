@@ -184,6 +184,7 @@ export async function parseExcelFile(
           }
 
           // Build technical specs from remaining columns
+          // Format: { specGroup: string, specs: { name: string, value: string }[] }
           const specsByGroup: Record<string, { name: string; value: string }[]> =
             {};
 
@@ -198,21 +199,31 @@ export async function parseExcelFile(
               continue;
             }
 
-            // Use the header name as the spec group (e.g., "Electrical", "Physical")
-            // This groups similar specs together
-            const groupName = headerName.toUpperCase();
+            // Use the header name as both the spec name and determine group from it
+            // E.g., "Color" becomes specGroup: "Appearance", name: "Color"
+            // or use the header itself as the group if we can't determine category
+            const specName = headerName.trim();
+            // For now, group by the header name itself as the category
+            // In production, you'd cross-reference against availableSpecs to get the proper specGroup
+            const specGroup = specName.toUpperCase();
 
-            if (!specsByGroup[groupName]) {
-              specsByGroup[groupName] = [];
+            if (!specsByGroup[specGroup]) {
+              specsByGroup[specGroup] = [];
             }
 
-            specsByGroup[groupName].push({
-              name: headerName,
-              value: value,
-            });
+            // Only add if we haven't already added this spec (avoid duplicates)
+            const exists = specsByGroup[specGroup].some(
+              (s) => s.name === specName,
+            );
+            if (!exists) {
+              specsByGroup[specGroup].push({
+                name: specName,
+                value: value,
+              });
+            }
           }
 
-          // Convert specs object to array
+          // Convert specs object to array in the same format as productFamilies
           const technicalSpecs: TechnicalSpec[] = Object.entries(specsByGroup).map(
             ([specGroup, specs]) => ({
               specGroup,

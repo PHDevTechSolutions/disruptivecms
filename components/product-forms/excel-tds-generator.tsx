@@ -55,6 +55,25 @@ export function ExcelTdsGenerator() {
   });
 
   /**
+   * Normalize and validate technical specs
+   * Removes empty values and ensures proper structure matching productFamilies format
+   */
+  const normalizeSpecs = useCallback(
+    (technicalSpecs: any[]): any[] => {
+      return technicalSpecs
+        .map((group: any) => ({
+          specGroup: group.specGroup || "OTHER",
+          specs: (group.specs || []).filter((spec: any) => {
+            const value = spec.value ? String(spec.value).trim() : "";
+            return value.length > 0;
+          }),
+        }))
+        .filter((group: any) => group.specs.length > 0);
+    },
+    [],
+  );
+
+  /**
    * Get existing product codes from Firestore
    */
   const getExistingProductCodes = useCallback(async (): Promise<Set<string>> => {
@@ -177,12 +196,15 @@ export function ExcelTdsGenerator() {
             continue;
           }
 
+          // Normalize specs before saving (remove empty values, ensure proper format)
+          const normalizedTechSpecs = normalizeSpecs(product.technicalSpecs);
+
           // Create product document in Firestore
           const docRef = await addDoc(collection(db, "products"), {
             itemDescription: product.productName,
             litItemCode: product.itemCode,
             brand: product.brand,
-            technicalSpecs: product.technicalSpecs,
+            technicalSpecs: normalizedTechSpecs,
             productFamily: product.sheetTitle,
             shortDescription: "",
             slug: product.itemCode.toLowerCase().replace(/[^a-z0-9]/g, "-"),
@@ -227,7 +249,7 @@ export function ExcelTdsGenerator() {
       toast.error(`Database save error: ${errMsg}`);
       setState((prev) => ({ ...prev, isGenerating: false }));
     }
-  }, [state.parseResult, getExistingProductCodes]);
+  }, [state.parseResult, getExistingProductCodes, normalizeSpecs]);
 
   /**
    * Generate PDFs from parsed products
@@ -252,6 +274,9 @@ export function ExcelTdsGenerator() {
             continue;
           }
 
+          // Normalize specs before generating PDF (remove empty values)
+          const normalizedTechSpecs = normalizeSpecs(product.technicalSpecs);
+
           // Generate PDF with a local blob uploader
           // This approach uses the PDF blob directly without uploading to Cloudinary
           const pdfUrl = await generateTdsPdf(
@@ -259,7 +284,7 @@ export function ExcelTdsGenerator() {
               itemDescription: product.productName,
               litItemCode: product.itemCode,
               brand: product.brand,
-              technicalSpecs: product.technicalSpecs,
+              technicalSpecs: normalizedTechSpecs,
             },
             {
               cloudinaryUploadFn: async (pdfFile: File) => {
@@ -304,7 +329,7 @@ export function ExcelTdsGenerator() {
       toast.error(`PDF generation error: ${errMsg}`);
       setState((prev) => ({ ...prev, isGenerating: false }));
     }
-  }, [state.parseResult, getExistingProductCodes]);
+  }, [state.parseResult, getExistingProductCodes, normalizeSpecs]);
 
   /**
    * Download single PDF
