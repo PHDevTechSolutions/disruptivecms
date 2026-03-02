@@ -28,6 +28,7 @@ export const roleAccessConfig: RoleAccessConfig = {
     "/content/blogs",
     "/jobs/careers",
     "/settings",
+    "/admin",
   ],
   warehouse: [
     "/dashboard",
