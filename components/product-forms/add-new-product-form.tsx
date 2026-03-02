@@ -550,17 +550,6 @@ export default function AddNewProduct({
           return;
         }
 
-        // Extract AcroForm field names from TDS template if it exists
-        let tdsFieldNames: string[] = [];
-        if (templateUrl) {
-          try {
-            const { extractTdsTemplateFields } = await import("@/lib/fillTdsPdf");
-            tdsFieldNames = await extractTdsTemplateFields(templateUrl);
-          } catch (e) {
-            console.warn("[AddNewProduct] Could not extract TDS fields:", e);
-          }
-        }
-
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
@@ -568,34 +557,13 @@ export default function AddNewProduct({
             .forEach((d) => {
               const data = d.data();
               (data.items || []).forEach((item: any) => {
-                // If TDS template exists, only include specs whose labels match TDS field names
-                // Otherwise include all specs (no template = show everything)
-                if (item.label) {
-                  if (templateUrl && tdsFieldNames.length > 0) {
-                    // Check if spec label matches any TDS field name (normalized)
-                    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-                    const specLabelNorm = norm(item.label);
-                    const matchesTemplate = tdsFieldNames.some(
-                      (fieldName) => norm(fieldName) === specLabelNorm || norm(fieldName).includes(specLabelNorm)
-                    );
-                    if (matchesTemplate) {
-                      items.push({
-                        id: `${d.id}-${item.label}`,
-                        label: item.label,
-                        specGroup: data.name || "Unnamed Group",
-                        specGroupId: d.id,
-                      });
-                    }
-                  } else {
-                    // No template or no fields found - include all
-                    items.push({
-                      id: `${d.id}-${item.label}`,
-                      label: item.label,
-                      specGroup: data.name || "Unnamed Group",
-                      specGroupId: d.id,
-                    });
-                  }
-                }
+                if (item.label)
+                  items.push({
+                    id: `${d.id}-${item.label}`,
+                    label: item.label,
+                    specGroup: data.name || "Unnamed Group",
+                    specGroupId: d.id,
+                  });
               });
             });
           setAvailableSpecs(items);
