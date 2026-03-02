@@ -272,10 +272,12 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
       const left = extraImages[i];
       const right = extraImages[i + 1];
 
-      pg.drawText(left.label, { x: 34, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
-      await drawImage(pdfDoc, pg, left.url, 34, 150, 255, 590);
+      if (left && left.url) {
+        pg.drawText(left.label, { x: 34, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
+        await drawImage(pdfDoc, pg, left.url, 34, 150, 255, 590);
+      }
 
-      if (right) {
+      if (right && right.url) {
         pg.drawText(right.label, { x: 310, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
         await drawImage(pdfDoc, pg, right.url, 310, 150, 255, 590);
       }
