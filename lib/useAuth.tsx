@@ -32,24 +32,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Check session on mount and page visibility change
+  // Check session only on mount
   useEffect(() => {
     checkSession();
-
-    // Check session when page becomes visible (browser returns from background)
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        checkSession();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
   }, []);
 
-  // Refresh session every 6 hours to keep it alive
+  // Refresh session every 24 hours to keep it alive
   useEffect(() => {
     if (!user) return;
 
@@ -60,13 +48,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const data = await response.json();
           setUser(data.user);
         } else {
-          // Session expired
-          await handleLogout();
+          // Session expired - only logout if explicitly requested
+          console.warn("[Auth] Session refresh failed");
         }
       } catch (error) {
         console.error("[Auth] Error refreshing session:", error);
       }
-    }, 6 * 60 * 60 * 1000); // 6 hours
+    }, 24 * 60 * 60 * 1000); // 24 hours
 
     return () => clearInterval(refreshInterval);
   }, [user]);
@@ -84,12 +72,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           JSON.stringify(data.user)
         );
       } else {
-        setUser(null);
-        localStorage.removeItem("disruptive_admin_user");
+        // 401 Unauthorized - clear session
+        if (response.status === 401) {
+          setUser(null);
+          localStorage.removeItem("disruptive_admin_user");
+        } else {
+          // Other errors (500, network, etc.) - keep existing user to prevent logout
+          console.warn(`[Auth] Session check failed with status ${response.status}`);
+          // Try to restore from localStorage as fallback
+          const cached = localStorage.getItem("disruptive_admin_user");
+          if (cached) {
+            try {
+              setUser(JSON.parse(cached));
+            } catch (e) {
+              console.error("[Auth] Failed to parse cached user:", e);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error("[Auth] Error checking session:", error);
-      setUser(null);
+      // Network error or other issue - restore from cache to maintain persistence
+      const cached = localStorage.getItem("disruptive_admin_user");
+      if (cached) {
+        try {
+          setUser(JSON.parse(cached));
+        } catch (e) {
+          console.error("[Auth] Failed to parse cached user:", e);
+        }
+      }
     } finally {
       setIsLoading(false);
     }
