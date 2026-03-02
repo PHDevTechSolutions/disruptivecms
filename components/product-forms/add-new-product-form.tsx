@@ -1327,24 +1327,28 @@ export default function AddNewProduct({
                 </div>
               </div>
 
-              {!tdsTemplateUrl && (
-                <div className="pt-2 border-t">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setTechDrawingsOpen((o) => !o);
-                    }}
-                    className="w-full flex items-center justify-between py-1 group"
-                  >
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
-                      Technical Drawings
-                    </p>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
-                  {techDrawingsOpen && (
+              <div className="pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTechDrawingsOpen((o) => !o);
+                  }}
+                  className="w-full flex items-center justify-between py-1 group"
+                >
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
+                    Technical Drawings
+                    {tdsTemplateUrl && (
+                      <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
+                        (applied to TDS)
+                      </span>
+                    )}
+                  </p>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {techDrawingsOpen && (
                     <div className="space-y-4 mt-3">
                       <div className="grid grid-cols-2 gap-4">
                         {renderSimpleDropzone({
@@ -1479,7 +1483,6 @@ export default function AddNewProduct({
                     </div>
                   )}
                 </div>
-              )}
 
               {(existingGalleryImages.length > 0 ||
                 galleryImages.length > 0) && (
@@ -1545,49 +1548,59 @@ export default function AddNewProduct({
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <AlignLeft className="h-4 w-4" />
               General Information
-              {tdsTemplateUrl && (
-                <span className="text-[10px] font-normal text-muted-foreground ml-1">
-                  (description &amp; specs → edit in TDS form)
-                </span>
-              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
-            {!tdsTemplateUrl && (
-              <>
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">
-                    Item Description
-                  </Label>
-                  <Input
-                    className="h-12 text-base font-semibold"
-                    value={itemDescription}
-                    onChange={(e) => setItemDescription(e.target.value)}
-                    placeholder="Enter item description"
-                  />
-                </div>
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Eco Item Code</Label>
-                    <Input
-                      className="h-10 font-mono"
-                      value={ecoItemCode}
-                      onChange={(e) => setEcoItemCode(e.target.value)}
-                      placeholder="ECO-000"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Lit Item Code</Label>
-                    <Input
-                      className="h-10 font-mono"
-                      value={litItemCode}
-                      onChange={(e) => setLitItemCode(e.target.value)}
-                      placeholder="LIT-000"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                Item Description
+                {tdsTemplateUrl && (
+                  <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
+                    (applied to TDS)
+                  </span>
+                )}
+              </Label>
+              <Input
+                className="h-12 text-base font-semibold"
+                value={itemDescription}
+                onChange={(e) => setItemDescription(e.target.value)}
+                placeholder="Enter item description"
+              />
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">
+                  Eco Item Code
+                  {tdsTemplateUrl && (
+                    <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
+                      (applied to TDS)
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  className="h-10 font-mono"
+                  value={ecoItemCode}
+                  onChange={(e) => setEcoItemCode(e.target.value)}
+                  placeholder="ECO-000"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">
+                  Lit Item Code
+                  {tdsTemplateUrl && (
+                    <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
+                      (applied to TDS)
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  className="h-10 font-mono"
+                  value={litItemCode}
+                  onChange={(e) => setLitItemCode(e.target.value)}
+                  placeholder="LIT-000"
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label className="text-sm font-medium">Short Description</Label>
               <Input
@@ -1597,12 +1610,17 @@ export default function AddNewProduct({
                 placeholder="Brief product description"
               />
             </div>
-            {selectedCatId && !tdsTemplateUrl && (
+            {selectedCatId && (
               <div className="pt-4 border-t">
                 <div className="flex items-center gap-2 mb-4">
                   <Zap className="h-4 w-4 text-primary" />
                   <Label className="text-sm font-medium">
                     Technical Specifications
+                    {tdsTemplateUrl && (
+                      <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
+                        (filtered by TDS template)
+                      </span>
+                    )}
                   </Label>
                 </div>
                 {specsLoading ? (
