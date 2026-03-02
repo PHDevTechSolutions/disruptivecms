@@ -28,6 +28,7 @@ export const roleAccessConfig: RoleAccessConfig = {
     "/content/blogs",
     "/jobs/careers",
     "/settings",
+    "/admin",
   ],
   warehouse: [
     "/dashboard",
@@ -51,7 +52,7 @@ export const roleAccessConfig: RoleAccessConfig = {
   ],
   csr: [
     "/dashboard",
-    "/products/all-products",
+    "/inquiries",
   ],
   ecomm: [
     "/dashboard",
@@ -96,7 +97,7 @@ export function getPrimaryRouteForRole(role: string): string {
     inventory: "/products/all-products",
     hr: "/jobs/careers",
     seo: "/content/blogs",
-    csr: "/products/all-products",
+    csr: "/inquiries/customer-inquiries",
     ecomm: "/products/all-products",
     pd: "/products/all-products",
   };
