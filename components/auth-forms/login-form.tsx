@@ -33,6 +33,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { toast } from "sonner";
+import { getPrimaryRouteForRole } from "@/lib/roleAccess";
 
 export function LoginForm({
   className,
@@ -75,6 +76,7 @@ export function LoginForm({
       "seo",
       "csr",
       "ecomm",
+      "pd",
     ];
     if (!validRoles.includes(role)) {
       throw new Error("unauthorized_role");
@@ -99,15 +101,8 @@ export function LoginForm({
       id: loginToast,
     });
 
-    // Role-based routing
-    const roleRoutes: Record<string, string> = {
-      warehouse: "/products/all-products",
-      admin: "/products/all-products",
-      seo: "/content/blogs",
-      hr: "/jobs/careers",
-    };
-
-    const redirectPath = roleRoutes[role] || "/products/all-products";
+    // Role-based routing using centralized configuration
+    const redirectPath = getPrimaryRouteForRole(role);
     router.push(redirectPath);
   };
 
