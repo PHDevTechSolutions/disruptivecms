@@ -28,6 +28,23 @@ export interface FillTdsPdfParams {
   cloudinaryUploadFn: (file: File) => Promise<string>;
 }
 
+/** Extract all AcroForm field names from a PDF template for matching specs. */
+export async function extractTdsTemplateFields(templateUrl: string): Promise<string[]> {
+  try {
+    const res = await fetch(templateUrl);
+    if (!res.ok) return [];
+    const pdfDoc = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()), {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    return fields.map((f) => f.getName());
+  } catch {
+    return [];
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
