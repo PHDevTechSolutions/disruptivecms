@@ -44,11 +44,13 @@ export function NavUser({
     const logoutToast = toast.loading("Signing out...");
 
     try {
+      // Sign out from Firebase
       await signOut(auth);
 
-      // Clear session data
-      document.cookie =
-        "admin_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      // Clear server-side session via API
+      await fetch("/api/auth/logout", { method: "POST" });
+
+      // Clear client-side data
       localStorage.removeItem("disruptive_admin_user");
 
       toast.success("Signed out successfully", {

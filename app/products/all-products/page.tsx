@@ -1,5 +1,6 @@
 "use client";
 
+import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import * as React from "react";
 import {
   ColumnDef,
@@ -2127,8 +2128,9 @@ export default function AllProductsPage() {
   );
 
   return (
-    <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
+    <ProtectedLayout>
+      <TooltipProvider delayDuration={0}>
+        <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
           <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
@@ -2207,6 +2209,7 @@ export default function AllProductsPage() {
         selectedCount={selectedCount}
         onConfirm={handleBulkAssignProductClass}
       />
-    </TooltipProvider>
+      </TooltipProvider>
+    </ProtectedLayout>
   );
 }

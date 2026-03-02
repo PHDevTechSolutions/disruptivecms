@@ -80,20 +80,24 @@ export function LoginForm({
       throw new Error("unauthorized_role");
     }
 
-    // Set Session Tracking
-    document.cookie =
-      "admin_session=true; path=/; max-age=3600; SameSite=Strict";
-    localStorage.setItem(
-      "disruptive_admin_user",
-      JSON.stringify({
-        uid: user.uid,
-        name: userData.fullName || userData.name || "Internal Staff",
-        email: user.email,
-        role,
-        accessLevel:
-          userData.accessLevel || (role === "admin" ? "full" : "staff"),
-      }),
-    );
+    // Get Firebase ID token
+    const idToken = await user.getIdToken();
+
+    // Create server-side session cookie via API
+    const sessionResponse = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+
+    if (!sessionResponse.ok) {
+      throw new Error("session_creation_failed");
+    }
+
+    const sessionData = await sessionResponse.json();
+
+    // Keep localStorage for backward compatibility
+    localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData.user));
 
     toast.success(`Access Authorized: ${role.toUpperCase()}`, {
       id: loginToast,
@@ -116,8 +120,8 @@ export function LoginForm({
      ========================= */
   const handleAuthError = async (error: any, loginToast: string | number) => {
     await signOut(auth);
-    document.cookie =
-      "admin_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    // Clear server-side session
+    await fetch("/api/auth/logout", { method: "POST" });
     localStorage.removeItem("disruptive_admin_user");
 
     if (error?.code === "auth/popup-closed-by-user") {
