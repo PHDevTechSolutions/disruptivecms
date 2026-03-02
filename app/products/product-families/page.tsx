@@ -341,6 +341,13 @@ export default function CategoryMaintenance() {
   const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
+  // ── Search, filter & bulk operations ──────────────────────────────────────
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
+  const [filterTds, setFilterTds] = useState<"all" | "with" | "without">("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
   // ── Firestore listeners ──────────────────────────────────────────────────
   useEffect(() => {
     const q = query(
@@ -412,6 +419,57 @@ export default function CategoryMaintenance() {
     setPreviewUrl("");
   };
 
+  // ── Filter & search logic ────────────────────────────────────────────────
+  const filteredCategories = categories.filter((cat) => {
+    // Search filter
+    if (searchTerm && !cat.title.toLowerCase().includes(searchTerm.toLowerCase())) {
+      return false;
+    }
+    // Status filter
+    if (filterStatus === "active" && !cat.isActive) return false;
+    if (filterStatus === "inactive" && cat.isActive) return false;
+    // TDS filter
+    if (filterTds === "with" && !cat.tdsTemplate) return false;
+    if (filterTds === "without" && cat.tdsTemplate) return false;
+    return true;
+  });
+
+  // ── Bulk delete handler ──────────────────────────────────────────────────
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setIsBulkDeleting(true);
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) => deleteDoc(doc(db, "productfamilies", id)))
+      );
+      toast.success(`Deleted ${selectedIds.size} product families`);
+      setSelectedIds(new Set());
+    } catch {
+      toast.error("Error deleting product families");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  // ── Toggle selection ────────────────────────────────────────────────────
+  const toggleSelect = (id: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedIds(newSet);
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === filteredCategories.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredCategories.map((c) => c.id)));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || selectedWebsites.length === 0)
@@ -480,7 +538,7 @@ export default function CategoryMaintenance() {
     }
   };
 
-  // ── Bulk upload helpers ─────────────────────────��─────────────────────────
+  // ── Bulk upload helpers ─────────────────────────���─────────────────────────
 
   /** Upload a raw file (PDF) to Cloudinary and return the secure URL. */
   const uploadRawToCloudinary = async (file: File): Promise<string> => {
@@ -1177,35 +1235,200 @@ export default function CategoryMaintenance() {
 
               {/* ══════════════ LIST VIEW ══════════════ */}
               <div className="lg:col-span-8">
+                {/* Search & Filters */}
+                {!loading && categories.length > 0 && (
+                  <div className="space-y-3 mb-6">
+                    {/* Search Bar */}
+                    <div>
+                      <Input
+                        placeholder="Search product families..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="rounded-none text-sm h-10"
+                      />
+                    </div>
+
+                    {/* Filters & Bulk Actions */}
+                    <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+                      {/* Status Filter */}
+                      <div className="flex gap-1 flex-wrap">
+                        <Button
+                          variant={filterStatus === "all" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterStatus("all")}
+                        >
+                          All
+                        </Button>
+                        <Button
+                          variant={filterStatus === "active" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterStatus("active")}
+                        >
+                          Active
+                        </Button>
+                        <Button
+                          variant={filterStatus === "inactive" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterStatus("inactive")}
+                        >
+                          Inactive
+                        </Button>
+                      </div>
+
+                      {/* TDS Filter */}
+                      <div className="flex gap-1 flex-wrap">
+                        <Button
+                          variant={filterTds === "all" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterTds("all")}
+                        >
+                          All
+                        </Button>
+                        <Button
+                          variant={filterTds === "with" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterTds("with")}
+                        >
+                          With TDS
+                        </Button>
+                        <Button
+                          variant={filterTds === "without" ? "default" : "outline"}
+                          size="sm"
+                          className="rounded-none text-xs h-8"
+                          onClick={() => setFilterTds("without")}
+                        >
+                          Without TDS
+                        </Button>
+                      </div>
+
+                      {/* Bulk Delete & Select All */}
+                      <div className="flex gap-1 ml-auto">
+                        {selectedIds.size > 0 && (
+                          <>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="rounded-none text-xs h-8"
+                                  disabled={isBulkDeleting}
+                                >
+                                  {isBulkDeleting ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      Deleting...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      Delete {selectedIds.size}
+                                    </>
+                                  )}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent className="rounded-none">
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle className="text-sm font-bold uppercase">
+                                    Confirm Deletion
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription className="text-xs">
+                                    Delete {selectedIds.size} product families? This cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel className="rounded-none text-xs">
+                                    Cancel
+                                  </AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="rounded-none bg-destructive text-xs"
+                                    onClick={handleBulkDelete}
+                                  >
+                                    Delete All
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-none text-xs h-8"
+                              onClick={() => setSelectedIds(new Set())}
+                            >
+                              Deselect All
+                            </Button>
+                          </>
+                        )}
+                        {!selectedIds.size && filteredCategories.length > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-none text-xs h-8"
+                            onClick={selectAll}
+                          >
+                            Select All ({filteredCategories.length})
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Results count */}
+                    <div className="text-xs text-muted-foreground">
+                      Showing {filteredCategories.length} of {categories.length} product families
+                    </div>
+                  </div>
+                )}
+
                 {loading ? (
                   <div className="flex justify-center py-20">
                     <Loader2 className="animate-spin text-primary" />
                   </div>
-                ) : categories.length === 0 ? (
+                ) : filteredCategories.length === 0 ? (
                   <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
                     <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm">
                       <FolderPlus className="h-8 w-8 text-muted-foreground/40" />
                     </div>
                     <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
-                      No Product Families
+                      {categories.length === 0 ? "No Product Families" : "No Results"}
                     </h3>
                     <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
-                      Your database is currently empty. Define a new category
-                      using the panel on the left or bulk-upload TDS PDFs.
+                      {categories.length === 0
+                        ? "Your database is currently empty. Define a new category using the panel on the left or bulk-upload TDS PDFs."
+                        : "No product families match your search or filter criteria."}
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {categories.map((cat) => (
+                    {filteredCategories.map((cat) => (
                       <Card
                         key={cat.id}
-                        className="rounded-none shadow-none group relative overflow-hidden border-foreground/10"
+                        className={cn(
+                          "rounded-none shadow-none group relative overflow-hidden border-foreground/10 transition-all",
+                          selectedIds.has(cat.id) && "ring-2 ring-primary border-primary/50"
+                        )}
                       >
                         <div className="aspect-[4/3] relative bg-muted border-b overflow-hidden">
                           <img
                             src={cat.imageUrl || "/placeholder.png"}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           />
+                          {/* Checkbox for selection */}
+                          <div
+                            className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors"
+                            onClick={() => toggleSelect(cat.id)}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(cat.id)}
+                              onChange={() => {}} // Controlled by onClick above
+                              className="h-4 w-4 cursor-pointer"
+                            />
+                          </div>
+
                           <div className="absolute top-2 right-2 flex gap-1">
                             <Button
                               size="icon"
