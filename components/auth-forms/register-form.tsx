@@ -256,6 +256,7 @@ export function RegisterForm({
                     Customer Support Representative
                   </SelectItem>
                   <SelectItem value="ecomm">E-commerce Specialist </SelectItem>
+                  <SelectItem value="pd">Product Development</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

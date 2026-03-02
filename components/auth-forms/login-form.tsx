@@ -75,6 +75,7 @@ export function LoginForm({
       "seo",
       "csr",
       "ecomm",
+      "pd",
     ];
     if (!validRoles.includes(role)) {
       throw new Error("unauthorized_role");
@@ -109,6 +110,7 @@ export function LoginForm({
       admin: "/products/all-products",
       seo: "/content/blogs",
       hr: "/jobs/careers",
+      pd: "/products/all-products",
     };
 
     const redirectPath = roleRoutes[role] || "/products/all-products";
