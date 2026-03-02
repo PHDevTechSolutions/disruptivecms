@@ -1,6 +1,6 @@
 import admin from "firebase-admin";
 
-if (!admin.apps.length) {
+if (!admin.apps.length && process.env.FIREBASE_ADMIN_PROJECT_ID) {
   admin.initializeApp({
     credential: admin.credential.cert({
       type: process.env.FIREBASE_ADMIN_TYPE,
@@ -17,5 +17,5 @@ if (!admin.apps.length) {
   });
 }
 
-export const adminDb = admin.firestore();
+export const adminDb = admin.apps.length ? admin.firestore() : null;
 export default admin;

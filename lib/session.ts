@@ -16,6 +16,11 @@ export async function writeSessionCookie(
   idToken: string
 ): Promise<SessionUser | null> {
   try {
+    if (!admin.apps.length) {
+      console.error("[Session] Firebase Admin not initialized");
+      return null;
+    }
+
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     const uid = decodedToken.uid;
 
@@ -57,6 +62,11 @@ export async function writeSessionCookie(
 
 export async function getSession(): Promise<SessionUser | null> {
   try {
+    if (!admin.apps.length) {
+      console.error("[Session] Firebase Admin not initialized");
+      return null;
+    }
+
     const cookieStore = await cookies(); // ✅ await here
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
     if (!sessionCookie) return null;
@@ -86,6 +96,11 @@ export async function getSession(): Promise<SessionUser | null> {
 
 export async function validateSession(): Promise<boolean> {
   try {
+    if (!admin.apps.length) {
+      console.error("[Session] Firebase Admin not initialized");
+      return false;
+    }
+
     const cookieStore = await cookies(); // ✅ await here
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
     if (!sessionCookie) return false;
@@ -109,6 +124,11 @@ export async function clearSession(): Promise<void> {
 
 export async function refreshSession(): Promise<boolean> {
   try {
+    if (!admin.apps.length) {
+      console.error("[Session] Firebase Admin not initialized");
+      return false;
+    }
+
     const cookieStore = await cookies(); // ✅ await here
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
     if (!sessionCookie) return false;
