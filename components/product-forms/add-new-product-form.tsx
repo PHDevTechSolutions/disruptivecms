@@ -550,13 +550,23 @@ export default function AddNewProduct({
           return;
         }
 
+        // Get TDS spec mapping to filter specs shown in the form
+        const tdsSpecMapping: Record<string, string[]> = familyData?.tdsSpecMapping || {};
+
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
             .forEach((d) => {
               const data = d.data();
-              (data.items || []).forEach((item: any) => {
+              const groupId = d.id;
+              // Filter items based on TDS spec mapping if it exists
+              const allowedLabels = tdsSpecMapping[groupId];
+              const itemsToShow = allowedLabels
+                ? (data.items || []).filter((item: any) => allowedLabels.includes(item.label))
+                : (data.items || []);
+
+              (itemsToShow).forEach((item: any) => {
                 if (item.label)
                   items.push({
                     id: `${d.id}-${item.label}`,

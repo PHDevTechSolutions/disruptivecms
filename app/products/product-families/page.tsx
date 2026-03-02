@@ -480,7 +480,7 @@ export default function CategoryMaintenance() {
     }
   };
 
-  // ── Bulk upload helpers ───────────────────────────────────────────────────
+  // ── Bulk upload helpers ─────────────────────────��─────────────────────────
 
   /** Upload a raw file (PDF) to Cloudinary and return the secure URL. */
   const uploadRawToCloudinary = async (file: File): Promise<string> => {
@@ -647,7 +647,23 @@ export default function CategoryMaintenance() {
           }
         }
 
-        // ── Step 4: Create ProductFamily ──────────────────────────────────
+        // ── Step 4: Build TDS Spec Mapping ───────────────────────────────
+        // Extract which spec items are relevant based on TDS template fields
+        let tdsSpecMapping: Record<string, string[]> = {};
+        try {
+          const { buildTdsSpecMapping } = await import("@/lib/fillTdsPdf");
+          const specGroupsForMapping = parsed.groups.map((g) => ({
+            id: groupCache.get(g.name.toUpperCase().trim())?.id || "",
+            name: g.name,
+            items: g.items.map((label) => ({ label })),
+          }));
+          tdsSpecMapping = await buildTdsSpecMapping(pdfUrl, specGroupsForMapping);
+          appendLog(idx, "info", "TDS spec mapping computed");
+        } catch (e) {
+          appendLog(idx, "warn", "Could not compute TDS spec mapping (will use all specs)");
+        }
+
+        // ── Step 5: Create ProductFamily ──────────────────────────────────
         await addDoc(collection(db, "productfamilies"), {
           title: parsed.title,
           description: "",
@@ -655,6 +671,7 @@ export default function CategoryMaintenance() {
           specifications: specGroupIds,
           imageUrl: "",
           tdsTemplate: pdfUrl,
+          tdsSpecMapping: tdsSpecMapping, // Store filtered spec items per group
           isActive: true,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
