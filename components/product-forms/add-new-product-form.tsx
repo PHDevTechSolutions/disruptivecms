@@ -328,735 +328,8 @@ function TdsBadge({
 }
 
 // ─── TdsInteractiveFormFiller ─────────────────────────────────────────────────
-
-interface TdsFormFillerProps {
-  tdsTemplateUrl: string;
-  selectedCatName: string;
-  tdsStatus: TdsStatus;
-  itemDescription: string;
-  ecoItemCode: string;
-  litItemCode: string;
-  availableBrands: MasterItem[];
-  selectedBrands: string[];
-  availableSpecs: SpecItem[];
-  specValues: Record<string, string>;
-  setItemDescription: (v: string) => void;
-  setEcoItemCode: (v: string) => void;
-  setLitItemCode: (v: string) => void;
-  setSpecValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  mainImage: File | null;
-  existingMainImage: string;
-  setMainImage: (f: File | null) => void;
-  setExistingMainImage: (v: string) => void;
-  dimensionDrawingImage: File | null;
-  existingDimensionDrawingImage: string;
-  setDimensionDrawingImage: (f: File | null) => void;
-  setExistingDimensionDrawingImage: (v: string) => void;
-  mountingHeightImage: File | null;
-  existingMountingHeightImage: string;
-  setMountingHeightImage: (f: File | null) => void;
-  setExistingMountingHeightImage: (v: string) => void;
-  driverCompatibilityImage: File | null;
-  existingDriverCompatibilityImage: string;
-  setDriverCompatibilityImage: (f: File | null) => void;
-  setExistingDriverCompatibilityImage: (v: string) => void;
-  baseImage: File | null;
-  existingBaseImage: string;
-  setBaseImage: (f: File | null) => void;
-  setExistingBaseImage: (v: string) => void;
-  illuminanceLevelImage: File | null;
-  existingIlluminanceLevelImage: string;
-  setIlluminanceLevelImage: (f: File | null) => void;
-  setExistingIlluminanceLevelImage: (v: string) => void;
-  wiringDiagramImage: File | null;
-  existingWiringDiagramImage: string;
-  setWiringDiagramImage: (f: File | null) => void;
-  setExistingWiringDiagramImage: (v: string) => void;
-  installationImage: File | null;
-  existingInstallationImage: string;
-  setInstallationImage: (f: File | null) => void;
-  setExistingInstallationImage: (v: string) => void;
-  wiringLayoutImage: File | null;
-  existingWiringLayoutImage: string;
-  setWiringLayoutImage: (f: File | null) => void;
-  setExistingWiringLayoutImage: (v: string) => void;
-  terminalLayoutImage: File | null;
-  existingTerminalLayoutImage: string;
-  setTerminalLayoutImage: (f: File | null) => void;
-  setExistingTerminalLayoutImage: (v: string) => void;
-  accessoriesImage: File | null;
-  existingAccessoriesImage: string;
-  setAccessoriesImage: (f: File | null) => void;
-  setExistingAccessoriesImage: (v: string) => void;
-}
-
-function TdsInteractiveFormFiller(props: TdsFormFillerProps) {
-  const {
-    tdsTemplateUrl,
-    selectedCatName,
-    tdsStatus,
-    itemDescription,
-    ecoItemCode,
-    litItemCode,
-    availableBrands,
-    selectedBrands,
-    availableSpecs,
-    specValues,
-    setItemDescription,
-    setEcoItemCode,
-    setLitItemCode,
-    setSpecValues,
-    mainImage,
-    existingMainImage,
-    setMainImage,
-    setExistingMainImage,
-    dimensionDrawingImage,
-    existingDimensionDrawingImage,
-    setDimensionDrawingImage,
-    setExistingDimensionDrawingImage,
-    mountingHeightImage,
-    existingMountingHeightImage,
-    setMountingHeightImage,
-    setExistingMountingHeightImage,
-    driverCompatibilityImage,
-    existingDriverCompatibilityImage,
-    setDriverCompatibilityImage,
-    setExistingDriverCompatibilityImage,
-    baseImage,
-    existingBaseImage,
-    setBaseImage,
-    setExistingBaseImage,
-    illuminanceLevelImage,
-    existingIlluminanceLevelImage,
-    setIlluminanceLevelImage,
-    setExistingIlluminanceLevelImage,
-    wiringDiagramImage,
-    existingWiringDiagramImage,
-    setWiringDiagramImage,
-    setExistingWiringDiagramImage,
-    installationImage,
-    existingInstallationImage,
-    setInstallationImage,
-    setExistingInstallationImage,
-    wiringLayoutImage,
-    existingWiringLayoutImage,
-    setWiringLayoutImage,
-    setExistingWiringLayoutImage,
-    terminalLayoutImage,
-    existingTerminalLayoutImage,
-    setTerminalLayoutImage,
-    setExistingTerminalLayoutImage,
-    accessoriesImage,
-    existingAccessoriesImage,
-    setAccessoriesImage,
-    setExistingAccessoriesImage,
-  } = props;
-
-  const [pageDataUrls, setPageDataUrls] = useState<string[]>([]);
-  const [overlays, setOverlays] = useState<OverlayField[]>([]);
-  const [pageDims, setPageDims] = useState<{ w: number; h: number }[]>([]);
-  const [pdfLoading, setPdfLoading] = useState(true);
-  const [pdfError, setPdfError] = useState("");
-
-  // ── Fallback stores for fields that don't map to a named parent state ───────
-  const [localTextValues, setLocalTextValues] = useState<
-    Record<string, string>
-  >({});
-  const [localImageFiles, setLocalImageFiles] = useState<
-    Record<string, File | null>
-  >({});
-
-  // Re-parse only when the template URL itself changes
-  useEffect(() => {
-    let cancelled = false;
-    setPdfLoading(true);
-    setPdfError("");
-    setPageDataUrls([]);
-    setOverlays([]);
-
-    (async () => {
-      try {
-        const resp = await fetch(tdsTemplateUrl);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const arrayBuf = await resp.arrayBuffer();
-
-        const {
-          PDFDocument,
-          PDFName,
-          PDFRef,
-          PDFArray,
-          PDFTextField,
-          PDFButton,
-        } = await import("pdf-lib");
-
-        const pdfDoc = await PDFDocument.load(new Uint8Array(arrayBuf), {
-          ignoreEncryption: true,
-          updateMetadata: false,
-        });
-        const form = pdfDoc.getForm();
-        const docPages = pdfDoc.getPages();
-
-        const refToPageIdx = new Map<number, number>();
-        docPages.forEach((page, pi) => {
-          try {
-            const rawAnnots = page.node.get(PDFName.of("Annots"));
-            if (!rawAnnots) return;
-            const annotArr = pdfDoc.context.lookupMaybe(rawAnnots, PDFArray);
-            annotArr?.asArray().forEach((item: any) => {
-              if (item instanceof PDFRef)
-                refToPageIdx.set(item.objectNumber, pi);
-            });
-          } catch {}
-        });
-
-        const pdfjsLib = await import("pdfjs-dist");
-        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-            "pdfjs-dist/build/pdf.worker.mjs",
-            import.meta.url,
-          ).toString();
-        }
-        const pdfJsDoc = await pdfjsLib.getDocument({
-          data: new Uint8Array(arrayBuf),
-        }).promise;
-
-        const RENDER_SCALE = 1.8;
-        const dataUrls: string[] = [];
-        const dims: { w: number; h: number }[] = [];
-
-        for (let i = 1; i <= pdfJsDoc.numPages; i++) {
-          const jsPage = await pdfJsDoc.getPage(i);
-          const vp = jsPage.getViewport({ scale: RENDER_SCALE });
-          const c = document.createElement("canvas");
-          c.width = Math.floor(vp.width);
-          c.height = Math.floor(vp.height);
-          await jsPage.render({
-            canvas: c,
-            canvasContext: c.getContext("2d")!,
-            viewport: vp,
-          }).promise;
-          dataUrls.push(c.toDataURL("image/jpeg", 0.93));
-          dims.push({ w: c.width, h: c.height });
-        }
-
-        const fields = form.getFields();
-        const result: OverlayField[] = [];
-
-        // Log all field names so you can see exactly what the PDF contains
-        console.log(
-          "[TDS Fields]",
-          fields.map((f) => ({ name: f.getName(), type: f.constructor.name })),
-        );
-
-        for (const field of fields) {
-          const widgets = field.acroField.getWidgets();
-          for (const widget of widgets) {
-            const rect = widget.getRectangle();
-            let pi = 0;
-            try {
-              const pRef = widget.P();
-              if (pRef instanceof PDFRef) {
-                const found = docPages.findIndex((p) => p.ref === pRef);
-                pi =
-                  found >= 0
-                    ? found
-                    : (refToPageIdx.get(pRef.objectNumber) ?? 0);
-              }
-            } catch {}
-
-            const libPage = docPages[pi];
-            const pdfSz = libPage.getSize();
-            const canvasDim = dims[pi];
-            if (!canvasDim) continue;
-
-            const scaleX = canvasDim.w / pdfSz.width;
-            const scaleY = canvasDim.h / pdfSz.height;
-            const cx = rect.x * scaleX;
-            const cy = (pdfSz.height - rect.y - rect.height) * scaleY;
-            const cw = rect.width * scaleX;
-            const ch = rect.height * scaleY;
-
-            const isText = field instanceof PDFTextField;
-            const isImg = field instanceof PDFButton;
-            if (!isText && !isImg) continue;
-
-            result.push({
-              id: `${field.getName()}_p${pi}_${Math.round(cx)}`,
-              name: field.getName(),
-              type: isImg ? "image" : "text",
-              pageIndex: pi,
-              xPct: (cx / canvasDim.w) * 100,
-              yPct: (cy / canvasDim.h) * 100,
-              wPct: (cw / canvasDim.w) * 100,
-              hPct: (ch / canvasDim.h) * 100,
-              multiline: isText
-                ? (
-                    field as unknown as { isMultiline: () => boolean }
-                  ).isMultiline()
-                : false,
-            });
-          }
-        }
-
-        if (!cancelled) {
-          setPageDataUrls(dataUrls);
-          setPageDims(dims);
-          setOverlays(result);
-          setPdfLoading(false);
-        }
-      } catch (err: any) {
-        console.error("[TdsInteractiveFormFiller]", err);
-        if (!cancelled) {
-          setPdfError(err?.message || "Failed to load PDF template");
-          setPdfLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tdsTemplateUrl]);
-
-  // ── Normalise a field name for matching ────────────────────────────────────
-  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-.()\[\]/\\]/g, "");
-
-  // ── Resolve a text field value from parent state or local fallback ─────────
-  const resolveText = useCallback(
-    (name: string): string => {
-      const n = norm(name);
-      if (/itemdescription|productname|^description$|^prodname$/.test(n))
-        return itemDescription;
-      if (/ecoitemcode|ecocode/.test(n)) return ecoItemCode;
-      if (/lititemcode|litcode/.test(n)) return litItemCode;
-      if (/brand|brandname/.test(n))
-        return (
-          availableBrands.find((b) => b.id === selectedBrands[0])?.name ?? ""
-        );
-
-      const spec = availableSpecs.find(
-        (s) => norm(s.label) === n || s.label === name,
-      );
-      if (spec) return specValues[`${spec.specGroupId}-${spec.label}`] ?? "";
-
-      // Fallback to local store for unrecognized field names
-      return localTextValues[name] ?? "";
-    },
-    [
-      itemDescription,
-      ecoItemCode,
-      litItemCode,
-      availableBrands,
-      selectedBrands,
-      availableSpecs,
-      specValues,
-      localTextValues,
-    ],
-  );
-
-  // ── Apply a text value to parent state or local fallback ──────────────────
-  const applyText = useCallback(
-    (name: string, value: string) => {
-      const n = norm(name);
-      if (/itemdescription|productname|^description$|^prodname$/.test(n)) {
-        setItemDescription(value);
-        return;
-      }
-      if (/ecoitemcode|ecocode/.test(n)) {
-        setEcoItemCode(value);
-        return;
-      }
-      if (/lititemcode|litcode/.test(n)) {
-        setLitItemCode(value);
-        return;
-      }
-
-      const spec = availableSpecs.find(
-        (s) => norm(s.label) === n || s.label === name,
-      );
-      if (spec) {
-        setSpecValues((p) => ({
-          ...p,
-          [`${spec.specGroupId}-${spec.label}`]: value,
-        }));
-        return;
-      }
-
-      // Fallback: store locally so the field stays editable
-      setLocalTextValues((p) => ({ ...p, [name]: value }));
-    },
-    [
-      setItemDescription,
-      setEcoItemCode,
-      setLitItemCode,
-      availableSpecs,
-      setSpecValues,
-    ],
-  );
-
-  // ── Resolve an image mapping — always returns a valid ImgMapping ──────────
-  const resolveImage = useCallback(
-    (name: string): ImgMapping => {
-      const n = norm(name);
-
-      // Named mappings — ordered specific → generic
-      const namedEntries: [RegExp, ImgMapping][] = [
-        // Dimensional drawing
-        [
-          /dimension(al)?draw|dimdr|dimensiondrawing/,
-          {
-            file: dimensionDrawingImage,
-            url: existingDimensionDrawingImage,
-            onDrop: setDimensionDrawingImage,
-            onClear: () => {
-              setDimensionDrawingImage(null);
-              setExistingDimensionDrawingImage("");
-            },
-          },
-        ],
-        // Mounting height
-        [
-          /mountingheight|recommendedmount|mountheight/,
-          {
-            file: mountingHeightImage,
-            url: existingMountingHeightImage,
-            onDrop: setMountingHeightImage,
-            onClear: () => {
-              setMountingHeightImage(null);
-              setExistingMountingHeightImage("");
-            },
-          },
-        ],
-        // Driver compatibility
-        [
-          /drivercompat|drivercomp|compatdriver/,
-          {
-            file: driverCompatibilityImage,
-            url: existingDriverCompatibilityImage,
-            onDrop: setDriverCompatibilityImage,
-            onClear: () => {
-              setDriverCompatibilityImage(null);
-              setExistingDriverCompatibilityImage("");
-            },
-          },
-        ],
-        // Illuminance level
-        [
-          /illuminance|luxlevel|illuminancelevel/,
-          {
-            file: illuminanceLevelImage,
-            url: existingIlluminanceLevelImage,
-            onDrop: setIlluminanceLevelImage,
-            onClear: () => {
-              setIlluminanceLevelImage(null);
-              setExistingIlluminanceLevelImage("");
-            },
-          },
-        ],
-        // Wiring diagram (before generic wiring)
-        [
-          /wiringdiagram|wiringschematic|electricaldiagram/,
-          {
-            file: wiringDiagramImage,
-            url: existingWiringDiagramImage,
-            onDrop: setWiringDiagramImage,
-            onClear: () => {
-              setWiringDiagramImage(null);
-              setExistingWiringDiagramImage("");
-            },
-          },
-        ],
-        // Wiring layout
-        [
-          /wiringlayout|wirelayout|wiringplan/,
-          {
-            file: wiringLayoutImage,
-            url: existingWiringLayoutImage,
-            onDrop: setWiringLayoutImage,
-            onClear: () => {
-              setWiringLayoutImage(null);
-              setExistingWiringLayoutImage("");
-            },
-          },
-        ],
-        // Terminal layout
-        [
-          /terminallayout|terminalblock|terminalplan/,
-          {
-            file: terminalLayoutImage,
-            url: existingTerminalLayoutImage,
-            onDrop: setTerminalLayoutImage,
-            onClear: () => {
-              setTerminalLayoutImage(null);
-              setExistingTerminalLayoutImage("");
-            },
-          },
-        ],
-        // Installation
-        [
-          /installation|installguide|installstep/,
-          {
-            file: installationImage,
-            url: existingInstallationImage,
-            onDrop: setInstallationImage,
-            onClear: () => {
-              setInstallationImage(null);
-              setExistingInstallationImage("");
-            },
-          },
-        ],
-        // Base
-        [
-          /^base$|basetype|socketbase/,
-          {
-            file: baseImage,
-            url: existingBaseImage,
-            onDrop: setBaseImage,
-            onClear: () => {
-              setBaseImage(null);
-              setExistingBaseImage("");
-            },
-          },
-        ],
-        // Accessories
-        [
-          /accessor|addon/,
-          {
-            file: accessoriesImage,
-            url: existingAccessoriesImage,
-            onDrop: setAccessoriesImage,
-            onClear: () => {
-              setAccessoriesImage(null);
-              setExistingAccessoriesImage("");
-            },
-          },
-        ],
-        // Main product image — broadest, must be last
-        [
-          /productimage|mainimage|productphoto|^photo$|^image$|^img$|^picture$|^pic$|^button\d*$|^image\d+$|^photo\d+$/,
-          {
-            file: mainImage,
-            url: existingMainImage,
-            onDrop: setMainImage,
-            onClear: () => {
-              setMainImage(null);
-              setExistingMainImage("");
-            },
-          },
-        ],
-      ];
-
-      for (const [rx, mapping] of namedEntries) {
-        if (rx.test(n)) return mapping;
-      }
-
-      // ── Fallback: local state keyed by exact field name ──────────────────
-      // This ensures every image button in the PDF is interactive, even with
-      // generic names like "Button1", "Image2", etc.
-      const localFile = localImageFiles[name] ?? null;
-      return {
-        file: localFile,
-        url: "",
-        onDrop: (f: File) => setLocalImageFiles((p) => ({ ...p, [name]: f })),
-        onClear: () => setLocalImageFiles((p) => ({ ...p, [name]: null })),
-      };
-    },
-    [
-      mainImage,
-      existingMainImage,
-      setMainImage,
-      setExistingMainImage,
-      dimensionDrawingImage,
-      existingDimensionDrawingImage,
-      setDimensionDrawingImage,
-      setExistingDimensionDrawingImage,
-      mountingHeightImage,
-      existingMountingHeightImage,
-      setMountingHeightImage,
-      setExistingMountingHeightImage,
-      driverCompatibilityImage,
-      existingDriverCompatibilityImage,
-      setDriverCompatibilityImage,
-      setExistingDriverCompatibilityImage,
-      baseImage,
-      existingBaseImage,
-      setBaseImage,
-      setExistingBaseImage,
-      illuminanceLevelImage,
-      existingIlluminanceLevelImage,
-      setIlluminanceLevelImage,
-      setExistingIlluminanceLevelImage,
-      wiringDiagramImage,
-      existingWiringDiagramImage,
-      setWiringDiagramImage,
-      setExistingWiringDiagramImage,
-      installationImage,
-      existingInstallationImage,
-      setInstallationImage,
-      setExistingInstallationImage,
-      wiringLayoutImage,
-      existingWiringLayoutImage,
-      setWiringLayoutImage,
-      setExistingWiringLayoutImage,
-      terminalLayoutImage,
-      existingTerminalLayoutImage,
-      setTerminalLayoutImage,
-      setExistingTerminalLayoutImage,
-      accessoriesImage,
-      existingAccessoriesImage,
-      setAccessoriesImage,
-      setExistingAccessoriesImage,
-      localImageFiles,
-    ],
-  );
-
-  if (pdfLoading) {
-    return (
-      <Card className="border-primary/20">
-        <CardContent className="flex flex-col items-center justify-center gap-3 py-20">
-          <div className="relative">
-            <FileText className="h-10 w-10 text-primary/20" />
-            <Loader2 className="h-4 w-4 animate-spin text-primary absolute -top-1 -right-1" />
-          </div>
-          <p className="text-sm font-semibold text-muted-foreground">
-            Preparing TDS form…
-          </p>
-          <p className="text-xs text-muted-foreground/60">
-            Parsing fields from the {selectedCatName} template
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (pdfError) {
-    return (
-      <Card className="border-destructive/20">
-        <CardContent className="flex flex-col items-center gap-3 py-12">
-          <AlertCircle className="h-6 w-6 text-destructive" />
-          <p className="text-sm text-destructive font-semibold">{pdfError}</p>
-          <p className="text-xs text-muted-foreground text-center max-w-xs">
-            Could not load the PDF template. Use the General Information section
-            below to fill product data manually.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="overflow-hidden border-primary/25 shadow-md">
-      <CardHeader className="py-3 px-4 bg-gradient-to-r from-primary/8 to-transparent border-b border-primary/10">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <FileText className="h-4 w-4 text-primary" />
-          Technical Data Sheet
-          <span className="text-[10px] font-normal text-muted-foreground ml-1">
-            — fill directly on the form
-          </span>
-          <div className="ml-auto flex items-center gap-2.5">
-            <TdsBadge tdsStatus={tdsStatus} tdsTemplateUrl={tdsTemplateUrl} />
-            <span className="hidden sm:block text-[10px] font-normal text-muted-foreground">
-              {selectedCatName}
-            </span>
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="flex items-center gap-5 px-4 py-2 bg-muted/30 border-b text-[10px] text-muted-foreground select-none">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-3.5 h-3.5 rounded-sm bg-blue-100 border border-blue-400/60" />
-            Text field — click to type
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-3.5 h-3.5 rounded-sm bg-amber-50 border border-dashed border-amber-400/70" />
-            Image slot — click or drop
-          </span>
-          <span className="ml-auto hidden sm:block opacity-60">
-            Scroll to see all pages
-          </span>
-        </div>
-        <div className="overflow-auto bg-neutral-300 dark:bg-neutral-800 max-h-[88vh]">
-          {pageDataUrls.map((dataUrl, pageIdx) => {
-            const pageFields = overlays.filter((f) => f.pageIndex === pageIdx);
-            const dim = pageDims[pageIdx];
-            return (
-              <div key={pageIdx} className="py-4 flex justify-center">
-                <div
-                  className="relative shadow-2xl"
-                  style={{
-                    width: "100%",
-                    maxWidth: dim ? `${dim.w}px` : "100%",
-                    aspectRatio: dim ? `${dim.w} / ${dim.h}` : "210 / 297",
-                  }}
-                >
-                  <img
-                    src={dataUrl}
-                    className="absolute inset-0 w-full h-full pointer-events-none select-none block"
-                    alt={`TDS page ${pageIdx + 1}`}
-                    draggable={false}
-                  />
-                  {pageFields.map((field) => {
-                    const overlayStyle: React.CSSProperties = {
-                      position: "absolute",
-                      left: `${field.xPct}%`,
-                      top: `${field.yPct}%`,
-                      width: `${field.wPct}%`,
-                      height: `${field.hPct}%`,
-                    };
-
-                    if (field.type === "text") {
-                      const val = resolveText(field.name);
-                      return (
-                        <div key={field.id} style={overlayStyle}>
-                          {field.multiline ? (
-                            <textarea
-                              value={val}
-                              onChange={(e) =>
-                                applyText(field.name, e.target.value)
-                              }
-                              className="w-full h-full resize-none bg-blue-50/55 hover:bg-blue-50/80 border border-blue-400/50 hover:border-blue-500/70 focus:border-blue-600 focus:bg-blue-50/90 text-gray-800 dark:text-gray-900 px-[2%] py-[1%] focus:outline-none transition-colors font-medium leading-tight"
-                              style={{ fontSize: "clamp(6px, 1.1vw, 11px)" }}
-                            />
-                          ) : (
-                            <input
-                              type="text"
-                              value={val}
-                              onChange={(e) =>
-                                applyText(field.name, e.target.value)
-                              }
-                              className="w-full h-full bg-blue-50/55 hover:bg-blue-50/80 border border-blue-400/50 hover:border-blue-500/70 focus:border-blue-600 focus:bg-blue-50/90 text-gray-800 dark:text-gray-900 px-[3%] focus:outline-none transition-colors font-medium"
-                              style={{ fontSize: "clamp(6px, 1.1vw, 11px)" }}
-                            />
-                          )}
-                        </div>
-                      );
-                    }
-
-                    // Image field — resolveImage always returns a valid mapping
-                    const mapping = resolveImage(field.name);
-                    return (
-                      <TdsImageOverlay
-                        key={field.id}
-                        style={overlayStyle}
-                        mapping={mapping}
-                        fieldName={field.name}
-                      />
-                    );
-                  })}
-                  {pageDataUrls.length > 1 && (
-                    <div className="absolute bottom-3 right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full pointer-events-none tracking-wide">
-                      {pageIdx + 1} / {pageDataUrls.length}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// REMOVED: This component is no longer used. TDS PDF generation occurs on publish.
+// Specs now auto-filter based on TDS template AcroForm fields.
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -1277,13 +550,23 @@ export default function AddNewProduct({
           return;
         }
 
+        // Get TDS spec mapping to filter specs shown in the form
+        const tdsSpecMapping: Record<string, string[]> = familyData?.tdsSpecMapping || {};
+
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
             .forEach((d) => {
               const data = d.data();
-              (data.items || []).forEach((item: any) => {
+              const groupId = d.id;
+              // Filter items based on TDS spec mapping if it exists
+              const allowedLabels = tdsSpecMapping[groupId];
+              const itemsToShow = allowedLabels
+                ? (data.items || []).filter((item: any) => allowedLabels.includes(item.label))
+                : (data.items || []);
+
+              (itemsToShow).forEach((item: any) => {
                 if (item.label)
                   items.push({
                     id: `${d.id}-${item.label}`,
@@ -1615,6 +898,16 @@ export default function AddNewProduct({
             brand: brandName,
             technicalSpecs,
             mainImageUrl: mainUrl || undefined,
+            dimensionDrawingUrl: existingDimensionDrawingImage || undefined,
+            mountingHeightUrl: existingMountingHeightImage || undefined,
+            driverCompatibilityUrl: existingDriverCompatibilityImage || undefined,
+            baseImageUrl: existingBaseImage || undefined,
+            illuminanceLevelUrl: existingIlluminanceLevelImage || undefined,
+            wiringDiagramUrl: existingWiringDiagramImage || undefined,
+            installationUrl: existingInstallationImage || undefined,
+            wiringLayoutUrl: existingWiringLayoutImage || undefined,
+            terminalLayoutUrl: existingTerminalLayoutImage || undefined,
+            accessoriesUrl: existingAccessoriesImage || undefined,
             cloudinaryUploadFn: uploadPdfToCloudinary,
           });
           if (savedDocId && generatedTdsUrl.startsWith("http")) {
@@ -1858,70 +1151,23 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* TDS Interactive Form */}
+        {/* TDS PDF Generation Note */}
         {tdsTemplateUrl && (
-          <TdsInteractiveFormFiller
-            tdsTemplateUrl={tdsTemplateUrl}
-            selectedCatName={selectedCatName}
-            tdsStatus={tdsStatus}
-            itemDescription={itemDescription}
-            ecoItemCode={ecoItemCode}
-            litItemCode={litItemCode}
-            availableBrands={availableBrands}
-            selectedBrands={selectedBrands}
-            availableSpecs={availableSpecs}
-            specValues={specValues}
-            setItemDescription={setItemDescription}
-            setEcoItemCode={setEcoItemCode}
-            setLitItemCode={setLitItemCode}
-            setSpecValues={setSpecValues}
-            mainImage={mainImage}
-            existingMainImage={existingMainImage}
-            setMainImage={setMainImage}
-            setExistingMainImage={setExistingMainImage}
-            dimensionDrawingImage={dimensionDrawingImage}
-            existingDimensionDrawingImage={existingDimensionDrawingImage}
-            setDimensionDrawingImage={setDimensionDrawingImage}
-            setExistingDimensionDrawingImage={setExistingDimensionDrawingImage}
-            mountingHeightImage={mountingHeightImage}
-            existingMountingHeightImage={existingMountingHeightImage}
-            setMountingHeightImage={setMountingHeightImage}
-            setExistingMountingHeightImage={setExistingMountingHeightImage}
-            driverCompatibilityImage={driverCompatibilityImage}
-            existingDriverCompatibilityImage={existingDriverCompatibilityImage}
-            setDriverCompatibilityImage={setDriverCompatibilityImage}
-            setExistingDriverCompatibilityImage={
-              setExistingDriverCompatibilityImage
-            }
-            baseImage={baseImage}
-            existingBaseImage={existingBaseImage}
-            setBaseImage={setBaseImage}
-            setExistingBaseImage={setExistingBaseImage}
-            illuminanceLevelImage={illuminanceLevelImage}
-            existingIlluminanceLevelImage={existingIlluminanceLevelImage}
-            setIlluminanceLevelImage={setIlluminanceLevelImage}
-            setExistingIlluminanceLevelImage={setExistingIlluminanceLevelImage}
-            wiringDiagramImage={wiringDiagramImage}
-            existingWiringDiagramImage={existingWiringDiagramImage}
-            setWiringDiagramImage={setWiringDiagramImage}
-            setExistingWiringDiagramImage={setExistingWiringDiagramImage}
-            installationImage={installationImage}
-            existingInstallationImage={existingInstallationImage}
-            setInstallationImage={setInstallationImage}
-            setExistingInstallationImage={setExistingInstallationImage}
-            wiringLayoutImage={wiringLayoutImage}
-            existingWiringLayoutImage={existingWiringLayoutImage}
-            setWiringLayoutImage={setWiringLayoutImage}
-            setExistingWiringLayoutImage={setExistingWiringLayoutImage}
-            terminalLayoutImage={terminalLayoutImage}
-            existingTerminalLayoutImage={existingTerminalLayoutImage}
-            setTerminalLayoutImage={setTerminalLayoutImage}
-            setExistingTerminalLayoutImage={setExistingTerminalLayoutImage}
-            accessoriesImage={accessoriesImage}
-            existingAccessoriesImage={existingAccessoriesImage}
-            setAccessoriesImage={setAccessoriesImage}
-            setExistingAccessoriesImage={setExistingAccessoriesImage}
-          />
+          <Card className="border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-3">
+                <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                    TDS PDF will be auto-generated on publish
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Fill in the form below with product details and media. The TDS PDF will be created from the selected product family template.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Media Assets */}
@@ -1935,7 +1181,7 @@ export default function AddNewProduct({
               Media Assets
               {tdsTemplateUrl && (
                 <span className="text-[10px] font-normal text-muted-foreground ml-1">
-                  (main photo &amp; drawings → fill in TDS form above)
+                  (uploaded to TDS PDF on publish)
                 </span>
               )}
               <div className="ml-auto flex items-center gap-2">
@@ -1963,9 +1209,7 @@ export default function AddNewProduct({
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
-                    {tdsTemplateUrl
-                      ? "Main Image (synced with TDS)"
-                      : "Main Image"}
+                    Main Image
                   </Label>
                   <div
                     {...mainRoot()}
@@ -2509,7 +1753,7 @@ export default function AddNewProduct({
         )}
       </div>
 
-      {/* ═══════════════════════ SIDEBAR ═══════════════════════════ */}
+      {/* ═══════════════════════ SIDEBAR ═════════════════���═════════ */}
       <div className="space-y-6">
         <Card>
           <CardHeader>

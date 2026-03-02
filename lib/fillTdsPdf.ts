@@ -28,6 +28,60 @@ export interface FillTdsPdfParams {
   cloudinaryUploadFn: (file: File) => Promise<string>;
 }
 
+/** Extract all AcroForm field names from a PDF template for matching specs. */
+export async function extractTdsTemplateFields(templateUrl: string): Promise<string[]> {
+  try {
+    const res = await fetch(templateUrl);
+    if (!res.ok) return [];
+    const pdfDoc = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()), {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    return fields.map((f) => f.getName());
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Build a mapping of spec group ID → array of relevant spec item labels
+ * based on TDS template AcroForm field names.
+ * 
+ * This filters which specs appear in the add-new-product form for a given
+ * product family. Only specs whose labels match TDS field names are included.
+ */
+export async function buildTdsSpecMapping(
+  templateUrl: string,
+  specGroups: Array<{ id: string; name: string; items: Array<{ label: string }> }>
+): Promise<Record<string, string[]>> {
+  const tdsFields = await extractTdsTemplateFields(templateUrl);
+  if (tdsFields.length === 0) {
+    // No fields found - include all specs
+    return Object.fromEntries(
+      specGroups.map((g) => [g.id, g.items.map((i) => i.label)])
+    );
+  }
+
+  const normalizeStr = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const mapping: Record<string, string[]> = {};
+
+  for (const group of specGroups) {
+    const relevantItems = group.items.filter((item) => {
+      const itemNorm = normalizeStr(item.label);
+      return tdsFields.some(
+        (field) =>
+          normalizeStr(field) === itemNorm ||
+          normalizeStr(field).includes(itemNorm)
+      );
+    });
+    mapping[group.id] = relevantItems.map((i) => i.label);
+  }
+
+  return mapping;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -272,10 +326,12 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
       const left = extraImages[i];
       const right = extraImages[i + 1];
 
-      pg.drawText(left.label, { x: 34, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
-      await drawImage(pdfDoc, pg, left.url, 34, 150, 255, 590);
+      if (left && left.url) {
+        pg.drawText(left.label, { x: 34, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
+        await drawImage(pdfDoc, pg, left.url, 34, 150, 255, 590);
+      }
 
-      if (right) {
+      if (right && right.url) {
         pg.drawText(right.label, { x: 310, y: 760, size: 9, font: labelFont, color: rgb(0, 0, 0) });
         await drawImage(pdfDoc, pg, right.url, 310, 150, 255, 590);
       }
