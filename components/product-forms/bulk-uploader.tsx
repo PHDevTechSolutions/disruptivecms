@@ -502,6 +502,15 @@ async function normalizeShopifyProduct(
   const uploaded = await uploadManyUrls(sortedImages.map((img) => img.src));
   const mainImage = uploaded[0] ?? "";
   const rawImage = uploaded[1] ?? "";
+  
+  // Auto-match technical drawing images from gallery using imageMapping utility
+  const { autoMatchImages } = await import("@/lib/imageMapping");
+  const imageFiles = uploaded.slice(2).map((url, idx) => ({
+    url,
+    name: product.images[idx + 2]?.alt || `image-${idx}`,
+  }));
+  const imageMatches = autoMatchImages(imageFiles);
+  
   const galleryImages = uploaded.slice(2);
 
   log(`  → Extracting specs...`);
@@ -526,6 +535,17 @@ async function normalizeShopifyProduct(
     rawImage,
     qrCodeImage: "",
     galleryImages,
+    // Auto-matched technical drawing images
+    dimensionDrawingImage: imageMatches.dimensionalDrawing || "",
+    mountingHeightImage: imageMatches.mountingHeight || "",
+    driverCompatibilityImage: imageMatches.driverCompatibility || "",
+    baseImage: imageMatches.base || "",
+    illuminanceLevelImage: imageMatches.illuminanceLevel || "",
+    wiringDiagramImage: imageMatches.wiringDiagram || "",
+    installationImage: imageMatches.installation || "",
+    wiringLayoutImage: imageMatches.wiringLayout || "",
+    terminalLayoutImage: imageMatches.terminalLayout || "",
+    accessoriesImage: imageMatches.accessories || "",
     website: [] as string[],
     websites: [] as string[],
     productFamily,
@@ -1067,7 +1087,19 @@ export default function BulkUploader({
           salePrice: 0,
           mainImage: p.cloudinaryUrl || "",
           qrCodeImage: "",
+          rawImage: "",
           galleryImages: [],
+          // Technical drawing images (empty for Excel imports unless specified in additional columns)
+          dimensionDrawingImage: "",
+          mountingHeightImage: "",
+          driverCompatibilityImage: "",
+          baseImage: "",
+          illuminanceLevelImage: "",
+          wiringDiagramImage: "",
+          installationImage: "",
+          wiringLayoutImage: "",
+          terminalLayoutImage: "",
+          accessoriesImage: "",
           productFamily: p.category,
           website: [], // no website assigned
           websites: [], // no website assigned

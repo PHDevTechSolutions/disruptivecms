@@ -82,6 +82,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
+import { autoMatchImages } from "@/lib/imageMapping";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,8 @@ interface FileStatus {
   title: string;
   logs: LogEntry[];
   pdfUrl?: string;
+  imageFiles: File[];
+  imageUrls: Record<string, string>;
   expanded: boolean;
 }
 
@@ -386,15 +389,23 @@ export default function CategoryMaintenance() {
     getInputProps: pdfInput,
     isDragActive: isPdfDragActive,
   } = useDropzone({
-    accept: { "application/pdf": [".pdf"] },
+    accept: { 
+      "application/pdf": [".pdf"],
+      "image/*": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+    },
     multiple: true,
     onDrop: (accepted, rejected) => {
       if (rejected.length > 0) {
-        toast.error(`${rejected.length} file(s) rejected — PDF only`);
+        toast.error(`${rejected.length} file(s) rejected — PDF and images only`);
       }
       if (accepted.length === 0) return;
 
-      const newEntries: FileStatus[] = accepted.map((f) => ({
+      // Separate PDFs from images
+      const pdfFiles = accepted.filter((f) => f.type === "application/pdf");
+      const imageFiles = accepted.filter((f) => f.type.startsWith("image/"));
+
+      // Create entries for PDFs, initialize with empty image arrays
+      const newEntries: FileStatus[] = pdfFiles.map((f) => ({
         file: f,
         step: "idle",
         title: f.name
@@ -402,8 +413,19 @@ export default function CategoryMaintenance() {
           .replace(/[_\-]+/g, " ")
           .toUpperCase(),
         logs: [],
+        imageFiles: [],
+        imageUrls: {},
         expanded: false,
       }));
+
+      // Add images to the first PDF entry (or warn if no PDFs)
+      if (newEntries.length > 0 && imageFiles.length > 0) {
+        newEntries[0].imageFiles = imageFiles;
+      } else if (imageFiles.length > 0 && newEntries.length === 0) {
+        toast.error("Upload at least one PDF along with images");
+        return;
+      }
+
       setFileStatuses((prev) => [...prev, ...newEntries]);
     },
   });
@@ -552,6 +574,21 @@ export default function CategoryMaintenance() {
     const json = await res.json();
     if (!json?.secure_url)
       throw new Error(json?.error?.message ?? "Cloudinary raw upload failed");
+    return json.secure_url as string;
+  };
+
+  /** Upload an image file to Cloudinary and return the secure URL. */
+  const uploadImageToCloudinary = async (file: File): Promise<string> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+      { method: "POST", body: fd },
+    );
+    const json = await res.json();
+    if (!json?.secure_url)
+      throw new Error(json?.error?.message ?? "Cloudinary image upload failed");
     return json.secure_url as string;
   };
 
