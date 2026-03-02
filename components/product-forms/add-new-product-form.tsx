@@ -8,7 +8,6 @@ import {
   collection,
   addDoc,
   serverTimestamp,
-  deleteDoc,
   doc,
   onSnapshot,
   updateDoc,
@@ -28,7 +27,6 @@ import {
   Factory,
   LayoutGrid,
   Zap,
-  Plus,
   Images,
   Link as LinkIcon,
   Search,
@@ -51,6 +49,8 @@ import {
   Grid,
   ShoppingBag,
   ChevronDown,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -74,9 +74,9 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
-import { generateTdsPdf } from "@/lib/generateTdsPdf";
+import { fillTdsPdf } from "@/lib/fillTdsPdf";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Shared types ─────────────────────────────────────────────────────────────
 
 interface MasterItem {
   id: string;
@@ -104,19 +104,41 @@ interface SpecValue {
   specs: { name: string; value: string }[];
 }
 
-// ── Custom Section types ──────────────────────────────────────────────────────
+type TdsStatus =
+  | "idle"
+  | "loading-template"
+  | "generating"
+  | "done"
+  | "error"
+  | "no-template";
+
 type ProductClass = "spf" | "standard" | "";
+
+interface OverlayField {
+  id: string;
+  name: string;
+  type: "text" | "image";
+  pageIndex: number;
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+  multiline: boolean;
+}
+
+interface ImgMapping {
+  file: File | null;
+  url: string;
+  onDrop: (f: File) => void;
+  onClear: () => void;
+}
 
 const PRODUCT_CLASS_OPTIONS: {
   value: ProductClass;
   label: string;
   icon: React.ReactNode;
 }[] = [
-  {
-    value: "spf",
-    label: "SPF Items",
-    icon: <Sparkles className="w-4 h-4" />,
-  },
+  { value: "spf", label: "SPF Items", icon: <Sparkles className="w-4 h-4" /> },
   {
     value: "standard",
     label: "Standard Items",
@@ -145,7 +167,898 @@ const WEBSITE_DOMAINS: Record<string, string> = {
 
 const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"];
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── TdsImageOverlay ──────────────────────────────────────────────────────────
+
+interface TdsImageOverlayProps {
+  style: React.CSSProperties;
+  mapping: ImgMapping | null;
+  fieldName: string;
+}
+
+function TdsImageOverlay({ style, mapping, fieldName }: TdsImageOverlayProps) {
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: (files) => {
+      if (files[0] && mapping) mapping.onDrop(files[0]);
+    },
+    accept: { "image/*": [] },
+    maxFiles: 1,
+    disabled: !mapping,
+  });
+
+  // Stable object URL that properly revokes on change
+  const [previewSrc, setPreviewSrc] = useState<string>("");
+
+  useEffect(() => {
+    let objectUrl = "";
+    if (mapping?.file) {
+      objectUrl = URL.createObjectURL(mapping.file);
+      setPreviewSrc(objectUrl);
+    } else {
+      setPreviewSrc(mapping?.url ?? "");
+    }
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mapping?.file, mapping?.url]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasSrc = Boolean(previewSrc);
+
+  return (
+    <div
+      {...getRootProps()}
+      style={style}
+      className={cn(
+        "group cursor-pointer transition-all overflow-hidden",
+        isDragActive
+          ? "ring-2 ring-inset ring-primary bg-primary/25"
+          : hasSrc
+            ? "hover:ring-2 hover:ring-inset hover:ring-primary/60"
+            : "bg-amber-50/50 border border-dashed border-amber-400/70 hover:bg-amber-50/80 hover:border-amber-500",
+        !mapping && "opacity-40 cursor-not-allowed",
+      )}
+    >
+      <input {...getInputProps()} />
+      {hasSrc ? (
+        <div className="relative w-full h-full">
+          <img
+            src={previewSrc}
+            className="w-full h-full object-contain"
+            alt={fieldName}
+          />
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-all flex items-center justify-center">
+            <span
+              className="opacity-0 group-hover:opacity-100 text-white font-bold uppercase text-center px-1 leading-tight"
+              style={{ fontSize: "clamp(6px, 0.9vw, 10px)" }}
+            >
+              Replace
+            </span>
+          </div>
+          {mapping && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                mapping.onClear();
+              }}
+              className="absolute top-0.5 right-0.5 bg-destructive text-white rounded-full p-0.5 shadow opacity-0 group-hover:opacity-100 transition-opacity z-10"
+            >
+              <X className="h-2 w-2" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center opacity-50 group-hover:opacity-80 transition-opacity gap-0.5">
+          <ImagePlus className="h-3 w-3" />
+          <span
+            className="text-center px-1 font-semibold leading-none hidden group-hover:block"
+            style={{ fontSize: "clamp(5px, 0.8vw, 9px)" }}
+          >
+            {fieldName || "Drop image"}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── TdsBadge ─────────────────────────────────────────────────────────────────
+
+function TdsBadge({
+  tdsStatus,
+  tdsTemplateUrl,
+}: {
+  tdsStatus: TdsStatus;
+  tdsTemplateUrl: string;
+}) {
+  if (tdsStatus === "idle" && tdsTemplateUrl)
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+        <FileText className="h-3 w-3 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+        <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+          TDS template loaded
+        </span>
+      </div>
+    );
+  if (tdsStatus === "loading-template")
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-muted/50 border border-border">
+        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground flex-shrink-0" />
+        <span className="text-[10px] font-medium text-muted-foreground">
+          Loading TDS template…
+        </span>
+      </div>
+    );
+  if (tdsStatus === "no-template")
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+        <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
+          No TDS template on this family
+        </span>
+      </div>
+    );
+  if (tdsStatus === "generating")
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-primary/5 border border-primary/20">
+        <Loader2 className="h-3 w-3 animate-spin text-primary flex-shrink-0" />
+        <span className="text-[10px] font-semibold text-primary">
+          Filling TDS PDF…
+        </span>
+      </div>
+    );
+  if (tdsStatus === "done")
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+        <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+          TDS PDF generated
+        </span>
+      </div>
+    );
+  if (tdsStatus === "error")
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-destructive/10 border border-destructive/20">
+        <AlertCircle className="h-3 w-3 text-destructive flex-shrink-0" />
+        <span className="text-[10px] font-medium text-destructive">
+          TDS generation failed
+        </span>
+      </div>
+    );
+  return null;
+}
+
+// ─── TdsInteractiveFormFiller ─────────────────────────────────────────────────
+
+interface TdsFormFillerProps {
+  tdsTemplateUrl: string;
+  selectedCatName: string;
+  tdsStatus: TdsStatus;
+  itemDescription: string;
+  ecoItemCode: string;
+  litItemCode: string;
+  availableBrands: MasterItem[];
+  selectedBrands: string[];
+  availableSpecs: SpecItem[];
+  specValues: Record<string, string>;
+  setItemDescription: (v: string) => void;
+  setEcoItemCode: (v: string) => void;
+  setLitItemCode: (v: string) => void;
+  setSpecValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  mainImage: File | null;
+  existingMainImage: string;
+  setMainImage: (f: File | null) => void;
+  setExistingMainImage: (v: string) => void;
+  dimensionDrawingImage: File | null;
+  existingDimensionDrawingImage: string;
+  setDimensionDrawingImage: (f: File | null) => void;
+  setExistingDimensionDrawingImage: (v: string) => void;
+  mountingHeightImage: File | null;
+  existingMountingHeightImage: string;
+  setMountingHeightImage: (f: File | null) => void;
+  setExistingMountingHeightImage: (v: string) => void;
+  driverCompatibilityImage: File | null;
+  existingDriverCompatibilityImage: string;
+  setDriverCompatibilityImage: (f: File | null) => void;
+  setExistingDriverCompatibilityImage: (v: string) => void;
+  baseImage: File | null;
+  existingBaseImage: string;
+  setBaseImage: (f: File | null) => void;
+  setExistingBaseImage: (v: string) => void;
+  illuminanceLevelImage: File | null;
+  existingIlluminanceLevelImage: string;
+  setIlluminanceLevelImage: (f: File | null) => void;
+  setExistingIlluminanceLevelImage: (v: string) => void;
+  wiringDiagramImage: File | null;
+  existingWiringDiagramImage: string;
+  setWiringDiagramImage: (f: File | null) => void;
+  setExistingWiringDiagramImage: (v: string) => void;
+  installationImage: File | null;
+  existingInstallationImage: string;
+  setInstallationImage: (f: File | null) => void;
+  setExistingInstallationImage: (v: string) => void;
+  wiringLayoutImage: File | null;
+  existingWiringLayoutImage: string;
+  setWiringLayoutImage: (f: File | null) => void;
+  setExistingWiringLayoutImage: (v: string) => void;
+  terminalLayoutImage: File | null;
+  existingTerminalLayoutImage: string;
+  setTerminalLayoutImage: (f: File | null) => void;
+  setExistingTerminalLayoutImage: (v: string) => void;
+  accessoriesImage: File | null;
+  existingAccessoriesImage: string;
+  setAccessoriesImage: (f: File | null) => void;
+  setExistingAccessoriesImage: (v: string) => void;
+}
+
+function TdsInteractiveFormFiller(props: TdsFormFillerProps) {
+  const {
+    tdsTemplateUrl,
+    selectedCatName,
+    tdsStatus,
+    itemDescription,
+    ecoItemCode,
+    litItemCode,
+    availableBrands,
+    selectedBrands,
+    availableSpecs,
+    specValues,
+    setItemDescription,
+    setEcoItemCode,
+    setLitItemCode,
+    setSpecValues,
+    mainImage,
+    existingMainImage,
+    setMainImage,
+    setExistingMainImage,
+    dimensionDrawingImage,
+    existingDimensionDrawingImage,
+    setDimensionDrawingImage,
+    setExistingDimensionDrawingImage,
+    mountingHeightImage,
+    existingMountingHeightImage,
+    setMountingHeightImage,
+    setExistingMountingHeightImage,
+    driverCompatibilityImage,
+    existingDriverCompatibilityImage,
+    setDriverCompatibilityImage,
+    setExistingDriverCompatibilityImage,
+    baseImage,
+    existingBaseImage,
+    setBaseImage,
+    setExistingBaseImage,
+    illuminanceLevelImage,
+    existingIlluminanceLevelImage,
+    setIlluminanceLevelImage,
+    setExistingIlluminanceLevelImage,
+    wiringDiagramImage,
+    existingWiringDiagramImage,
+    setWiringDiagramImage,
+    setExistingWiringDiagramImage,
+    installationImage,
+    existingInstallationImage,
+    setInstallationImage,
+    setExistingInstallationImage,
+    wiringLayoutImage,
+    existingWiringLayoutImage,
+    setWiringLayoutImage,
+    setExistingWiringLayoutImage,
+    terminalLayoutImage,
+    existingTerminalLayoutImage,
+    setTerminalLayoutImage,
+    setExistingTerminalLayoutImage,
+    accessoriesImage,
+    existingAccessoriesImage,
+    setAccessoriesImage,
+    setExistingAccessoriesImage,
+  } = props;
+
+  const [pageDataUrls, setPageDataUrls] = useState<string[]>([]);
+  const [overlays, setOverlays] = useState<OverlayField[]>([]);
+  const [pageDims, setPageDims] = useState<{ w: number; h: number }[]>([]);
+  const [pdfLoading, setPdfLoading] = useState(true);
+  const [pdfError, setPdfError] = useState("");
+
+  // ── Fallback stores for fields that don't map to a named parent state ───────
+  const [localTextValues, setLocalTextValues] = useState<
+    Record<string, string>
+  >({});
+  const [localImageFiles, setLocalImageFiles] = useState<
+    Record<string, File | null>
+  >({});
+
+  // Re-parse only when the template URL itself changes
+  useEffect(() => {
+    let cancelled = false;
+    setPdfLoading(true);
+    setPdfError("");
+    setPageDataUrls([]);
+    setOverlays([]);
+
+    (async () => {
+      try {
+        const resp = await fetch(tdsTemplateUrl);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const arrayBuf = await resp.arrayBuffer();
+
+        const {
+          PDFDocument,
+          PDFName,
+          PDFRef,
+          PDFArray,
+          PDFTextField,
+          PDFButton,
+        } = await import("pdf-lib");
+
+        const pdfDoc = await PDFDocument.load(new Uint8Array(arrayBuf), {
+          ignoreEncryption: true,
+          updateMetadata: false,
+        });
+        const form = pdfDoc.getForm();
+        const docPages = pdfDoc.getPages();
+
+        const refToPageIdx = new Map<number, number>();
+        docPages.forEach((page, pi) => {
+          try {
+            const rawAnnots = page.node.get(PDFName.of("Annots"));
+            if (!rawAnnots) return;
+            const annotArr = pdfDoc.context.lookupMaybe(rawAnnots, PDFArray);
+            annotArr?.asArray().forEach((item: any) => {
+              if (item instanceof PDFRef)
+                refToPageIdx.set(item.objectNumber, pi);
+            });
+          } catch {}
+        });
+
+        const pdfjsLib = await import("pdfjs-dist");
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+            "pdfjs-dist/build/pdf.worker.mjs",
+            import.meta.url,
+          ).toString();
+        }
+        const pdfJsDoc = await pdfjsLib.getDocument({
+          data: new Uint8Array(arrayBuf),
+        }).promise;
+
+        const RENDER_SCALE = 1.8;
+        const dataUrls: string[] = [];
+        const dims: { w: number; h: number }[] = [];
+
+        for (let i = 1; i <= pdfJsDoc.numPages; i++) {
+          const jsPage = await pdfJsDoc.getPage(i);
+          const vp = jsPage.getViewport({ scale: RENDER_SCALE });
+          const c = document.createElement("canvas");
+          c.width = Math.floor(vp.width);
+          c.height = Math.floor(vp.height);
+          await jsPage.render({
+            canvas: c,
+            canvasContext: c.getContext("2d")!,
+            viewport: vp,
+          }).promise;
+          dataUrls.push(c.toDataURL("image/jpeg", 0.93));
+          dims.push({ w: c.width, h: c.height });
+        }
+
+        const fields = form.getFields();
+        const result: OverlayField[] = [];
+
+        // Log all field names so you can see exactly what the PDF contains
+        console.log(
+          "[TDS Fields]",
+          fields.map((f) => ({ name: f.getName(), type: f.constructor.name })),
+        );
+
+        for (const field of fields) {
+          const widgets = field.acroField.getWidgets();
+          for (const widget of widgets) {
+            const rect = widget.getRectangle();
+            let pi = 0;
+            try {
+              const pRef = widget.P();
+              if (pRef instanceof PDFRef) {
+                const found = docPages.findIndex((p) => p.ref === pRef);
+                pi =
+                  found >= 0
+                    ? found
+                    : (refToPageIdx.get(pRef.objectNumber) ?? 0);
+              }
+            } catch {}
+
+            const libPage = docPages[pi];
+            const pdfSz = libPage.getSize();
+            const canvasDim = dims[pi];
+            if (!canvasDim) continue;
+
+            const scaleX = canvasDim.w / pdfSz.width;
+            const scaleY = canvasDim.h / pdfSz.height;
+            const cx = rect.x * scaleX;
+            const cy = (pdfSz.height - rect.y - rect.height) * scaleY;
+            const cw = rect.width * scaleX;
+            const ch = rect.height * scaleY;
+
+            const isText = field instanceof PDFTextField;
+            const isImg = field instanceof PDFButton;
+            if (!isText && !isImg) continue;
+
+            result.push({
+              id: `${field.getName()}_p${pi}_${Math.round(cx)}`,
+              name: field.getName(),
+              type: isImg ? "image" : "text",
+              pageIndex: pi,
+              xPct: (cx / canvasDim.w) * 100,
+              yPct: (cy / canvasDim.h) * 100,
+              wPct: (cw / canvasDim.w) * 100,
+              hPct: (ch / canvasDim.h) * 100,
+              multiline: isText
+                ? (
+                    field as unknown as { isMultiline: () => boolean }
+                  ).isMultiline()
+                : false,
+            });
+          }
+        }
+
+        if (!cancelled) {
+          setPageDataUrls(dataUrls);
+          setPageDims(dims);
+          setOverlays(result);
+          setPdfLoading(false);
+        }
+      } catch (err: any) {
+        console.error("[TdsInteractiveFormFiller]", err);
+        if (!cancelled) {
+          setPdfError(err?.message || "Failed to load PDF template");
+          setPdfLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tdsTemplateUrl]);
+
+  // ── Normalise a field name for matching ────────────────────────────────────
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-.()\[\]/\\]/g, "");
+
+  // ── Resolve a text field value from parent state or local fallback ─────────
+  const resolveText = useCallback(
+    (name: string): string => {
+      const n = norm(name);
+      if (/itemdescription|productname|^description$|^prodname$/.test(n))
+        return itemDescription;
+      if (/ecoitemcode|ecocode/.test(n)) return ecoItemCode;
+      if (/lititemcode|litcode/.test(n)) return litItemCode;
+      if (/brand|brandname/.test(n))
+        return (
+          availableBrands.find((b) => b.id === selectedBrands[0])?.name ?? ""
+        );
+
+      const spec = availableSpecs.find(
+        (s) => norm(s.label) === n || s.label === name,
+      );
+      if (spec) return specValues[`${spec.specGroupId}-${spec.label}`] ?? "";
+
+      // Fallback to local store for unrecognized field names
+      return localTextValues[name] ?? "";
+    },
+    [
+      itemDescription,
+      ecoItemCode,
+      litItemCode,
+      availableBrands,
+      selectedBrands,
+      availableSpecs,
+      specValues,
+      localTextValues,
+    ],
+  );
+
+  // ── Apply a text value to parent state or local fallback ──────────────────
+  const applyText = useCallback(
+    (name: string, value: string) => {
+      const n = norm(name);
+      if (/itemdescription|productname|^description$|^prodname$/.test(n)) {
+        setItemDescription(value);
+        return;
+      }
+      if (/ecoitemcode|ecocode/.test(n)) {
+        setEcoItemCode(value);
+        return;
+      }
+      if (/lititemcode|litcode/.test(n)) {
+        setLitItemCode(value);
+        return;
+      }
+
+      const spec = availableSpecs.find(
+        (s) => norm(s.label) === n || s.label === name,
+      );
+      if (spec) {
+        setSpecValues((p) => ({
+          ...p,
+          [`${spec.specGroupId}-${spec.label}`]: value,
+        }));
+        return;
+      }
+
+      // Fallback: store locally so the field stays editable
+      setLocalTextValues((p) => ({ ...p, [name]: value }));
+    },
+    [
+      setItemDescription,
+      setEcoItemCode,
+      setLitItemCode,
+      availableSpecs,
+      setSpecValues,
+    ],
+  );
+
+  // ── Resolve an image mapping — always returns a valid ImgMapping ──────────
+  const resolveImage = useCallback(
+    (name: string): ImgMapping => {
+      const n = norm(name);
+
+      // Named mappings — ordered specific → generic
+      const namedEntries: [RegExp, ImgMapping][] = [
+        // Dimensional drawing
+        [
+          /dimension(al)?draw|dimdr|dimensiondrawing/,
+          {
+            file: dimensionDrawingImage,
+            url: existingDimensionDrawingImage,
+            onDrop: setDimensionDrawingImage,
+            onClear: () => {
+              setDimensionDrawingImage(null);
+              setExistingDimensionDrawingImage("");
+            },
+          },
+        ],
+        // Mounting height
+        [
+          /mountingheight|recommendedmount|mountheight/,
+          {
+            file: mountingHeightImage,
+            url: existingMountingHeightImage,
+            onDrop: setMountingHeightImage,
+            onClear: () => {
+              setMountingHeightImage(null);
+              setExistingMountingHeightImage("");
+            },
+          },
+        ],
+        // Driver compatibility
+        [
+          /drivercompat|drivercomp|compatdriver/,
+          {
+            file: driverCompatibilityImage,
+            url: existingDriverCompatibilityImage,
+            onDrop: setDriverCompatibilityImage,
+            onClear: () => {
+              setDriverCompatibilityImage(null);
+              setExistingDriverCompatibilityImage("");
+            },
+          },
+        ],
+        // Illuminance level
+        [
+          /illuminance|luxlevel|illuminancelevel/,
+          {
+            file: illuminanceLevelImage,
+            url: existingIlluminanceLevelImage,
+            onDrop: setIlluminanceLevelImage,
+            onClear: () => {
+              setIlluminanceLevelImage(null);
+              setExistingIlluminanceLevelImage("");
+            },
+          },
+        ],
+        // Wiring diagram (before generic wiring)
+        [
+          /wiringdiagram|wiringschematic|electricaldiagram/,
+          {
+            file: wiringDiagramImage,
+            url: existingWiringDiagramImage,
+            onDrop: setWiringDiagramImage,
+            onClear: () => {
+              setWiringDiagramImage(null);
+              setExistingWiringDiagramImage("");
+            },
+          },
+        ],
+        // Wiring layout
+        [
+          /wiringlayout|wirelayout|wiringplan/,
+          {
+            file: wiringLayoutImage,
+            url: existingWiringLayoutImage,
+            onDrop: setWiringLayoutImage,
+            onClear: () => {
+              setWiringLayoutImage(null);
+              setExistingWiringLayoutImage("");
+            },
+          },
+        ],
+        // Terminal layout
+        [
+          /terminallayout|terminalblock|terminalplan/,
+          {
+            file: terminalLayoutImage,
+            url: existingTerminalLayoutImage,
+            onDrop: setTerminalLayoutImage,
+            onClear: () => {
+              setTerminalLayoutImage(null);
+              setExistingTerminalLayoutImage("");
+            },
+          },
+        ],
+        // Installation
+        [
+          /installation|installguide|installstep/,
+          {
+            file: installationImage,
+            url: existingInstallationImage,
+            onDrop: setInstallationImage,
+            onClear: () => {
+              setInstallationImage(null);
+              setExistingInstallationImage("");
+            },
+          },
+        ],
+        // Base
+        [
+          /^base$|basetype|socketbase/,
+          {
+            file: baseImage,
+            url: existingBaseImage,
+            onDrop: setBaseImage,
+            onClear: () => {
+              setBaseImage(null);
+              setExistingBaseImage("");
+            },
+          },
+        ],
+        // Accessories
+        [
+          /accessor|addon/,
+          {
+            file: accessoriesImage,
+            url: existingAccessoriesImage,
+            onDrop: setAccessoriesImage,
+            onClear: () => {
+              setAccessoriesImage(null);
+              setExistingAccessoriesImage("");
+            },
+          },
+        ],
+        // Main product image — broadest, must be last
+        [
+          /productimage|mainimage|productphoto|^photo$|^image$|^img$|^picture$|^pic$|^button\d*$|^image\d+$|^photo\d+$/,
+          {
+            file: mainImage,
+            url: existingMainImage,
+            onDrop: setMainImage,
+            onClear: () => {
+              setMainImage(null);
+              setExistingMainImage("");
+            },
+          },
+        ],
+      ];
+
+      for (const [rx, mapping] of namedEntries) {
+        if (rx.test(n)) return mapping;
+      }
+
+      // ── Fallback: local state keyed by exact field name ──────────────────
+      // This ensures every image button in the PDF is interactive, even with
+      // generic names like "Button1", "Image2", etc.
+      const localFile = localImageFiles[name] ?? null;
+      return {
+        file: localFile,
+        url: "",
+        onDrop: (f: File) => setLocalImageFiles((p) => ({ ...p, [name]: f })),
+        onClear: () => setLocalImageFiles((p) => ({ ...p, [name]: null })),
+      };
+    },
+    [
+      mainImage,
+      existingMainImage,
+      setMainImage,
+      setExistingMainImage,
+      dimensionDrawingImage,
+      existingDimensionDrawingImage,
+      setDimensionDrawingImage,
+      setExistingDimensionDrawingImage,
+      mountingHeightImage,
+      existingMountingHeightImage,
+      setMountingHeightImage,
+      setExistingMountingHeightImage,
+      driverCompatibilityImage,
+      existingDriverCompatibilityImage,
+      setDriverCompatibilityImage,
+      setExistingDriverCompatibilityImage,
+      baseImage,
+      existingBaseImage,
+      setBaseImage,
+      setExistingBaseImage,
+      illuminanceLevelImage,
+      existingIlluminanceLevelImage,
+      setIlluminanceLevelImage,
+      setExistingIlluminanceLevelImage,
+      wiringDiagramImage,
+      existingWiringDiagramImage,
+      setWiringDiagramImage,
+      setExistingWiringDiagramImage,
+      installationImage,
+      existingInstallationImage,
+      setInstallationImage,
+      setExistingInstallationImage,
+      wiringLayoutImage,
+      existingWiringLayoutImage,
+      setWiringLayoutImage,
+      setExistingWiringLayoutImage,
+      terminalLayoutImage,
+      existingTerminalLayoutImage,
+      setTerminalLayoutImage,
+      setExistingTerminalLayoutImage,
+      accessoriesImage,
+      existingAccessoriesImage,
+      setAccessoriesImage,
+      setExistingAccessoriesImage,
+      localImageFiles,
+    ],
+  );
+
+  if (pdfLoading) {
+    return (
+      <Card className="border-primary/20">
+        <CardContent className="flex flex-col items-center justify-center gap-3 py-20">
+          <div className="relative">
+            <FileText className="h-10 w-10 text-primary/20" />
+            <Loader2 className="h-4 w-4 animate-spin text-primary absolute -top-1 -right-1" />
+          </div>
+          <p className="text-sm font-semibold text-muted-foreground">
+            Preparing TDS form…
+          </p>
+          <p className="text-xs text-muted-foreground/60">
+            Parsing fields from the {selectedCatName} template
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (pdfError) {
+    return (
+      <Card className="border-destructive/20">
+        <CardContent className="flex flex-col items-center gap-3 py-12">
+          <AlertCircle className="h-6 w-6 text-destructive" />
+          <p className="text-sm text-destructive font-semibold">{pdfError}</p>
+          <p className="text-xs text-muted-foreground text-center max-w-xs">
+            Could not load the PDF template. Use the General Information section
+            below to fill product data manually.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="overflow-hidden border-primary/25 shadow-md">
+      <CardHeader className="py-3 px-4 bg-gradient-to-r from-primary/8 to-transparent border-b border-primary/10">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <FileText className="h-4 w-4 text-primary" />
+          Technical Data Sheet
+          <span className="text-[10px] font-normal text-muted-foreground ml-1">
+            — fill directly on the form
+          </span>
+          <div className="ml-auto flex items-center gap-2.5">
+            <TdsBadge tdsStatus={tdsStatus} tdsTemplateUrl={tdsTemplateUrl} />
+            <span className="hidden sm:block text-[10px] font-normal text-muted-foreground">
+              {selectedCatName}
+            </span>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="flex items-center gap-5 px-4 py-2 bg-muted/30 border-b text-[10px] text-muted-foreground select-none">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3.5 h-3.5 rounded-sm bg-blue-100 border border-blue-400/60" />
+            Text field — click to type
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-3.5 h-3.5 rounded-sm bg-amber-50 border border-dashed border-amber-400/70" />
+            Image slot — click or drop
+          </span>
+          <span className="ml-auto hidden sm:block opacity-60">
+            Scroll to see all pages
+          </span>
+        </div>
+        <div className="overflow-auto bg-neutral-300 dark:bg-neutral-800 max-h-[88vh]">
+          {pageDataUrls.map((dataUrl, pageIdx) => {
+            const pageFields = overlays.filter((f) => f.pageIndex === pageIdx);
+            const dim = pageDims[pageIdx];
+            return (
+              <div key={pageIdx} className="py-4 flex justify-center">
+                <div
+                  className="relative shadow-2xl"
+                  style={{
+                    width: "100%",
+                    maxWidth: dim ? `${dim.w}px` : "100%",
+                    aspectRatio: dim ? `${dim.w} / ${dim.h}` : "210 / 297",
+                  }}
+                >
+                  <img
+                    src={dataUrl}
+                    className="absolute inset-0 w-full h-full pointer-events-none select-none block"
+                    alt={`TDS page ${pageIdx + 1}`}
+                    draggable={false}
+                  />
+                  {pageFields.map((field) => {
+                    const overlayStyle: React.CSSProperties = {
+                      position: "absolute",
+                      left: `${field.xPct}%`,
+                      top: `${field.yPct}%`,
+                      width: `${field.wPct}%`,
+                      height: `${field.hPct}%`,
+                    };
+
+                    if (field.type === "text") {
+                      const val = resolveText(field.name);
+                      return (
+                        <div key={field.id} style={overlayStyle}>
+                          {field.multiline ? (
+                            <textarea
+                              value={val}
+                              onChange={(e) =>
+                                applyText(field.name, e.target.value)
+                              }
+                              className="w-full h-full resize-none bg-blue-50/55 hover:bg-blue-50/80 border border-blue-400/50 hover:border-blue-500/70 focus:border-blue-600 focus:bg-blue-50/90 text-gray-800 dark:text-gray-900 px-[2%] py-[1%] focus:outline-none transition-colors font-medium leading-tight"
+                              style={{ fontSize: "clamp(6px, 1.1vw, 11px)" }}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              value={val}
+                              onChange={(e) =>
+                                applyText(field.name, e.target.value)
+                              }
+                              className="w-full h-full bg-blue-50/55 hover:bg-blue-50/80 border border-blue-400/50 hover:border-blue-500/70 focus:border-blue-600 focus:bg-blue-50/90 text-gray-800 dark:text-gray-900 px-[3%] focus:outline-none transition-colors font-medium"
+                              style={{ fontSize: "clamp(6px, 1.1vw, 11px)" }}
+                            />
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Image field — resolveImage always returns a valid mapping
+                    const mapping = resolveImage(field.name);
+                    return (
+                      <TdsImageOverlay
+                        key={field.id}
+                        style={overlayStyle}
+                        mapping={mapping}
+                        fieldName={field.name}
+                      />
+                    );
+                  })}
+                  {pageDataUrls.length > 1 && (
+                    <div className="absolute bottom-3 right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full pointer-events-none tracking-wide">
+                      {pageIdx + 1} / {pageDataUrls.length}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function AddNewProduct({
   editData,
@@ -158,8 +1071,10 @@ export default function AddNewProduct({
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
 
   const [isPublishing, setIsPublishing] = useState(false);
+  const [tdsTemplateUrl, setTdsTemplateUrl] = useState<string>("");
+  const [tdsStatus, setTdsStatus] = useState<TdsStatus>("idle");
+  const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
 
-  // Form
   const [productClass, setProductClass] = useState<ProductClass>(
     editData?.productClass || "",
   );
@@ -173,20 +1088,14 @@ export default function AddNewProduct({
     editData?.status || "draft",
   );
 
-  // TDS PDF
-  const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
-
-  // Master data
   const [availableSpecs, setAvailableSpecs] = useState<SpecItem[]>([]);
   const [specsLoading, setSpecsLoading] = useState(false);
   const [availableCats, setAvailableCats] = useState<MasterItem[]>([]);
   const [availableBrands, setAvailableBrands] = useState<MasterItem[]>([]);
   const [availableApps, setAvailableApps] = useState<MasterItem[]>([]);
   const [catOpen, setCatOpen] = useState(false);
-
   const pendingItemsRef = useRef<PendingItem[]>([]);
 
-  // Selections
   const [selectedWebs, setSelectedWebs] = useState<string[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
@@ -198,7 +1107,6 @@ export default function AddNewProduct({
   const [appsOpen, setAppsOpen] = useState(false);
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
-  // ── Images — new files ────────────────────────────────────────────────────
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [rawImage, setRawImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
@@ -208,7 +1116,6 @@ export default function AddNewProduct({
   const [mountingHeightImage, setMountingHeightImage] = useState<File | null>(
     null,
   );
-  // ── New technical drawing / diagram images ────────────────────────────────
   const [driverCompatibilityImage, setDriverCompatibilityImage] =
     useState<File | null>(null);
   const [baseImage, setBaseImage] = useState<File | null>(null);
@@ -224,7 +1131,6 @@ export default function AddNewProduct({
   );
   const [accessoriesImage, setAccessoriesImage] = useState<File | null>(null);
 
-  // ── Images — existing URLs (edit mode) ───────────────────────────────────
   const [existingMainImage, setExistingMainImage] = useState("");
   const [existingRawImage, setExistingRawImage] = useState("");
   const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>(
@@ -235,7 +1141,6 @@ export default function AddNewProduct({
     useState("");
   const [existingMountingHeightImage, setExistingMountingHeightImage] =
     useState("");
-  // ── New existing URLs ─────────────────────────────────────────────────────
   const [
     existingDriverCompatibilityImage,
     setExistingDriverCompatibilityImage,
@@ -253,11 +1158,9 @@ export default function AddNewProduct({
     useState("");
   const [existingAccessoriesImage, setExistingAccessoriesImage] = useState("");
 
-  // ── Dropzone section collapse state ──────────────────────────────────────
   const [mediaOpen, setMediaOpen] = useState(true);
   const [techDrawingsOpen, setTechDrawingsOpen] = useState(false);
 
-  // SEO
   const [seoData, setSeoData] = useState({
     title: editData?.seo?.title || "",
     description: editData?.seo?.description || "",
@@ -270,12 +1173,10 @@ export default function AddNewProduct({
     "desktop",
   );
 
-  // ── Auto-canonical ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!seoData.slug || selectedWebs.length === 0) return;
-    const website = selectedWebs[0];
-    const domain = WEBSITE_DOMAINS[website];
-    const path = WEBSITE_PRODUCT_PATH[website] ?? "/products";
+    const domain = WEBSITE_DOMAINS[selectedWebs[0]];
+    const path = WEBSITE_PRODUCT_PATH[selectedWebs[0]] ?? "/products";
     if (!domain) return;
     const next = `${domain}${path}/${seoData.slug}`;
     setSeoData((prev) =>
@@ -283,7 +1184,6 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Fetch ALL master data ─────────────────────────────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -304,47 +1204,30 @@ export default function AddNewProduct({
         setAvailableCats([...db_items, ...pending]);
       },
     );
-
     const unsubBrands = onSnapshot(
       query(collection(db, "brand_name"), orderBy("title")),
       (snap) => {
-        const db_items = snap.docs.map((d) => ({
-          id: d.id,
-          name: d.data().title || d.data().name || "Unnamed",
-          websites: d.data().websites || [],
-        }));
-        const pending = pendingItemsRef.current
-          .filter((p) => p.type === "brand")
-          .map((p) => ({
-            id: `temp-${p.name}`,
-            name: p.name,
-            websites: [],
-            isTemp: true,
-          }));
-        setAvailableBrands([...db_items, ...pending]);
+        setAvailableBrands(
+          snap.docs.map((d) => ({
+            id: d.id,
+            name: d.data().title || d.data().name || "Unnamed",
+            websites: d.data().websites || [],
+          })),
+        );
       },
     );
-
     const unsubApps = onSnapshot(
       query(collection(db, "applications"), orderBy("title")),
       (snap) => {
-        const db_items = snap.docs.map((d) => ({
-          id: d.id,
-          name: d.data().title || d.data().name || "Unnamed",
-          websites: d.data().websites || [],
-        }));
-        const pending = pendingItemsRef.current
-          .filter((p) => p.type === "application")
-          .map((p) => ({
-            id: `temp-${p.name}`,
-            name: p.name,
-            websites: [],
-            isTemp: true,
-          }));
-        setAvailableApps([...db_items, ...pending]);
+        setAvailableApps(
+          snap.docs.map((d) => ({
+            id: d.id,
+            name: d.data().title || d.data().name || "Unnamed",
+            websites: d.data().websites || [],
+          })),
+        );
       },
     );
-
     return () => {
       unsubCats();
       unsubBrands();
@@ -352,27 +1235,45 @@ export default function AddNewProduct({
     };
   }, []);
 
-  // ── Fetch specs when category selected ───────────────────────────────────
   useEffect(() => {
     if (!selectedCatId) {
+      setTdsTemplateUrl("");
+      setTdsStatus("idle");
       setAvailableSpecs([]);
       setSpecsLoading(false);
       return;
     }
-
-    setSpecsLoading(true);
+    let cancelled = false;
     let unsubSpecs: (() => void) | null = null;
+    setTdsStatus("loading-template");
+    setSpecsLoading(true);
 
-    const run = async () => {
+    (async () => {
       try {
-        const catDoc = await getDoc(doc(db, "productfamilies", selectedCatId));
-        const specIds = new Set<string>(
-          catDoc.exists() ? catDoc.data().specifications || [] : [],
+        const familySnap = await getDoc(
+          doc(db, "productfamilies", selectedCatId),
         );
+        if (cancelled) return;
+        const familyData = familySnap.exists() ? familySnap.data() : null;
+        const templateUrl: string = familyData?.tdsTemplate ?? "";
+        if (templateUrl) {
+          setTdsTemplateUrl(templateUrl);
+          setTdsStatus("idle");
+        } else {
+          setTdsTemplateUrl("");
+          setTdsStatus("no-template");
+        }
 
+        const specIds = new Set<string>(
+          Array.isArray(familyData?.specifications)
+            ? familyData!.specifications
+            : [],
+        );
         if (specIds.size === 0) {
-          setAvailableSpecs([]);
-          setSpecsLoading(false);
+          if (!cancelled) {
+            setAvailableSpecs([]);
+            setSpecsLoading(false);
+          }
           return;
         }
 
@@ -383,34 +1284,33 @@ export default function AddNewProduct({
             .forEach((d) => {
               const data = d.data();
               (data.items || []).forEach((item: any) => {
-                if (item.label) {
+                if (item.label)
                   items.push({
                     id: `${d.id}-${item.label}`,
                     label: item.label,
                     specGroup: data.name || "Unnamed Group",
                     specGroupId: d.id,
                   });
-                }
               });
             });
           setAvailableSpecs(items);
           setSpecsLoading(false);
         });
       } catch (e) {
-        console.error(e);
-        setAvailableSpecs([]);
-        setSpecsLoading(false);
+        console.error("[AddNewProduct]", e);
+        if (!cancelled) {
+          setTdsStatus("no-template");
+          setAvailableSpecs([]);
+          setSpecsLoading(false);
+        }
       }
-    };
-
-    run();
+    })();
     return () => {
+      cancelled = true;
       unsubSpecs?.();
-      setSpecsLoading(false);
     };
   }, [selectedCatId]);
 
-  // ── Load edit data ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!editData) return;
     setProductClass(editData.productClass || "");
@@ -438,7 +1338,6 @@ export default function AddNewProduct({
     setExistingQrImage(editData.qrCodeImage || "");
     setExistingDimensionDrawingImage(editData.dimensionDrawingImage || "");
     setExistingMountingHeightImage(editData.mountingHeightImage || "");
-    // ── New fields ────────────────────────────────────────────────────────
     setExistingDriverCompatibilityImage(
       editData.driverCompatibilityImage || "",
     );
@@ -451,7 +1350,6 @@ export default function AddNewProduct({
     setExistingAccessoriesImage(editData.accessoriesImage || "");
   }, [editData]);
 
-  // ── Load edit data for custom sections & specs ────────────────────────────
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
@@ -461,9 +1359,7 @@ export default function AddNewProduct({
         let item = availableSpecs.find(
           (s) => s.label === spec.name && s.specGroup === group.specGroup,
         );
-        if (!item) {
-          item = availableSpecs.find((s) => s.label === spec.name);
-        }
+        if (!item) item = availableSpecs.find((s) => s.label === spec.name);
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
@@ -481,7 +1377,6 @@ export default function AddNewProduct({
     }
   }, [editData, availableCats]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
   const uploadToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -502,57 +1397,19 @@ export default function AddNewProduct({
       { method: "POST", body: fd },
     );
     const json = await res.json();
-    if (!json?.secure_url) {
+    if (!json?.secure_url)
       throw new Error(
-        `Cloudinary PDF upload failed: ${json?.error?.message ?? "no secure_url returned"}`,
+        `Cloudinary PDF upload failed: ${json?.error?.message ?? "no secure_url"}`,
       );
-    }
     return json.secure_url as string;
   };
 
-  const handleAddItem = (
-    type: PendingItem["type"],
-    name: string,
-    collectionName: string,
-    dbField: string,
-  ) => {
-    const cleanName = name.trim();
-    if (!cleanName) return;
-    const list = type === "brand" ? availableBrands : availableApps;
-    if (list.some((i) => i.name.toLowerCase() === cleanName.toLowerCase())) {
-      toast.error(`"${cleanName}" already exists.`);
-      return;
-    }
-    pendingItemsRef.current.push({
-      type,
-      name: cleanName,
-      collection: collectionName,
-      field: dbField,
-    });
-    const newItem: MasterItem = {
-      id: `temp-${cleanName}`,
-      name: cleanName,
-      websites: [],
-      isTemp: true,
-    };
-    if (type === "brand") {
-      setAvailableBrands((p) => [...p, newItem]);
-      setSelectedBrands((p) => [...p, `temp-${cleanName}`]);
-    } else if (type === "application") {
-      setAvailableApps((p) => [...p, newItem]);
-      setSelectedApps((p) => [...p, `temp-${cleanName}`]);
-    }
-  };
-
-  // ── Main publish handler ───────────────────────────────────────────────────
   const handlePublish = async () => {
     if (!itemDescription)
       return toast.error("Please enter an item description!");
     setIsPublishing(true);
     const tid = toast.loading("Validating...");
-
     try {
-      // ── Duplicate check ──────────────────────────────────────────────────
       if (!editData || editData.itemDescription !== itemDescription) {
         const dupSnap = await getDocs(
           query(
@@ -576,7 +1433,6 @@ export default function AddNewProduct({
         }
       }
 
-      // ── Flush pending tags to Firestore ──────────────────────────────────
       const pendingIdMap: Record<string, string> = {};
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: tid });
@@ -604,7 +1460,6 @@ export default function AddNewProduct({
         pendingItemsRef.current = [];
       }
 
-      // ── Upload images ────────────────────────────────────────────────────
       toast.loading("Uploading images...", { id: tid });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -621,7 +1476,6 @@ export default function AddNewProduct({
       const mountingHeightUrl = mountingHeightImage
         ? await uploadToCloudinary(mountingHeightImage)
         : existingMountingHeightImage;
-      // ── New image uploads ────────────────────────────────────────────────
       const driverCompatibilityUrl = driverCompatibilityImage
         ? await uploadToCloudinary(driverCompatibilityImage)
         : existingDriverCompatibilityImage;
@@ -646,10 +1500,8 @@ export default function AddNewProduct({
       const accessoriesUrl = accessoriesImage
         ? await uploadToCloudinary(accessoriesImage)
         : existingAccessoriesImage;
-
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
-      // ── Build technicalSpecs payload ─────────────────────────────────────
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
       Object.entries(specValues).forEach(([key, value]) => {
@@ -668,15 +1520,13 @@ export default function AddNewProduct({
         ([specGroup, specs]) => ({ specGroup, specs }),
       );
 
-      const resolvedCatId = pendingIdMap[selectedCatId] || selectedCatId;
-      const productFamilyTitle = resolvedCatId
+      const productFamilyTitle = selectedCatId
         ? availableCats.find((c) => c.id === selectedCatId)?.name || ""
         : "";
-      const resolveApps = (ids: string[]) =>
-        ids.map((id) => pendingIdMap[id] || id);
-
       const brandName =
         availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
+      const resolveApps = (ids: string[]) =>
+        ids.map((id) => pendingIdMap[id] || id);
 
       const payload = {
         productClass,
@@ -693,7 +1543,6 @@ export default function AddNewProduct({
         qrCodeImage: qrUrl,
         dimensionDrawingImage: dimensionDrawingUrl,
         mountingHeightImage: mountingHeightUrl,
-        // ── New image fields ───────────────────────────────────────────────
         driverCompatibilityImage: driverCompatibilityUrl,
         baseImage: baseUrl,
         illuminanceLevelImage: illuminanceLevelUrl,
@@ -721,9 +1570,7 @@ export default function AddNewProduct({
         updatedAt: serverTimestamp(),
       };
 
-      // ── Save product to Firestore ─────────────────────────────────────────
       let savedDocId: string = editData?.id ?? "";
-
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
         await logAuditEvent({
@@ -756,47 +1603,34 @@ export default function AddNewProduct({
         });
       }
 
-      // ── Auto-generate TDS PDF ─────────────────────────────────────────────
       try {
-        toast.loading("Generating TDS PDF...", { id: tid });
-
-        const generatedTdsUrl: string | undefined = await generateTdsPdf(
-          {
+        if (tdsTemplateUrl) {
+          toast.loading("Generating TDS PDF...", { id: tid });
+          setTdsStatus("generating");
+          const generatedTdsUrl = await fillTdsPdf({
+            templateUrl: tdsTemplateUrl,
             itemDescription,
             litItemCode,
             ecoItemCode,
             brand: brandName,
             technicalSpecs,
-          },
-          {
-            mainImageUrl: mainUrl,
-            dimensionDrawingUrl,
-            mountingHeightUrl,
+            mainImageUrl: mainUrl || undefined,
             cloudinaryUploadFn: uploadPdfToCloudinary,
-          },
-        ).catch((err: unknown) => {
-          console.error("generateTdsPdf internal error:", err);
-          return undefined;
-        });
-
-        if (
-          savedDocId &&
-          typeof generatedTdsUrl === "string" &&
-          generatedTdsUrl.startsWith("http")
-        ) {
-          await updateDoc(doc(db, "products", savedDocId), {
-            tdsFileUrl: generatedTdsUrl,
-            updatedAt: serverTimestamp(),
           });
-          setTdsUrl(generatedTdsUrl);
+          if (savedDocId && generatedTdsUrl.startsWith("http")) {
+            await updateDoc(doc(db, "products", savedDocId), {
+              tdsFileUrl: generatedTdsUrl,
+              updatedAt: serverTimestamp(),
+            });
+            setTdsUrl(generatedTdsUrl);
+            setTdsStatus("done");
+          }
         } else {
-          console.warn(
-            "TDS PDF skipped — invalid or missing Cloudinary URL:",
-            generatedTdsUrl,
-          );
+          setTdsStatus("no-template");
         }
       } catch (pdfErr) {
-        console.error("TDS PDF generation failed:", pdfErr);
+        console.error("TDS fill failed:", pdfErr);
+        setTdsStatus("error");
         toast.warning("Product saved, but TDS PDF could not be generated.", {
           id: tid,
         });
@@ -812,7 +1646,6 @@ export default function AddNewProduct({
     }
   };
 
-  // ── Dropzones ─────────────────────────────────────────────────────────────
   const onDropMain = useCallback((f: File[]) => {
     if (f[0]) setMainImage(f[0]);
   }, []);
@@ -823,32 +1656,31 @@ export default function AddNewProduct({
     (f: File[]) => setGalleryImages((p) => [...p, ...f]),
     [],
   );
-  const onDropDimensionDrawing = useCallback((f: File[]) => {
+  const onDropDimDraw = useCallback((f: File[]) => {
     if (f[0]) setDimensionDrawingImage(f[0]);
   }, []);
-  const onDropMountingHeight = useCallback((f: File[]) => {
+  const onDropMountH = useCallback((f: File[]) => {
     if (f[0]) setMountingHeightImage(f[0]);
   }, []);
-  // ── New drop callbacks ────────────────────────────────────────────────────
-  const onDropDriverCompatibility = useCallback((f: File[]) => {
+  const onDropDriverComp = useCallback((f: File[]) => {
     if (f[0]) setDriverCompatibilityImage(f[0]);
   }, []);
   const onDropBase = useCallback((f: File[]) => {
     if (f[0]) setBaseImage(f[0]);
   }, []);
-  const onDropIlluminanceLevel = useCallback((f: File[]) => {
+  const onDropIllum = useCallback((f: File[]) => {
     if (f[0]) setIlluminanceLevelImage(f[0]);
   }, []);
-  const onDropWiringDiagram = useCallback((f: File[]) => {
+  const onDropWiringDiag = useCallback((f: File[]) => {
     if (f[0]) setWiringDiagramImage(f[0]);
   }, []);
-  const onDropInstallation = useCallback((f: File[]) => {
+  const onDropInstall = useCallback((f: File[]) => {
     if (f[0]) setInstallationImage(f[0]);
   }, []);
-  const onDropWiringLayout = useCallback((f: File[]) => {
+  const onDropWiringLay = useCallback((f: File[]) => {
     if (f[0]) setWiringLayoutImage(f[0]);
   }, []);
-  const onDropTerminalLayout = useCallback((f: File[]) => {
+  const onDropTermLay = useCallback((f: File[]) => {
     if (f[0]) setTerminalLayoutImage(f[0]);
   }, []);
   const onDropAccessories = useCallback((f: File[]) => {
@@ -865,38 +1697,31 @@ export default function AddNewProduct({
   });
   const { getRootProps: galleryRoot, getInputProps: galleryInput } =
     useDropzone({ onDrop: onDropGallery });
-  const {
-    getRootProps: dimensionDrawingRoot,
-    getInputProps: dimensionDrawingInput,
-  } = useDropzone({ onDrop: onDropDimensionDrawing, maxFiles: 1 });
-  const {
-    getRootProps: mountingHeightRoot,
-    getInputProps: mountingHeightInput,
-  } = useDropzone({ onDrop: onDropMountingHeight, maxFiles: 1 });
-  // ── New dropzone hooks ────────────────────────────────────────────────────
-  const {
-    getRootProps: driverCompatibilityRoot,
-    getInputProps: driverCompatibilityInput,
-  } = useDropzone({ onDrop: onDropDriverCompatibility, maxFiles: 1 });
-  const { getRootProps: baseRoot, getInputProps: baseInput } = useDropzone({
+  const { getRootProps: dimensionDrawRoot, getInputProps: dimensionDrawInput } =
+    useDropzone({ onDrop: onDropDimDraw, maxFiles: 1 });
+  const { getRootProps: mountHRoot, getInputProps: mountHInput } = useDropzone({
+    onDrop: onDropMountH,
+    maxFiles: 1,
+  });
+  const { getRootProps: driverCompRoot, getInputProps: driverCompInput } =
+    useDropzone({ onDrop: onDropDriverComp, maxFiles: 1 });
+  const { getRootProps: baseRoot2, getInputProps: baseInput2 } = useDropzone({
     onDrop: onDropBase,
     maxFiles: 1,
   });
-  const {
-    getRootProps: illuminanceLevelRoot,
-    getInputProps: illuminanceLevelInput,
-  } = useDropzone({ onDrop: onDropIlluminanceLevel, maxFiles: 1 });
-  const { getRootProps: wiringDiagramRoot, getInputProps: wiringDiagramInput } =
-    useDropzone({ onDrop: onDropWiringDiagram, maxFiles: 1 });
-  const { getRootProps: installationRoot, getInputProps: installationInput } =
-    useDropzone({ onDrop: onDropInstallation, maxFiles: 1 });
-  const { getRootProps: wiringLayoutRoot, getInputProps: wiringLayoutInput } =
-    useDropzone({ onDrop: onDropWiringLayout, maxFiles: 1 });
-  const {
-    getRootProps: terminalLayoutRoot,
-    getInputProps: terminalLayoutInput,
-  } = useDropzone({ onDrop: onDropTerminalLayout, maxFiles: 1 });
-  const { getRootProps: accessoriesRoot, getInputProps: accessoriesInput } =
+  const { getRootProps: illumRoot, getInputProps: illumInput } = useDropzone({
+    onDrop: onDropIllum,
+    maxFiles: 1,
+  });
+  const { getRootProps: wiringDiagRoot, getInputProps: wiringDiagInput } =
+    useDropzone({ onDrop: onDropWiringDiag, maxFiles: 1 });
+  const { getRootProps: installRoot, getInputProps: installInput } =
+    useDropzone({ onDrop: onDropInstall, maxFiles: 1 });
+  const { getRootProps: wiringLayRoot, getInputProps: wiringLayInput } =
+    useDropzone({ onDrop: onDropWiringLay, maxFiles: 1 });
+  const { getRootProps: termLayRoot, getInputProps: termLayInput } =
+    useDropzone({ onDrop: onDropTermLay, maxFiles: 1 });
+  const { getRootProps: accessoriesRoot2, getInputProps: accessoriesInput2 } =
     useDropzone({ onDrop: onDropAccessories, maxFiles: 1 });
 
   const toggleWebsite = (web: string) =>
@@ -935,7 +1760,6 @@ export default function AddNewProduct({
     },
   ];
 
-  // ── Reusable simple dropzone renderer ────────────────────────────────────
   const renderSimpleDropzone = ({
     rootProps,
     inputProps,
@@ -997,10 +1821,8 @@ export default function AddNewProduct({
     </div>
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 min-h-screen">
-      {/* ═══════════════════════ MAIN COLUMN ═══════════════════════ */}
       <div className="md:col-span-2 space-y-6">
         {/* Product Class */}
         <Card>
@@ -1019,12 +1841,7 @@ export default function AddNewProduct({
                     key={opt.value}
                     type="button"
                     onClick={() => setProductClass(active ? "" : opt.value)}
-                    className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all
-                      ${
-                        active
-                          ? "border-primary bg-primary/5 text-primary font-semibold"
-                          : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
-                      }`}
+                    className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? "border-primary bg-primary/5 text-primary font-semibold" : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
                   >
                     <span
                       className={
@@ -1033,15 +1850,79 @@ export default function AddNewProduct({
                     >
                       {opt.icon}
                     </span>
-                    <div>
-                      <p className="text-sm font-semibold">{opt.label}</p>
-                    </div>
+                    <p className="text-sm font-semibold">{opt.label}</p>
                   </button>
                 );
               })}
             </div>
           </CardContent>
         </Card>
+
+        {/* TDS Interactive Form */}
+        {tdsTemplateUrl && (
+          <TdsInteractiveFormFiller
+            tdsTemplateUrl={tdsTemplateUrl}
+            selectedCatName={selectedCatName}
+            tdsStatus={tdsStatus}
+            itemDescription={itemDescription}
+            ecoItemCode={ecoItemCode}
+            litItemCode={litItemCode}
+            availableBrands={availableBrands}
+            selectedBrands={selectedBrands}
+            availableSpecs={availableSpecs}
+            specValues={specValues}
+            setItemDescription={setItemDescription}
+            setEcoItemCode={setEcoItemCode}
+            setLitItemCode={setLitItemCode}
+            setSpecValues={setSpecValues}
+            mainImage={mainImage}
+            existingMainImage={existingMainImage}
+            setMainImage={setMainImage}
+            setExistingMainImage={setExistingMainImage}
+            dimensionDrawingImage={dimensionDrawingImage}
+            existingDimensionDrawingImage={existingDimensionDrawingImage}
+            setDimensionDrawingImage={setDimensionDrawingImage}
+            setExistingDimensionDrawingImage={setExistingDimensionDrawingImage}
+            mountingHeightImage={mountingHeightImage}
+            existingMountingHeightImage={existingMountingHeightImage}
+            setMountingHeightImage={setMountingHeightImage}
+            setExistingMountingHeightImage={setExistingMountingHeightImage}
+            driverCompatibilityImage={driverCompatibilityImage}
+            existingDriverCompatibilityImage={existingDriverCompatibilityImage}
+            setDriverCompatibilityImage={setDriverCompatibilityImage}
+            setExistingDriverCompatibilityImage={
+              setExistingDriverCompatibilityImage
+            }
+            baseImage={baseImage}
+            existingBaseImage={existingBaseImage}
+            setBaseImage={setBaseImage}
+            setExistingBaseImage={setExistingBaseImage}
+            illuminanceLevelImage={illuminanceLevelImage}
+            existingIlluminanceLevelImage={existingIlluminanceLevelImage}
+            setIlluminanceLevelImage={setIlluminanceLevelImage}
+            setExistingIlluminanceLevelImage={setExistingIlluminanceLevelImage}
+            wiringDiagramImage={wiringDiagramImage}
+            existingWiringDiagramImage={existingWiringDiagramImage}
+            setWiringDiagramImage={setWiringDiagramImage}
+            setExistingWiringDiagramImage={setExistingWiringDiagramImage}
+            installationImage={installationImage}
+            existingInstallationImage={existingInstallationImage}
+            setInstallationImage={setInstallationImage}
+            setExistingInstallationImage={setExistingInstallationImage}
+            wiringLayoutImage={wiringLayoutImage}
+            existingWiringLayoutImage={existingWiringLayoutImage}
+            setWiringLayoutImage={setWiringLayoutImage}
+            setExistingWiringLayoutImage={setExistingWiringLayoutImage}
+            terminalLayoutImage={terminalLayoutImage}
+            existingTerminalLayoutImage={existingTerminalLayoutImage}
+            setTerminalLayoutImage={setTerminalLayoutImage}
+            setExistingTerminalLayoutImage={setExistingTerminalLayoutImage}
+            accessoriesImage={accessoriesImage}
+            existingAccessoriesImage={existingAccessoriesImage}
+            setAccessoriesImage={setAccessoriesImage}
+            setExistingAccessoriesImage={setExistingAccessoriesImage}
+          />
+        )}
 
         {/* Media Assets */}
         <Card>
@@ -1052,6 +1933,11 @@ export default function AddNewProduct({
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Images className="h-4 w-4" />
               Media Assets
+              {tdsTemplateUrl && (
+                <span className="text-[10px] font-normal text-muted-foreground ml-1">
+                  (main photo &amp; drawings → fill in TDS form above)
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-2">
                 {!mediaOpen &&
                   (mainImage ||
@@ -1074,12 +1960,12 @@ export default function AddNewProduct({
           </CardHeader>
           {mediaOpen && (
             <CardContent className="space-y-6">
-              {/* Row 1 — Main / Raw / QR / Gallery */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {/* Main Image */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
-                    Main Image
+                    {tdsTemplateUrl
+                      ? "Main Image (synced with TDS)"
+                      : "Main Image"}
                   </Label>
                   <div
                     {...mainRoot()}
@@ -1118,8 +2004,6 @@ export default function AddNewProduct({
                     )}
                   </div>
                 </div>
-
-                {/* Raw Image */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
                     Raw Image
@@ -1161,8 +2045,6 @@ export default function AddNewProduct({
                     )}
                   </div>
                 </div>
-
-                {/* QR Code */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
                     QR Code
@@ -1179,8 +2061,6 @@ export default function AddNewProduct({
                     }}
                   />
                 </div>
-
-                {/* Gallery Add */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
                     Add Gallery
@@ -1203,202 +2083,159 @@ export default function AddNewProduct({
                 </div>
               </div>
 
-              {/* ── Technical Drawings Section ── */}
-              <div className="pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTechDrawingsOpen((o) => !o);
-                  }}
-                  className="w-full flex items-center justify-between py-1 group"
-                >
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
-                    Technical Drawings
-                  </p>
-                  <div className="flex items-center gap-2">
-                    {!techDrawingsOpen &&
-                      (() => {
-                        const count =
-                          [
-                            dimensionDrawingImage,
-                            mountingHeightImage,
-                            driverCompatibilityImage,
-                            baseImage,
-                            illuminanceLevelImage,
-                            wiringDiagramImage,
-                            installationImage,
-                            wiringLayoutImage,
-                            terminalLayoutImage,
-                            accessoriesImage,
-                          ].filter(Boolean).length +
-                          [
-                            existingDimensionDrawingImage,
-                            existingMountingHeightImage,
-                            existingDriverCompatibilityImage,
-                            existingBaseImage,
-                            existingIlluminanceLevelImage,
-                            existingWiringDiagramImage,
-                            existingInstallationImage,
-                            existingWiringLayoutImage,
-                            existingTerminalLayoutImage,
-                            existingAccessoriesImage,
-                          ].filter(Boolean).length;
-                        return count > 0 ? (
-                          <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
-                            {count} uploaded
-                          </span>
-                        ) : null;
-                      })()}
+              {!tdsTemplateUrl && (
+                <div className="pt-2 border-t">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTechDrawingsOpen((o) => !o);
+                    }}
+                    className="w-full flex items-center justify-between py-1 group"
+                  >
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
+                      Technical Drawings
+                    </p>
                     <ChevronDown
                       className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
                     />
-                  </div>
-                </button>
-                {techDrawingsOpen && (
-                  <div className="space-y-4 mt-3">
-                    {/* Row — Dimension Drawing / Mounting Height */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {renderSimpleDropzone({
-                        rootProps: dimensionDrawingRoot,
-                        inputProps: dimensionDrawingInput,
-                        file: dimensionDrawingImage,
-                        existingUrl: existingDimensionDrawingImage,
-                        onClear: () => {
-                          setDimensionDrawingImage(null);
-                          setExistingDimensionDrawingImage("");
-                        },
-                        icon: <Ruler className="h-3 w-3" />,
-                        label: "Dimension Drawing",
-                      })}
-                      {renderSimpleDropzone({
-                        rootProps: mountingHeightRoot,
-                        inputProps: mountingHeightInput,
-                        file: mountingHeightImage,
-                        existingUrl: existingMountingHeightImage,
-                        onClear: () => {
-                          setMountingHeightImage(null);
-                          setExistingMountingHeightImage("");
-                        },
-                        icon: <ArrowUpDown className="h-3 w-3" />,
-                        label: "Mounting Height",
-                      })}
+                  </button>
+                  {techDrawingsOpen && (
+                    <div className="space-y-4 mt-3">
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: dimensionDrawRoot,
+                          inputProps: dimensionDrawInput,
+                          file: dimensionDrawingImage,
+                          existingUrl: existingDimensionDrawingImage,
+                          onClear: () => {
+                            setDimensionDrawingImage(null);
+                            setExistingDimensionDrawingImage("");
+                          },
+                          icon: <Ruler className="h-3 w-3" />,
+                          label: "Dimension Drawing",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: mountHRoot,
+                          inputProps: mountHInput,
+                          file: mountingHeightImage,
+                          existingUrl: existingMountingHeightImage,
+                          onClear: () => {
+                            setMountingHeightImage(null);
+                            setExistingMountingHeightImage("");
+                          },
+                          icon: <ArrowUpDown className="h-3 w-3" />,
+                          label: "Mounting Height",
+                        })}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: driverCompRoot,
+                          inputProps: driverCompInput,
+                          file: driverCompatibilityImage,
+                          existingUrl: existingDriverCompatibilityImage,
+                          onClear: () => {
+                            setDriverCompatibilityImage(null);
+                            setExistingDriverCompatibilityImage("");
+                          },
+                          icon: <Cpu className="h-3 w-3" />,
+                          label: "Driver Compatibility",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: baseRoot2,
+                          inputProps: baseInput2,
+                          file: baseImage,
+                          existingUrl: existingBaseImage,
+                          onClear: () => {
+                            setBaseImage(null);
+                            setExistingBaseImage("");
+                          },
+                          icon: <Layers className="h-3 w-3" />,
+                          label: "Base",
+                        })}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: illumRoot,
+                          inputProps: illumInput,
+                          file: illuminanceLevelImage,
+                          existingUrl: existingIlluminanceLevelImage,
+                          onClear: () => {
+                            setIlluminanceLevelImage(null);
+                            setExistingIlluminanceLevelImage("");
+                          },
+                          icon: <Sun className="h-3 w-3" />,
+                          label: "Illuminance Level",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: wiringDiagRoot,
+                          inputProps: wiringDiagInput,
+                          file: wiringDiagramImage,
+                          existingUrl: existingWiringDiagramImage,
+                          onClear: () => {
+                            setWiringDiagramImage(null);
+                            setExistingWiringDiagramImage("");
+                          },
+                          icon: <GitBranch className="h-3 w-3" />,
+                          label: "Wiring Diagram",
+                        })}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: installRoot,
+                          inputProps: installInput,
+                          file: installationImage,
+                          existingUrl: existingInstallationImage,
+                          onClear: () => {
+                            setInstallationImage(null);
+                            setExistingInstallationImage("");
+                          },
+                          icon: <HardHat className="h-3 w-3" />,
+                          label: "Installation",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: wiringLayRoot,
+                          inputProps: wiringLayInput,
+                          file: wiringLayoutImage,
+                          existingUrl: existingWiringLayoutImage,
+                          onClear: () => {
+                            setWiringLayoutImage(null);
+                            setExistingWiringLayoutImage("");
+                          },
+                          icon: <LayoutTemplate className="h-3 w-3" />,
+                          label: "Wiring Layout",
+                        })}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: termLayRoot,
+                          inputProps: termLayInput,
+                          file: terminalLayoutImage,
+                          existingUrl: existingTerminalLayoutImage,
+                          onClear: () => {
+                            setTerminalLayoutImage(null);
+                            setExistingTerminalLayoutImage("");
+                          },
+                          icon: <Grid className="h-3 w-3" />,
+                          label: "Terminal Layout",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: accessoriesRoot2,
+                          inputProps: accessoriesInput2,
+                          file: accessoriesImage,
+                          existingUrl: existingAccessoriesImage,
+                          onClear: () => {
+                            setAccessoriesImage(null);
+                            setExistingAccessoriesImage("");
+                          },
+                          icon: <ShoppingBag className="h-3 w-3" />,
+                          label: "Accessories",
+                        })}
+                      </div>
                     </div>
-
-                    {/* Row — Driver Compatibility / Base */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {renderSimpleDropzone({
-                        rootProps: driverCompatibilityRoot,
-                        inputProps: driverCompatibilityInput,
-                        file: driverCompatibilityImage,
-                        existingUrl: existingDriverCompatibilityImage,
-                        onClear: () => {
-                          setDriverCompatibilityImage(null);
-                          setExistingDriverCompatibilityImage("");
-                        },
-                        icon: <Cpu className="h-3 w-3" />,
-                        label: "Driver Compatibility",
-                      })}
-                      {renderSimpleDropzone({
-                        rootProps: baseRoot,
-                        inputProps: baseInput,
-                        file: baseImage,
-                        existingUrl: existingBaseImage,
-                        onClear: () => {
-                          setBaseImage(null);
-                          setExistingBaseImage("");
-                        },
-                        icon: <Layers className="h-3 w-3" />,
-                        label: "Base",
-                      })}
-                    </div>
-
-                    {/* Row — Illuminance Level / Wiring Diagram */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {renderSimpleDropzone({
-                        rootProps: illuminanceLevelRoot,
-                        inputProps: illuminanceLevelInput,
-                        file: illuminanceLevelImage,
-                        existingUrl: existingIlluminanceLevelImage,
-                        onClear: () => {
-                          setIlluminanceLevelImage(null);
-                          setExistingIlluminanceLevelImage("");
-                        },
-                        icon: <Sun className="h-3 w-3" />,
-                        label: "Illuminance Level",
-                      })}
-                      {renderSimpleDropzone({
-                        rootProps: wiringDiagramRoot,
-                        inputProps: wiringDiagramInput,
-                        file: wiringDiagramImage,
-                        existingUrl: existingWiringDiagramImage,
-                        onClear: () => {
-                          setWiringDiagramImage(null);
-                          setExistingWiringDiagramImage("");
-                        },
-                        icon: <GitBranch className="h-3 w-3" />,
-                        label: "Wiring Diagram",
-                      })}
-                    </div>
-
-                    {/* Row — Installation / Wiring Layout */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {renderSimpleDropzone({
-                        rootProps: installationRoot,
-                        inputProps: installationInput,
-                        file: installationImage,
-                        existingUrl: existingInstallationImage,
-                        onClear: () => {
-                          setInstallationImage(null);
-                          setExistingInstallationImage("");
-                        },
-                        icon: <HardHat className="h-3 w-3" />,
-                        label: "Installation",
-                      })}
-                      {renderSimpleDropzone({
-                        rootProps: wiringLayoutRoot,
-                        inputProps: wiringLayoutInput,
-                        file: wiringLayoutImage,
-                        existingUrl: existingWiringLayoutImage,
-                        onClear: () => {
-                          setWiringLayoutImage(null);
-                          setExistingWiringLayoutImage("");
-                        },
-                        icon: <LayoutTemplate className="h-3 w-3" />,
-                        label: "Wiring Layout",
-                      })}
-                    </div>
-
-                    {/* Row — Terminal Layout / Accessories */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {renderSimpleDropzone({
-                        rootProps: terminalLayoutRoot,
-                        inputProps: terminalLayoutInput,
-                        file: terminalLayoutImage,
-                        existingUrl: existingTerminalLayoutImage,
-                        onClear: () => {
-                          setTerminalLayoutImage(null);
-                          setExistingTerminalLayoutImage("");
-                        },
-                        icon: <Grid className="h-3 w-3" />,
-                        label: "Terminal Layout",
-                      })}
-                      {renderSimpleDropzone({
-                        rootProps: accessoriesRoot,
-                        inputProps: accessoriesInput,
-                        file: accessoriesImage,
-                        existingUrl: existingAccessoriesImage,
-                        onClear: () => {
-                          setAccessoriesImage(null);
-                          setExistingAccessoriesImage("");
-                        },
-                        icon: <ShoppingBag className="h-3 w-3" />,
-                        label: "Accessories",
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {(existingGalleryImages.length > 0 ||
                 galleryImages.length > 0) && (
@@ -1464,19 +2301,49 @@ export default function AddNewProduct({
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <AlignLeft className="h-4 w-4" />
               General Information
+              {tdsTemplateUrl && (
+                <span className="text-[10px] font-normal text-muted-foreground ml-1">
+                  (description &amp; specs → edit in TDS form)
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Item Description</Label>
-              <Input
-                className="h-12 text-base font-semibold"
-                value={itemDescription}
-                onChange={(e) => setItemDescription(e.target.value)}
-                placeholder="Enter item description"
-              />
-            </div>
-
+            {!tdsTemplateUrl && (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    Item Description
+                  </Label>
+                  <Input
+                    className="h-12 text-base font-semibold"
+                    value={itemDescription}
+                    onChange={(e) => setItemDescription(e.target.value)}
+                    placeholder="Enter item description"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">Eco Item Code</Label>
+                    <Input
+                      className="h-10 font-mono"
+                      value={ecoItemCode}
+                      onChange={(e) => setEcoItemCode(e.target.value)}
+                      placeholder="ECO-000"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">Lit Item Code</Label>
+                    <Input
+                      className="h-10 font-mono"
+                      value={litItemCode}
+                      onChange={(e) => setLitItemCode(e.target.value)}
+                      placeholder="LIT-000"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Short Description</Label>
               <Input
@@ -1486,30 +2353,7 @@ export default function AddNewProduct({
                 placeholder="Brief product description"
               />
             </div>
-
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Eco Item Code</Label>
-                <Input
-                  className="h-10 font-mono"
-                  value={ecoItemCode}
-                  onChange={(e) => setEcoItemCode(e.target.value)}
-                  placeholder="ECO-000"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Lit Item Code</Label>
-                <Input
-                  className="h-10 font-mono"
-                  value={litItemCode}
-                  onChange={(e) => setLitItemCode(e.target.value)}
-                  placeholder="LIT-000"
-                />
-              </div>
-            </div>
-
-            {/* Technical Specs */}
-            {selectedCatId && (
+            {selectedCatId && !tdsTemplateUrl && (
               <div className="pt-4 border-t">
                 <div className="flex items-center gap-2 mb-4">
                   <Zap className="h-4 w-4 text-primary" />
@@ -1517,7 +2361,6 @@ export default function AddNewProduct({
                     Technical Specifications
                   </Label>
                 </div>
-
                 {specsLoading ? (
                   <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -1600,12 +2443,7 @@ export default function AddNewProduct({
                     key={opt.value}
                     type="button"
                     onClick={() => setStatus(opt.value)}
-                    className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all
-                      ${
-                        active
-                          ? `${opt.activeBg} ${opt.color} border-current font-semibold`
-                          : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
-                      }`}
+                    className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? `${opt.activeBg} ${opt.color} border-current font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
                   >
                     <span
                       className={active ? opt.color : "text-muted-foreground"}
@@ -1625,7 +2463,6 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* TDS PDF */}
         {tdsUrl && (
           <Card className="border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-800">
             <CardHeader className="pb-3">
@@ -1648,7 +2485,7 @@ export default function AddNewProduct({
                       _TDS.pdf
                     </p>
                     <p className="text-[10px] text-muted-foreground">
-                      Auto-generated · Stored on Cloudinary
+                      Filled from family template · Stored on Cloudinary
                     </p>
                   </div>
                 </div>
@@ -1674,7 +2511,6 @@ export default function AddNewProduct({
 
       {/* ═══════════════════════ SIDEBAR ═══════════════════════════ */}
       <div className="space-y-6">
-        {/* Targeted Websites */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1690,11 +2526,7 @@ export default function AddNewProduct({
               <div
                 key={web}
                 onClick={() => toggleWebsite(web)}
-                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 transition-all cursor-pointer ${
-                  selectedWebs.includes(web)
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-muted-foreground/20"
-                }`}
+                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 transition-all cursor-pointer ${selectedWebs.includes(web) ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/20"}`}
               >
                 <Checkbox
                   checked={selectedWebs.includes(web)}
@@ -1711,16 +2543,13 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* Classification + Custom Sections */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-center">
               Classification
             </CardTitle>
           </CardHeader>
-
           <CardContent className="space-y-6">
-            {/* PRODUCT FAMILY */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Tag className="h-3 w-3" />
@@ -1797,9 +2626,14 @@ export default function AddNewProduct({
                   </Command>
                 </PopoverContent>
               </Popover>
+              {selectedCatId && (
+                <TdsBadge
+                  tdsStatus={tdsStatus}
+                  tdsTemplateUrl={tdsTemplateUrl}
+                />
+              )}
             </div>
 
-            {/* BRAND */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Factory className="h-3 w-3" />
@@ -1873,7 +2707,6 @@ export default function AddNewProduct({
               </Popover>
             </div>
 
-            {/* APPLICATIONS */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Zap className="h-3 w-3" />
@@ -1970,7 +2803,6 @@ export default function AddNewProduct({
               )}
             </div>
 
-            {/* PRODUCT USAGE */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <LayoutGrid className="h-3 w-3" />
@@ -2052,7 +2884,6 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* Pricing */}
         <Card>
           <CardContent className="pt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -2082,7 +2913,6 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* SEO */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2136,7 +2966,6 @@ export default function AddNewProduct({
                 />
               </div>
             </div>
-
             <div className="pt-2">
               <div className="flex items-center gap-6 mb-4">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -2160,7 +2989,6 @@ export default function AddNewProduct({
                   ))}
                 </div>
               </div>
-
               {seoData.canonical && (
                 <div className="mb-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
                   <p className="text-[10px] font-semibold text-primary mb-1">
@@ -2171,11 +2999,8 @@ export default function AddNewProduct({
                   </p>
                 </div>
               )}
-
               <div
-                className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${
-                  previewMode === "mobile" ? "max-w-[360px]" : "max-w-[600px]"
-                }`}
+                className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${previewMode === "mobile" ? "max-w-[360px]" : "max-w-[600px]"}`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center">
@@ -2183,12 +3008,7 @@ export default function AddNewProduct({
                   </div>
                   <p className="text-[12px] text-foreground/70 font-medium truncate">
                     {selectedWebs.length > 0
-                      ? `${WEBSITE_DOMAINS[selectedWebs[0]]?.replace("https://", "")} › ${
-                          WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace(
-                            "/",
-                            "",
-                          ) || "products"
-                        } › ${seoData.slug || "..."}`
+                      ? `${WEBSITE_DOMAINS[selectedWebs[0]]?.replace("https://", "")} › ${WEBSITE_PRODUCT_PATH[selectedWebs[0]]?.replace("/", "") || "products"} › ${seoData.slug || "..."}`
                       : "No website selected"}
                   </p>
                 </div>
@@ -2208,7 +3028,7 @@ export default function AddNewProduct({
                         "Enter a meta description to see how it looks here."}
                     </p>
                   </div>
-                  <div className="w-[104px] h-[104px] flex-shrink-0 bg-muted/50 rounded-md overflow-hidden border relative group">
+                  <div className="w-[104px] h-[104px] flex-shrink-0 bg-muted/50 rounded-md overflow-hidden border">
                     {mainImage || existingMainImage ? (
                       <img
                         src={
@@ -2224,11 +3044,6 @@ export default function AddNewProduct({
                         <Images className="h-6 w-6" />
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-foreground/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <span className="text-[8px] text-background font-semibold">
-                        PREVIEW ONLY
-                      </span>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -2257,7 +3072,7 @@ export default function AddNewProduct({
   );
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── QrDropzone ───────────────────────────────────────────────────────────────
 
 function QrDropzone({
   file,

@@ -99,8 +99,6 @@ import {
   serverTimestamp,
   where,
   arrayUnion,
-  setDoc,
-  getDoc,
   updateDoc,
 } from "firebase/firestore";
 import { toast } from "sonner";
@@ -109,7 +107,7 @@ import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
-import { generateTdsPdf } from "@/lib/generateTdsPdf";
+import { generateTdsPdf, type FamilyMeta } from "@/lib/fillTdsPdf";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -125,6 +123,8 @@ export type Product = {
   mainImage: string;
   rawImage: string[];
   categories: string;
+  /** Canonical product family title — matches productfamilies.title in Firestore. */
+  productFamily?: string;
   brand: string | string[];
   website: string | string[];
   brands?: string[];
@@ -168,7 +168,8 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
     : Array.isArray(product.brand)
       ? ((product.brand as string[])[0] ?? "")
       : ((product.brand as string) ?? "");
-  const productFamily = (product.categories as string) || "";
+  const productFamily =
+    product.productFamily || (product.categories as string) || "";
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -410,7 +411,6 @@ function BulkGenerateTdsDialog({
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        // Prevent closing mid-run
         if (!v && isRunning) return;
         onOpenChange(v);
       }}
@@ -436,7 +436,6 @@ function BulkGenerateTdsDialog({
           </div>
         </DialogHeader>
 
-        {/* Progress bar */}
         {(isRunning || isComplete) && (
           <div className="space-y-1.5">
             <Progress value={progressPct} className="h-2" />
@@ -449,14 +448,12 @@ function BulkGenerateTdsDialog({
           </div>
         )}
 
-        {/* Job list */}
         <div className="max-h-64 overflow-y-auto rounded-lg border divide-y text-sm">
           {jobs.map((job) => (
             <div
               key={job.productId}
               className="flex items-center gap-3 px-3 py-2.5"
             >
-              {/* Status icon */}
               <span className="flex-shrink-0">
                 {job.status === "pending" && (
                   <CircleDashed className="w-4 h-4 text-muted-foreground/40" />
@@ -472,7 +469,6 @@ function BulkGenerateTdsDialog({
                 )}
               </span>
 
-              {/* Name */}
               <span
                 className={`flex-1 truncate text-xs ${
                   job.status === "error"
@@ -485,8 +481,7 @@ function BulkGenerateTdsDialog({
                 {job.productName}
               </span>
 
-              {/* Status label */}
-              <span className="text-[10px] text-muted-foreground flex-shrink-0">
+              <span className="text-[10px] text-muted-foreground flex-shrink-0 max-w-[140px] truncate text-right">
                 {job.status === "pending" && "Queued"}
                 {job.status === "generating" && "Generating…"}
                 {job.status === "done" && "Done"}
@@ -496,7 +491,6 @@ function BulkGenerateTdsDialog({
           ))}
         </div>
 
-        {/* Summary callout when complete */}
         {isComplete && (
           <div
             className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${
@@ -909,11 +903,9 @@ export default function AllProductsPage() {
   const [assignProductClassOpen, setAssignProductClassOpen] =
     React.useState(false);
 
-  // TDS preview state
   const [tdsPreviewProduct, setTdsPreviewProduct] =
     React.useState<Product | null>(null);
 
-  // Bulk TDS generation state
   const [bulkTdsOpen, setBulkTdsOpen] = React.useState(false);
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
@@ -1135,7 +1127,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk assign to website handler ────────────────────────────────────────
+  // ── Bulk assign to website ────────────────────────────────────────────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
@@ -1172,11 +1164,7 @@ export default function AllProductsPage() {
       }
 
       toast.success(
-        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.${
-          includesTaskflow
-            ? ` Taskflow schema written to taskflow_products.`
-            : ""
-        }`,
+        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.`,
         { id: loadingToast },
       );
       setRowSelection({});
@@ -1188,7 +1176,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk assign product class handler ─────────────────────────────────────
+  // ── Bulk assign product class ─────────────────────────────────────────────
   const handleBulkAssignProductClass = async (
     productClass: "spf" | "standard",
   ) => {
@@ -1206,14 +1194,12 @@ export default function AllProductsPage() {
       for (let i = 0; i < rows.length; i += CHUNK) {
         const chunk = rows.slice(i, i + CHUNK);
         const batch = writeBatch(db);
-
         chunk.forEach((product) => {
           batch.update(doc(db, "products", product.id), {
             productClass,
             updatedAt: serverTimestamp(),
           });
         });
-
         await batch.commit();
       }
 
@@ -1228,10 +1214,7 @@ export default function AllProductsPage() {
           collection: "products",
           bulk: true,
         },
-        metadata: {
-          productClass,
-          ids: rows.map((r) => r.id),
-        },
+        metadata: { productClass, ids: rows.map((r) => r.id) },
       });
 
       toast.success(
@@ -1245,7 +1228,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Open bulk TDS dialog — seed jobs list from current selection ──────────
+  // ── Open bulk TDS dialog ──────────────────────────────────────────────────
   const handleOpenBulkTds = () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
@@ -1258,22 +1241,34 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
-  // ── Run bulk TDS generation sequentially ──────────────────────────────────
+  // ── Run bulk TDS generation ───────────────────────────────────────────────
+  // Uses generateTdsPdf which:
+  //   1. Reads productFamily (or categories) from the product to find the
+  //      matching productfamilies document in Firestore.
+  //   2. Fetches that document's tdsTemplate URL.
+  //   3. Fills the AcroForm with the product's specs, item code, brand, and
+  //      main image — exactly the same logic as AddNewProduct on save.
+  //   4. Uploads the filled PDF to Cloudinary and returns the URL.
+  //
+  // A shared templateCache Map is passed across the whole loop so Firestore
+  // is only queried once per unique product family in the batch.
+
   const handleStartBulkTds = async () => {
     setIsTdsRunning(true);
 
-    // Build a lookup for the actual product data
     const productMap = new Map<string, Product>(
       table
         .getFilteredSelectedRowModel()
         .rows.map((r) => [r.original.id, r.original]),
     );
 
+    // One Firestore lookup per unique family across the entire batch.
+    const templateCache = new Map<string, FamilyMeta>();
+
     for (let i = 0; i < tdsJobs.length; i++) {
       const job = tdsJobs[i];
       const product = productMap.get(job.productId);
 
-      // Mark as generating
       setTdsJobs((prev) =>
         prev.map((j) =>
           j.productId === job.productId ? { ...j, status: "generating" } : j,
@@ -1283,30 +1278,33 @@ export default function AllProductsPage() {
       try {
         if (!product) throw new Error("Product not found in selection");
 
-        const brandRaw = Array.isArray(product.brands)
+        const brand = Array.isArray(product.brands)
           ? (product.brands[0] ?? "")
           : Array.isArray(product.brand)
             ? ((product.brand as string[])[0] ?? "")
             : ((product.brand as string) ?? "");
+
+        // productFamily is the canonical field set by AddNewProduct.
+        // Fall back to categories for older documents.
+        const productFamilyName =
+          product.productFamily || (product.categories as string) || "";
 
         const tdsUrl = await generateTdsPdf(
           {
             itemDescription: product.itemDescription || product.name || "",
             litItemCode: product.litItemCode,
             ecoItemCode: product.ecoItemCode,
-            brand: brandRaw,
+            brand,
+            productFamilyName,
             technicalSpecs: product.technicalSpecs ?? [],
-            dynamicSpecs: product.dynamicSpecs ?? [],
           },
           {
             mainImageUrl: product.mainImage || undefined,
-            dimensionDrawingUrl: product.dimensionDrawingUrl || undefined,
-            mountingHeightUrl: product.mountingHeightUrl || undefined,
             cloudinaryUploadFn: uploadToCloudinary,
           },
+          templateCache,
         );
 
-        // Persist tdsFileUrl back to Firestore
         await updateDoc(doc(db, "products", product.id), {
           tdsFileUrl: tdsUrl,
           updatedAt: serverTimestamp(),
@@ -1335,10 +1333,6 @@ export default function AllProductsPage() {
 
     setIsTdsRunning(false);
 
-    const finalJobs = tdsJobs; // stale on purpose — we log based on completed count
-    const doneCount = finalJobs.filter((j) => j.status === "done").length;
-    const errCount = finalJobs.filter((j) => j.status === "error").length;
-
     await logAuditEvent({
       action: "update",
       entityType: "product",
@@ -1350,12 +1344,7 @@ export default function AllProductsPage() {
         collection: "products",
         bulk: true,
       },
-      metadata: {
-        total: tdsJobs.length,
-        done: doneCount,
-        errors: errCount,
-        productIds: tdsJobs.map((j) => j.productId),
-      },
+      metadata: { total: tdsJobs.length, productIds: tdsJobs.map((j) => j.productId) },
     }).catch(console.warn);
   };
 
@@ -1462,14 +1451,16 @@ export default function AllProductsPage() {
       cell: ({ row }) => {
         const desc = row.getValue("itemDescription") as string;
         const fallback = row.original.name;
+        const family =
+          row.original.productFamily || (row.original.categories as string);
         return (
           <div className="flex flex-col max-w-[260px]">
             <span className="font-semibold text-sm line-clamp-2 leading-snug">
               {desc || fallback || "—"}
             </span>
-            {row.original.categories && (
+            {family && (
               <span className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {row.original.categories}
+                {family}
               </span>
             )}
           </div>
@@ -1549,7 +1540,6 @@ export default function AllProductsPage() {
             className="flex justify-end items-center gap-1"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* TDS Preview */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1570,7 +1560,6 @@ export default function AllProductsPage() {
               </TooltipContent>
             </Tooltip>
 
-            {/* Edit */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1587,7 +1576,6 @@ export default function AllProductsPage() {
               </TooltipContent>
             </Tooltip>
 
-            {/* Delete */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1793,7 +1781,6 @@ export default function AllProductsPage() {
               <Tag className="h-4 w-4" />
               Set Product Class
             </Button>
-            {/* ── NEW: Bulk Generate TDS ── */}
             <Button
               variant="outline"
               size="sm"
@@ -1878,9 +1865,9 @@ export default function AllProductsPage() {
                             product.itemCode ||
                             "—"}
                         </span>
-                        {product.categories && (
+                        {(product.productFamily || product.categories) && (
                           <span className="text-xs text-muted-foreground truncate">
-                            · {product.categories}
+                            · {product.productFamily || product.categories}
                           </span>
                         )}
                       </div>
@@ -2184,10 +2171,7 @@ export default function AllProductsPage() {
         open={bulkTdsOpen}
         onOpenChange={(v) => {
           setBulkTdsOpen(v);
-          if (!v && !isTdsRunning) {
-            // Reset jobs when dialog is closed after completion
-            setTdsJobs([]);
-          }
+          if (!v && !isTdsRunning) setTdsJobs([]);
         }}
         jobs={tdsJobs}
         onStart={handleStartBulkTds}
