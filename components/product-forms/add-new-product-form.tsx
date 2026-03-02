@@ -12,7 +12,6 @@ import {
   doc,
   onSnapshot,
   updateDoc,
-  arrayUnion,
   query,
   where,
   getDocs,
@@ -40,11 +39,18 @@ import {
   Check,
   ChevronsUpDown,
   FileImage,
-  Settings2,
-  Trash2,
   Ruler,
   ArrowUpDown,
   FileText,
+  Cpu,
+  Layers,
+  Sun,
+  GitBranch,
+  HardHat,
+  LayoutTemplate,
+  Grid,
+  ShoppingBag,
+  ChevronDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -65,17 +71,6 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
@@ -110,18 +105,6 @@ interface SpecValue {
 }
 
 // ── Custom Section types ──────────────────────────────────────────────────────
-interface CustomSectionItem {
-  id: string;
-  name: string;
-}
-
-interface CustomSectionData {
-  id: string;
-  title: string;
-  items: CustomSectionItem[];
-  selected: string[];
-}
-
 type ProductClass = "spf" | "standard" | "";
 
 const PRODUCT_CLASS_OPTIONS: {
@@ -201,11 +184,6 @@ export default function AddNewProduct({
   const [availableApps, setAvailableApps] = useState<MasterItem[]>([]);
   const [catOpen, setCatOpen] = useState(false);
 
-  // ── Custom Sections state ─────────────────────────────────────────────────
-  const [customSections, setCustomSections] = useState<CustomSectionData[]>([]);
-  const [isAddingNewSection, setIsAddingNewSection] = useState(false);
-  const [newSectionTitle, setNewSectionTitle] = useState("");
-
   const pendingItemsRef = useRef<PendingItem[]>([]);
 
   // Selections
@@ -217,9 +195,10 @@ export default function AddNewProduct({
     editData?.productUsage || [],
   );
   const [usageOpen, setUsageOpen] = useState(false);
+  const [appsOpen, setAppsOpen] = useState(false);
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
-  // Images
+  // ── Images — new files ────────────────────────────────────────────────────
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [rawImage, setRawImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
@@ -229,7 +208,23 @@ export default function AddNewProduct({
   const [mountingHeightImage, setMountingHeightImage] = useState<File | null>(
     null,
   );
+  // ── New technical drawing / diagram images ────────────────────────────────
+  const [driverCompatibilityImage, setDriverCompatibilityImage] =
+    useState<File | null>(null);
+  const [baseImage, setBaseImage] = useState<File | null>(null);
+  const [illuminanceLevelImage, setIlluminanceLevelImage] =
+    useState<File | null>(null);
+  const [wiringDiagramImage, setWiringDiagramImage] = useState<File | null>(
+    null,
+  );
+  const [installationImage, setInstallationImage] = useState<File | null>(null);
+  const [wiringLayoutImage, setWiringLayoutImage] = useState<File | null>(null);
+  const [terminalLayoutImage, setTerminalLayoutImage] = useState<File | null>(
+    null,
+  );
+  const [accessoriesImage, setAccessoriesImage] = useState<File | null>(null);
 
+  // ── Images — existing URLs (edit mode) ───────────────────────────────────
   const [existingMainImage, setExistingMainImage] = useState("");
   const [existingRawImage, setExistingRawImage] = useState("");
   const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>(
@@ -240,6 +235,27 @@ export default function AddNewProduct({
     useState("");
   const [existingMountingHeightImage, setExistingMountingHeightImage] =
     useState("");
+  // ── New existing URLs ─────────────────────────────────────────────────────
+  const [
+    existingDriverCompatibilityImage,
+    setExistingDriverCompatibilityImage,
+  ] = useState("");
+  const [existingBaseImage, setExistingBaseImage] = useState("");
+  const [existingIlluminanceLevelImage, setExistingIlluminanceLevelImage] =
+    useState("");
+  const [existingWiringDiagramImage, setExistingWiringDiagramImage] =
+    useState("");
+  const [existingInstallationImage, setExistingInstallationImage] =
+    useState("");
+  const [existingWiringLayoutImage, setExistingWiringLayoutImage] =
+    useState("");
+  const [existingTerminalLayoutImage, setExistingTerminalLayoutImage] =
+    useState("");
+  const [existingAccessoriesImage, setExistingAccessoriesImage] = useState("");
+
+  // ── Dropzone section collapse state ──────────────────────────────────────
+  const [mediaOpen, setMediaOpen] = useState(true);
+  const [techDrawingsOpen, setTechDrawingsOpen] = useState(false);
 
   // SEO
   const [seoData, setSeoData] = useState({
@@ -329,30 +345,10 @@ export default function AddNewProduct({
       },
     );
 
-    // ── Custom Sections listener ──────────────────────────────────────────
-    const unsubCustom = onSnapshot(
-      collection(db, "custom_sections"),
-      (snap) => {
-        const sections = snap.docs.map((d) => ({
-          id: d.id,
-          title: d.data().title || "Untitled",
-          items: d.data().items || [],
-          selected: [],
-        }));
-        setCustomSections((prev) =>
-          sections.map((sec) => {
-            const existing = prev.find((p) => p.id === sec.id);
-            return { ...sec, selected: existing?.selected || [] };
-          }),
-        );
-      },
-    );
-
     return () => {
       unsubCats();
       unsubBrands();
       unsubApps();
-      unsubCustom();
     };
   }, []);
 
@@ -442,22 +438,29 @@ export default function AddNewProduct({
     setExistingQrImage(editData.qrCodeImage || "");
     setExistingDimensionDrawingImage(editData.dimensionDrawingImage || "");
     setExistingMountingHeightImage(editData.mountingHeightImage || "");
+    // ── New fields ────────────────────────────────────────────────────────
+    setExistingDriverCompatibilityImage(
+      editData.driverCompatibilityImage || "",
+    );
+    setExistingBaseImage(editData.baseImage || "");
+    setExistingIlluminanceLevelImage(editData.illuminanceLevelImage || "");
+    setExistingWiringDiagramImage(editData.wiringDiagramImage || "");
+    setExistingInstallationImage(editData.installationImage || "");
+    setExistingWiringLayoutImage(editData.wiringLayoutImage || "");
+    setExistingTerminalLayoutImage(editData.terminalLayoutImage || "");
+    setExistingAccessoriesImage(editData.accessoriesImage || "");
   }, [editData]);
 
   // ── Load edit data for custom sections & specs ────────────────────────────
-  // AFTER — falls back to label-only match when group name has been renamed
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
-        // Try exact match first (group name + label)
         let item = availableSpecs.find(
           (s) => s.label === spec.name && s.specGroup === group.specGroup,
         );
-        // Fallback: match by label only — handles renamed spec groups.
-        // specGroupId is stable even when the display name changes.
         if (!item) {
           item = availableSpecs.find((s) => s.label === spec.name);
         }
@@ -478,86 +481,7 @@ export default function AddNewProduct({
     }
   }, [editData, availableCats]);
 
-  // ── Restore custom section selections in edit mode ────────────────────────
-  useEffect(() => {
-    if (!editData?.dynamicSpecs || customSections.length === 0) return;
-    setCustomSections((prev) =>
-      prev.map((section) => {
-        const matchingValues = (editData.dynamicSpecs as any[])
-          .filter((spec: any) => spec.title === section.title)
-          .map((spec: any) => spec.value);
-        return matchingValues.length > 0
-          ? { ...section, selected: matchingValues }
-          : section;
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editData, customSections.length]);
-
-  // ── Custom section handlers ───────────────────────────────────────────────
-  const handleAddChoiceToCustom = async (
-    sectionId: string,
-    choiceName: string,
-  ) => {
-    if (!choiceName.trim()) return;
-    try {
-      const sectionRef = doc(db, "custom_sections", sectionId);
-      await updateDoc(sectionRef, {
-        items: arrayUnion({
-          id: Date.now().toString(),
-          name: choiceName.trim(),
-        }),
-      });
-    } catch {
-      toast.error("Error adding choice");
-    }
-  };
-
-  const handleCreateNewSection = async () => {
-    if (!newSectionTitle.trim()) return;
-    try {
-      await addDoc(collection(db, "custom_sections"), {
-        title: newSectionTitle.trim().toUpperCase(),
-        items: [],
-        createdAt: serverTimestamp(),
-      });
-      setNewSectionTitle("");
-      setIsAddingNewSection(false);
-      toast.success("New section added");
-    } catch {
-      toast.error("Error creating section");
-    }
-  };
-
-  const handleDeleteCustomSection = async (sectionId: string) => {
-    try {
-      await deleteDoc(doc(db, "custom_sections", sectionId));
-      toast.success("Section deleted");
-    } catch {
-      toast.error("Delete failed");
-    }
-  };
-
-  const handleDeleteCustomSectionItem = async (
-    section: CustomSectionData,
-    itemId: string,
-  ) => {
-    try {
-      const sRef = doc(db, "custom_sections", section.id);
-      await updateDoc(sRef, {
-        items: section.items.filter((i) => i.id !== itemId),
-      });
-    } catch {
-      toast.error("Delete failed");
-    }
-  };
-
   // ── Handlers ──────────────────────────────────────────────────────────────
-
-  /**
-   * Generic Cloudinary image upload.
-   * Uses resource_type "image" (default preset behaviour).
-   */
   const uploadToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -569,13 +493,6 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
-  /**
-   * Cloudinary raw upload for PDF files.
-   * Requires the upload preset to allow "Auto" resource type,
-   * or use a dedicated raw preset.
-   * Throws explicitly when Cloudinary does not return a secure_url so callers
-   * never receive undefined (which would cause Firestore to reject the write).
-   */
   const uploadPdfToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -704,6 +621,32 @@ export default function AddNewProduct({
       const mountingHeightUrl = mountingHeightImage
         ? await uploadToCloudinary(mountingHeightImage)
         : existingMountingHeightImage;
+      // ── New image uploads ────────────────────────────────────────────────
+      const driverCompatibilityUrl = driverCompatibilityImage
+        ? await uploadToCloudinary(driverCompatibilityImage)
+        : existingDriverCompatibilityImage;
+      const baseUrl = baseImage
+        ? await uploadToCloudinary(baseImage)
+        : existingBaseImage;
+      const illuminanceLevelUrl = illuminanceLevelImage
+        ? await uploadToCloudinary(illuminanceLevelImage)
+        : existingIlluminanceLevelImage;
+      const wiringDiagramUrl = wiringDiagramImage
+        ? await uploadToCloudinary(wiringDiagramImage)
+        : existingWiringDiagramImage;
+      const installationUrl = installationImage
+        ? await uploadToCloudinary(installationImage)
+        : existingInstallationImage;
+      const wiringLayoutUrl = wiringLayoutImage
+        ? await uploadToCloudinary(wiringLayoutImage)
+        : existingWiringLayoutImage;
+      const terminalLayoutUrl = terminalLayoutImage
+        ? await uploadToCloudinary(terminalLayoutImage)
+        : existingTerminalLayoutImage;
+      const accessoriesUrl = accessoriesImage
+        ? await uploadToCloudinary(accessoriesImage)
+        : existingAccessoriesImage;
+
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
       // ── Build technicalSpecs payload ─────────────────────────────────────
@@ -723,11 +666,6 @@ export default function AddNewProduct({
       });
       const technicalSpecs = Object.entries(specsGrouped).map(
         ([specGroup, specs]) => ({ specGroup, specs }),
-      );
-
-      // ── Serialize custom section selections ───────────────────────────────
-      const dynamicSpecs = customSections.flatMap((section) =>
-        section.selected.map((val) => ({ title: section.title, value: val })),
       );
 
       const resolvedCatId = pendingIdMap[selectedCatId] || selectedCatId;
@@ -750,12 +688,20 @@ export default function AddNewProduct({
         regularPrice: Number(regPrice) || 0,
         salePrice: Number(salePrice) || 0,
         technicalSpecs,
-        dynamicSpecs,
         mainImage: mainUrl,
         rawImage: rawUrl,
         qrCodeImage: qrUrl,
         dimensionDrawingImage: dimensionDrawingUrl,
         mountingHeightImage: mountingHeightUrl,
+        // ── New image fields ───────────────────────────────────────────────
+        driverCompatibilityImage: driverCompatibilityUrl,
+        baseImage: baseUrl,
+        illuminanceLevelImage: illuminanceLevelUrl,
+        wiringDiagramImage: wiringDiagramUrl,
+        installationImage: installationUrl,
+        wiringLayoutImage: wiringLayoutUrl,
+        terminalLayoutImage: terminalLayoutUrl,
+        accessoriesImage: accessoriesUrl,
         galleryImages: [...existingGalleryImages, ...gallery],
         website: selectedWebs,
         websites: selectedWebs,
@@ -811,14 +757,9 @@ export default function AddNewProduct({
       }
 
       // ── Auto-generate TDS PDF ─────────────────────────────────────────────
-      // Wrapped in its own try/catch so a PDF failure never breaks the save.
-      // Every path that could produce undefined is caught before updateDoc —
-      // Firestore rejects undefined field values outright.
       try {
         toast.loading("Generating TDS PDF...", { id: tid });
 
-        // .catch() converts internal throws into undefined so the guard below
-        // handles them cleanly without a second unhandled rejection.
         const generatedTdsUrl: string | undefined = await generateTdsPdf(
           {
             itemDescription,
@@ -826,7 +767,6 @@ export default function AddNewProduct({
             ecoItemCode,
             brand: brandName,
             technicalSpecs,
-            dynamicSpecs,
           },
           {
             mainImageUrl: mainUrl,
@@ -839,10 +779,6 @@ export default function AddNewProduct({
           return undefined;
         });
 
-        // Triple-guard before writing to Firestore:
-        // 1. savedDocId must be a real doc ID
-        // 2. result must be a non-empty string (not undefined / null / "")
-        // 3. result must look like a URL (catches cast-to-string edge cases)
         if (
           savedDocId &&
           typeof generatedTdsUrl === "string" &&
@@ -860,7 +796,6 @@ export default function AddNewProduct({
           );
         }
       } catch (pdfErr) {
-        // Non-blocking — product is already saved successfully.
         console.error("TDS PDF generation failed:", pdfErr);
         toast.warning("Product saved, but TDS PDF could not be generated.", {
           id: tid,
@@ -894,6 +829,31 @@ export default function AddNewProduct({
   const onDropMountingHeight = useCallback((f: File[]) => {
     if (f[0]) setMountingHeightImage(f[0]);
   }, []);
+  // ── New drop callbacks ────────────────────────────────────────────────────
+  const onDropDriverCompatibility = useCallback((f: File[]) => {
+    if (f[0]) setDriverCompatibilityImage(f[0]);
+  }, []);
+  const onDropBase = useCallback((f: File[]) => {
+    if (f[0]) setBaseImage(f[0]);
+  }, []);
+  const onDropIlluminanceLevel = useCallback((f: File[]) => {
+    if (f[0]) setIlluminanceLevelImage(f[0]);
+  }, []);
+  const onDropWiringDiagram = useCallback((f: File[]) => {
+    if (f[0]) setWiringDiagramImage(f[0]);
+  }, []);
+  const onDropInstallation = useCallback((f: File[]) => {
+    if (f[0]) setInstallationImage(f[0]);
+  }, []);
+  const onDropWiringLayout = useCallback((f: File[]) => {
+    if (f[0]) setWiringLayoutImage(f[0]);
+  }, []);
+  const onDropTerminalLayout = useCallback((f: File[]) => {
+    if (f[0]) setTerminalLayoutImage(f[0]);
+  }, []);
+  const onDropAccessories = useCallback((f: File[]) => {
+    if (f[0]) setAccessoriesImage(f[0]);
+  }, []);
 
   const { getRootProps: mainRoot, getInputProps: mainInput } = useDropzone({
     onDrop: onDropMain,
@@ -913,6 +873,31 @@ export default function AddNewProduct({
     getRootProps: mountingHeightRoot,
     getInputProps: mountingHeightInput,
   } = useDropzone({ onDrop: onDropMountingHeight, maxFiles: 1 });
+  // ── New dropzone hooks ────────────────────────────────────────────────────
+  const {
+    getRootProps: driverCompatibilityRoot,
+    getInputProps: driverCompatibilityInput,
+  } = useDropzone({ onDrop: onDropDriverCompatibility, maxFiles: 1 });
+  const { getRootProps: baseRoot, getInputProps: baseInput } = useDropzone({
+    onDrop: onDropBase,
+    maxFiles: 1,
+  });
+  const {
+    getRootProps: illuminanceLevelRoot,
+    getInputProps: illuminanceLevelInput,
+  } = useDropzone({ onDrop: onDropIlluminanceLevel, maxFiles: 1 });
+  const { getRootProps: wiringDiagramRoot, getInputProps: wiringDiagramInput } =
+    useDropzone({ onDrop: onDropWiringDiagram, maxFiles: 1 });
+  const { getRootProps: installationRoot, getInputProps: installationInput } =
+    useDropzone({ onDrop: onDropInstallation, maxFiles: 1 });
+  const { getRootProps: wiringLayoutRoot, getInputProps: wiringLayoutInput } =
+    useDropzone({ onDrop: onDropWiringLayout, maxFiles: 1 });
+  const {
+    getRootProps: terminalLayoutRoot,
+    getInputProps: terminalLayoutInput,
+  } = useDropzone({ onDrop: onDropTerminalLayout, maxFiles: 1 });
+  const { getRootProps: accessoriesRoot, getInputProps: accessoriesInput } =
+    useDropzone({ onDrop: onDropAccessories, maxFiles: 1 });
 
   const toggleWebsite = (web: string) =>
     setSelectedWebs((p) =>
@@ -949,6 +934,68 @@ export default function AddNewProduct({
       activeBg: "border-amber-500 bg-amber-50 dark:bg-amber-950/30",
     },
   ];
+
+  // ── Reusable simple dropzone renderer ────────────────────────────────────
+  const renderSimpleDropzone = ({
+    rootProps,
+    inputProps,
+    file,
+    existingUrl,
+    onClear,
+    icon,
+    label,
+    height = "h-[160px]",
+  }: {
+    rootProps: any;
+    inputProps: any;
+    file: File | null;
+    existingUrl: string;
+    onClear: () => void;
+    icon: React.ReactNode;
+    label: string;
+    height?: string;
+  }) => (
+    <div className="space-y-2">
+      <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+        {icon}
+        {label}
+      </Label>
+      <div
+        {...rootProps()}
+        className={`relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all ${height} flex flex-col items-center justify-center`}
+      >
+        <input {...inputProps()} />
+        {file || existingUrl ? (
+          <div className="relative w-full h-full group">
+            <img
+              src={file ? URL.createObjectURL(file) : existingUrl}
+              className="w-full h-full object-contain rounded"
+              alt={label}
+            />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClear();
+              }}
+              className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5">
+            <span className="text-muted-foreground/60">{icon}</span>
+            <p className="text-[10px] font-medium text-muted-foreground">
+              {label}
+            </p>
+            <p className="text-[9px] text-muted-foreground/50">
+              Drop or click to upload
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -998,297 +1045,417 @@ export default function AddNewProduct({
 
         {/* Media Assets */}
         <Card>
-          <CardHeader>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setMediaOpen((o) => !o)}
+          >
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <Images className="h-4 w-4" />
               Media Assets
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Row 1 — Main / Raw / QR / Gallery */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {/* Main Image */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Main Image
-                </Label>
-                <div
-                  {...mainRoot()}
-                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
-                >
-                  <input {...mainInput()} />
-                  {mainImage || existingMainImage ? (
-                    <div className="relative w-full h-full group">
-                      <img
-                        src={
-                          mainImage
-                            ? URL.createObjectURL(mainImage)
-                            : existingMainImage
-                        }
-                        className="w-full h-full object-contain rounded"
-                        alt="Main"
-                      />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMainImage(null);
-                          setExistingMainImage("");
-                        }}
-                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1">
-                      <ImagePlus className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Main
-                      </p>
-                    </div>
+              <div className="ml-auto flex items-center gap-2">
+                {!mediaOpen &&
+                  (mainImage ||
+                    existingMainImage ||
+                    galleryImages.length > 0 ||
+                    existingGalleryImages.length > 0) && (
+                    <span className="text-[10px] font-normal text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                      {[
+                        mainImage || existingMainImage ? 1 : 0,
+                        galleryImages.length + existingGalleryImages.length,
+                      ].reduce((a, b) => a + b, 0)}{" "}
+                      uploaded
+                    </span>
                   )}
-                </div>
-              </div>
-
-              {/* Raw Image */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Raw Image
-                </Label>
-                <div
-                  {...rawRoot()}
-                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
-                >
-                  <input {...rawInput()} />
-                  {rawImage || existingRawImage ? (
-                    <div className="relative w-full h-full group">
-                      <img
-                        src={
-                          rawImage
-                            ? URL.createObjectURL(rawImage)
-                            : existingRawImage
-                        }
-                        className="w-full h-full object-contain rounded"
-                        alt="Raw"
-                      />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRawImage(null);
-                          setExistingRawImage("");
-                        }}
-                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1">
-                      <FileImage className="h-7 w-7 text-muted-foreground" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Raw
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* QR Code */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  QR Code
-                </Label>
-                <QrDropzone
-                  file={qrImage}
-                  existingUrl={existingQrImage}
-                  onRemove={() => {
-                    setQrImage(null);
-                    setExistingQrImage("");
-                  }}
-                  onDrop={(files) => {
-                    if (files[0]) setQrImage(files[0]);
-                  }}
+                <ChevronDown
+                  className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${mediaOpen ? "rotate-180" : ""}`}
                 />
               </div>
+            </CardTitle>
+          </CardHeader>
+          {mediaOpen && (
+            <CardContent className="space-y-6">
+              {/* Row 1 — Main / Raw / QR / Gallery */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {/* Main Image */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Main Image
+                  </Label>
+                  <div
+                    {...mainRoot()}
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                  >
+                    <input {...mainInput()} />
+                    {mainImage || existingMainImage ? (
+                      <div className="relative w-full h-full group">
+                        <img
+                          src={
+                            mainImage
+                              ? URL.createObjectURL(mainImage)
+                              : existingMainImage
+                          }
+                          className="w-full h-full object-contain rounded"
+                          alt="Main"
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMainImage(null);
+                            setExistingMainImage("");
+                          }}
+                          className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1">
+                        <ImagePlus className="h-7 w-7 text-muted-foreground" />
+                        <p className="text-[10px] font-medium text-muted-foreground">
+                          Main
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-              {/* Gallery Add */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">
-                  Add Gallery
-                </Label>
-                <div
-                  {...galleryRoot()}
-                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
-                >
-                  <input {...galleryInput()} />
-                  <div className="flex flex-col items-center gap-1">
-                    <Images className="h-7 w-7 text-muted-foreground" />
-                    <p className="text-[10px] font-medium text-muted-foreground">
-                      Gallery
-                    </p>
-                    <p className="text-[9px] text-muted-foreground/60">
-                      Multi-select
-                    </p>
+                {/* Raw Image */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Raw Image
+                  </Label>
+                  <div
+                    {...rawRoot()}
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                  >
+                    <input {...rawInput()} />
+                    {rawImage || existingRawImage ? (
+                      <div className="relative w-full h-full group">
+                        <img
+                          src={
+                            rawImage
+                              ? URL.createObjectURL(rawImage)
+                              : existingRawImage
+                          }
+                          className="w-full h-full object-contain rounded"
+                          alt="Raw"
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRawImage(null);
+                            setExistingRawImage("");
+                          }}
+                          className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1">
+                        <FileImage className="h-7 w-7 text-muted-foreground" />
+                        <p className="text-[10px] font-medium text-muted-foreground">
+                          Raw
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* QR Code */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    QR Code
+                  </Label>
+                  <QrDropzone
+                    file={qrImage}
+                    existingUrl={existingQrImage}
+                    onRemove={() => {
+                      setQrImage(null);
+                      setExistingQrImage("");
+                    }}
+                    onDrop={(files) => {
+                      if (files[0]) setQrImage(files[0]);
+                    }}
+                  />
+                </div>
+
+                {/* Gallery Add */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Add Gallery
+                  </Label>
+                  <div
+                    {...galleryRoot()}
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                  >
+                    <input {...galleryInput()} />
+                    <div className="flex flex-col items-center gap-1">
+                      <Images className="h-7 w-7 text-muted-foreground" />
+                      <p className="text-[10px] font-medium text-muted-foreground">
+                        Gallery
+                      </p>
+                      <p className="text-[9px] text-muted-foreground/60">
+                        Multi-select
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Row 2 — Dimension Drawing / Mounting Height */}
-            <div className="grid grid-cols-2 gap-4 pt-2 border-t">
-              <p className="col-span-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide -mb-1">
-                Technical Drawings
-              </p>
-
-              {/* Dimension Drawing */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <Ruler className="h-3 w-3" />
-                  Dimension Drawing
-                </Label>
-                <div
-                  {...dimensionDrawingRoot()}
-                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+              {/* ── Technical Drawings Section ── */}
+              <div className="pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTechDrawingsOpen((o) => !o);
+                  }}
+                  className="w-full flex items-center justify-between py-1 group"
                 >
-                  <input {...dimensionDrawingInput()} />
-                  {dimensionDrawingImage || existingDimensionDrawingImage ? (
-                    <div className="relative w-full h-full group">
-                      <img
-                        src={
-                          dimensionDrawingImage
-                            ? URL.createObjectURL(dimensionDrawingImage)
-                            : existingDimensionDrawingImage
-                        }
-                        className="w-full h-full object-contain rounded"
-                        alt="Dimension Drawing"
-                      />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
+                    Technical Drawings
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {!techDrawingsOpen &&
+                      (() => {
+                        const count =
+                          [
+                            dimensionDrawingImage,
+                            mountingHeightImage,
+                            driverCompatibilityImage,
+                            baseImage,
+                            illuminanceLevelImage,
+                            wiringDiagramImage,
+                            installationImage,
+                            wiringLayoutImage,
+                            terminalLayoutImage,
+                            accessoriesImage,
+                          ].filter(Boolean).length +
+                          [
+                            existingDimensionDrawingImage,
+                            existingMountingHeightImage,
+                            existingDriverCompatibilityImage,
+                            existingBaseImage,
+                            existingIlluminanceLevelImage,
+                            existingWiringDiagramImage,
+                            existingInstallationImage,
+                            existingWiringLayoutImage,
+                            existingTerminalLayoutImage,
+                            existingAccessoriesImage,
+                          ].filter(Boolean).length;
+                        return count > 0 ? (
+                          <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                            {count} uploaded
+                          </span>
+                        ) : null;
+                      })()}
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
+                    />
+                  </div>
+                </button>
+                {techDrawingsOpen && (
+                  <div className="space-y-4 mt-3">
+                    {/* Row — Dimension Drawing / Mounting Height */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: dimensionDrawingRoot,
+                        inputProps: dimensionDrawingInput,
+                        file: dimensionDrawingImage,
+                        existingUrl: existingDimensionDrawingImage,
+                        onClear: () => {
                           setDimensionDrawingImage(null);
                           setExistingDimensionDrawingImage("");
-                        }}
-                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1.5">
-                      <Ruler className="h-8 w-8 text-muted-foreground/60" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Dimension Drawing
-                      </p>
-                      <p className="text-[9px] text-muted-foreground/50">
-                        Drop or click to upload
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Mounting Height */}
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                  <ArrowUpDown className="h-3 w-3" />
-                  Mounting Height
-                </Label>
-                <div
-                  {...mountingHeightRoot()}
-                  className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
-                >
-                  <input {...mountingHeightInput()} />
-                  {mountingHeightImage || existingMountingHeightImage ? (
-                    <div className="relative w-full h-full group">
-                      <img
-                        src={
-                          mountingHeightImage
-                            ? URL.createObjectURL(mountingHeightImage)
-                            : existingMountingHeightImage
-                        }
-                        className="w-full h-full object-contain rounded"
-                        alt="Mounting Height"
-                      />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        },
+                        icon: <Ruler className="h-3 w-3" />,
+                        label: "Dimension Drawing",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: mountingHeightRoot,
+                        inputProps: mountingHeightInput,
+                        file: mountingHeightImage,
+                        existingUrl: existingMountingHeightImage,
+                        onClear: () => {
                           setMountingHeightImage(null);
                           setExistingMountingHeightImage("");
-                        }}
-                        className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg z-10"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+                        },
+                        icon: <ArrowUpDown className="h-3 w-3" />,
+                        label: "Mounting Height",
+                      })}
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1.5">
-                      <ArrowUpDown className="h-8 w-8 text-muted-foreground/60" />
-                      <p className="text-[10px] font-medium text-muted-foreground">
-                        Mounting Height
-                      </p>
-                      <p className="text-[9px] text-muted-foreground/50">
-                        Drop or click to upload
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
 
-            {(existingGalleryImages.length > 0 || galleryImages.length > 0) && (
-              <div className="pt-4 border-t">
-                <Label className="text-xs font-medium text-muted-foreground mb-3 block">
-                  Gallery Preview
-                </Label>
-                <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
-                  {existingGalleryImages.map((img, i) => (
-                    <div
-                      key={`exist-${i}`}
-                      className="aspect-square relative border rounded-md overflow-hidden group"
-                    >
-                      <img
-                        src={img}
-                        className="object-cover w-full h-full"
-                        alt={`Gallery ${i + 1}`}
-                      />
-                      <button
-                        onClick={() =>
-                          setExistingGalleryImages((p) =>
-                            p.filter((_, idx) => idx !== i),
-                          )
-                        }
-                        className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+                    {/* Row — Driver Compatibility / Base */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: driverCompatibilityRoot,
+                        inputProps: driverCompatibilityInput,
+                        file: driverCompatibilityImage,
+                        existingUrl: existingDriverCompatibilityImage,
+                        onClear: () => {
+                          setDriverCompatibilityImage(null);
+                          setExistingDriverCompatibilityImage("");
+                        },
+                        icon: <Cpu className="h-3 w-3" />,
+                        label: "Driver Compatibility",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: baseRoot,
+                        inputProps: baseInput,
+                        file: baseImage,
+                        existingUrl: existingBaseImage,
+                        onClear: () => {
+                          setBaseImage(null);
+                          setExistingBaseImage("");
+                        },
+                        icon: <Layers className="h-3 w-3" />,
+                        label: "Base",
+                      })}
                     </div>
-                  ))}
-                  {galleryImages.map((img, i) => (
-                    <div
-                      key={`new-${i}`}
-                      className="aspect-square relative border rounded-md overflow-hidden group"
-                    >
-                      <img
-                        src={URL.createObjectURL(img)}
-                        className="object-cover w-full h-full"
-                        alt={`New ${i + 1}`}
-                      />
-                      <button
-                        onClick={() =>
-                          setGalleryImages((p) =>
-                            p.filter((_, idx) => idx !== i),
-                          )
-                        }
-                        className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+
+                    {/* Row — Illuminance Level / Wiring Diagram */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: illuminanceLevelRoot,
+                        inputProps: illuminanceLevelInput,
+                        file: illuminanceLevelImage,
+                        existingUrl: existingIlluminanceLevelImage,
+                        onClear: () => {
+                          setIlluminanceLevelImage(null);
+                          setExistingIlluminanceLevelImage("");
+                        },
+                        icon: <Sun className="h-3 w-3" />,
+                        label: "Illuminance Level",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: wiringDiagramRoot,
+                        inputProps: wiringDiagramInput,
+                        file: wiringDiagramImage,
+                        existingUrl: existingWiringDiagramImage,
+                        onClear: () => {
+                          setWiringDiagramImage(null);
+                          setExistingWiringDiagramImage("");
+                        },
+                        icon: <GitBranch className="h-3 w-3" />,
+                        label: "Wiring Diagram",
+                      })}
                     </div>
-                  ))}
-                </div>
+
+                    {/* Row — Installation / Wiring Layout */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: installationRoot,
+                        inputProps: installationInput,
+                        file: installationImage,
+                        existingUrl: existingInstallationImage,
+                        onClear: () => {
+                          setInstallationImage(null);
+                          setExistingInstallationImage("");
+                        },
+                        icon: <HardHat className="h-3 w-3" />,
+                        label: "Installation",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: wiringLayoutRoot,
+                        inputProps: wiringLayoutInput,
+                        file: wiringLayoutImage,
+                        existingUrl: existingWiringLayoutImage,
+                        onClear: () => {
+                          setWiringLayoutImage(null);
+                          setExistingWiringLayoutImage("");
+                        },
+                        icon: <LayoutTemplate className="h-3 w-3" />,
+                        label: "Wiring Layout",
+                      })}
+                    </div>
+
+                    {/* Row — Terminal Layout / Accessories */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: terminalLayoutRoot,
+                        inputProps: terminalLayoutInput,
+                        file: terminalLayoutImage,
+                        existingUrl: existingTerminalLayoutImage,
+                        onClear: () => {
+                          setTerminalLayoutImage(null);
+                          setExistingTerminalLayoutImage("");
+                        },
+                        icon: <Grid className="h-3 w-3" />,
+                        label: "Terminal Layout",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: accessoriesRoot,
+                        inputProps: accessoriesInput,
+                        file: accessoriesImage,
+                        existingUrl: existingAccessoriesImage,
+                        onClear: () => {
+                          setAccessoriesImage(null);
+                          setExistingAccessoriesImage("");
+                        },
+                        icon: <ShoppingBag className="h-3 w-3" />,
+                        label: "Accessories",
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </CardContent>
+
+              {(existingGalleryImages.length > 0 ||
+                galleryImages.length > 0) && (
+                <div className="pt-4 border-t">
+                  <Label className="text-xs font-medium text-muted-foreground mb-3 block">
+                    Gallery Preview
+                  </Label>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
+                    {existingGalleryImages.map((img, i) => (
+                      <div
+                        key={`exist-${i}`}
+                        className="aspect-square relative border rounded-md overflow-hidden group"
+                      >
+                        <img
+                          src={img}
+                          className="object-cover w-full h-full"
+                          alt={`Gallery ${i + 1}`}
+                        />
+                        <button
+                          onClick={() =>
+                            setExistingGalleryImages((p) =>
+                              p.filter((_, idx) => idx !== i),
+                            )
+                          }
+                          className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {galleryImages.map((img, i) => (
+                      <div
+                        key={`new-${i}`}
+                        className="aspect-square relative border rounded-md overflow-hidden group"
+                      >
+                        <img
+                          src={URL.createObjectURL(img)}
+                          className="object-cover w-full h-full"
+                          alt={`New ${i + 1}`}
+                        />
+                        <button
+                          onClick={() =>
+                            setGalleryImages((p) =>
+                              p.filter((_, idx) => idx !== i),
+                            )
+                          }
+                          className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          )}
         </Card>
 
         {/* General Information */}
@@ -1458,7 +1625,7 @@ export default function AddNewProduct({
           </CardContent>
         </Card>
 
-        {/* TDS PDF — shown only when a URL exists (after save or in edit mode) */}
+        {/* TDS PDF */}
         {tdsUrl && (
           <Card className="border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-800">
             <CardHeader className="pb-3">
@@ -1552,9 +1719,9 @@ export default function AddNewProduct({
             </CardTitle>
           </CardHeader>
 
-          <CardContent className="space-y-8">
+          <CardContent className="space-y-6">
             {/* PRODUCT FAMILY */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Tag className="h-3 w-3" />
                 <Label className="text-xs font-medium">Product Family</Label>
@@ -1633,7 +1800,7 @@ export default function AddNewProduct({
             </div>
 
             {/* BRAND */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <Factory className="h-3 w-3" />
                 <Label className="text-xs font-medium">Brand</Label>
@@ -1646,8 +1813,10 @@ export default function AddNewProduct({
                   >
                     <span className="truncate text-left">
                       {selectedBrands.length
-                        ? `${selectedBrands.length} selected`
-                        : "Select brands..."}
+                        ? (availableBrands.find(
+                            (b) => b.id === selectedBrands[0],
+                          )?.name ?? `${selectedBrands.length} selected`)
+                        : "Select brand..."}
                     </span>
                     <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
                   </Button>
@@ -1664,6 +1833,15 @@ export default function AddNewProduct({
                     <CommandList>
                       <CommandEmpty>No brand found.</CommandEmpty>
                       <CommandGroup>
+                        {selectedBrands.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setSelectedBrands([])}
+                            className="text-xs text-muted-foreground italic"
+                          >
+                            <X className="mr-2 h-3 w-3" />
+                            Clear selection
+                          </CommandItem>
+                        )}
                         {availableBrands.map((brand) => (
                           <CommandItem
                             key={brand.id}
@@ -1695,8 +1873,105 @@ export default function AddNewProduct({
               </Popover>
             </div>
 
+            {/* APPLICATIONS */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <Zap className="h-3 w-3" />
+                <Label className="text-xs font-medium">Applications</Label>
+              </div>
+              <Popover open={appsOpen} onOpenChange={setAppsOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between h-9 text-xs font-medium"
+                  >
+                    <span className="truncate text-left">
+                      {selectedApps.length
+                        ? `${selectedApps.length} selected`
+                        : "Select applications..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  align="start"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder="Search applications..."
+                      className="h-9 text-xs"
+                    />
+                    <CommandList>
+                      <CommandEmpty>No application found.</CommandEmpty>
+                      <CommandGroup>
+                        {selectedApps.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setSelectedApps([])}
+                            className="text-xs text-muted-foreground italic"
+                          >
+                            <X className="mr-2 h-3 w-3" />
+                            Clear all
+                          </CommandItem>
+                        )}
+                        {availableApps.map((app) => (
+                          <CommandItem
+                            key={app.id}
+                            value={app.name}
+                            onSelect={() =>
+                              setSelectedApps((p) =>
+                                p.includes(app.id)
+                                  ? p.filter((i) => i !== app.id)
+                                  : [...p, app.id],
+                              )
+                            }
+                            className="text-xs"
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-3 w-3",
+                                selectedApps.includes(app.id)
+                                  ? "opacity-100 text-primary"
+                                  : "opacity-0",
+                              )}
+                            />
+                            {app.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              {selectedApps.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {selectedApps.map((id) => {
+                    const app = availableApps.find((a) => a.id === id);
+                    if (!app) return null;
+                    return (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold border border-primary/20"
+                      >
+                        {app.name}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedApps((p) => p.filter((v) => v !== id))
+                          }
+                          className="hover:text-destructive transition-colors"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* PRODUCT USAGE */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex items-center gap-2 text-primary">
                 <LayoutGrid className="h-3 w-3" />
                 <Label className="text-xs font-medium">Product Usage</Label>
@@ -1752,10 +2027,8 @@ export default function AddNewProduct({
                   </Command>
                 </PopoverContent>
               </Popover>
-
-              {/* Selected badges */}
               {productUsage.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1.5 pt-1">
                   {productUsage.map((u) => (
                     <span
                       key={u}
@@ -1773,220 +2046,6 @@ export default function AddNewProduct({
                       </button>
                     </span>
                   ))}
-                </div>
-              )}
-            </div>
-
-            {/* ── CUSTOM ATTRIBUTE SECTIONS ── */}
-            <div className="pt-4 border-t space-y-4">
-              <div className="flex items-center gap-2">
-                <Settings2 className="h-3.5 w-3.5 text-primary" />
-                <Label className="text-xs font-semibold uppercase tracking-wide text-primary">
-                  Attribute Sections
-                </Label>
-              </div>
-
-              {customSections.length === 0 && (
-                <p className="text-xs text-muted-foreground italic px-1">
-                  No custom sections yet. Add one below.
-                </p>
-              )}
-
-              {customSections.map((sec) => (
-                <div
-                  key={sec.id}
-                  className="rounded-lg border bg-muted/30 p-3 space-y-3"
-                >
-                  {/* Section header */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
-                      {sec.title}
-                    </span>
-                    {/* Delete entire section */}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <button className="text-muted-foreground/40 hover:text-destructive transition-colors">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent className="rounded-2xl">
-                        <AlertDialogHeader>
-                          <AlertDialogTitle className="font-black uppercase">
-                            Delete Section?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription className="text-xs">
-                            This will permanently remove the <b>{sec.title}</b>{" "}
-                            section and all its items.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel className="rounded-xl text-xs font-bold">
-                            Cancel
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleDeleteCustomSection(sec.id)}
-                            className="rounded-xl bg-destructive text-xs font-bold"
-                          >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-
-                  {/* Items list */}
-                  {sec.items.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground italic">
-                      No items yet.
-                    </p>
-                  ) : (
-                    <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                      {sec.items.map((item) => {
-                        const checked = sec.selected.includes(item.name);
-                        return (
-                          <div
-                            key={item.id}
-                            className={`flex items-center justify-between group rounded-md px-2 py-1.5 transition-colors cursor-pointer ${
-                              checked
-                                ? "bg-primary/10 border border-primary/20"
-                                : "hover:bg-muted/50"
-                            }`}
-                            onClick={() =>
-                              setCustomSections((prev) =>
-                                prev.map((s) =>
-                                  s.id === sec.id
-                                    ? {
-                                        ...s,
-                                        selected: checked
-                                          ? s.selected.filter(
-                                              (v) => v !== item.name,
-                                            )
-                                          : [...s.selected, item.name],
-                                      }
-                                    : s,
-                                ),
-                              )
-                            }
-                          >
-                            <div className="flex items-center gap-2">
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={() =>
-                                  setCustomSections((prev) =>
-                                    prev.map((s) =>
-                                      s.id === sec.id
-                                        ? {
-                                            ...s,
-                                            selected: checked
-                                              ? s.selected.filter(
-                                                  (v) => v !== item.name,
-                                                )
-                                              : [...s.selected, item.name],
-                                          }
-                                        : s,
-                                    ),
-                                  )
-                                }
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                              <span
-                                className={`text-xs font-medium ${checked ? "text-primary" : "text-foreground"}`}
-                              >
-                                {item.name}
-                              </span>
-                            </div>
-                            {/* Delete item */}
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <button
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/40 hover:text-destructive"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent className="rounded-2xl">
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle className="font-black uppercase">
-                                    Delete Item?
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription className="text-xs">
-                                    Remove <b>{item.name}</b> from {sec.title}?
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel className="rounded-xl text-xs font-bold">
-                                    Cancel
-                                  </AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() =>
-                                      handleDeleteCustomSectionItem(
-                                        sec,
-                                        item.id,
-                                      )
-                                    }
-                                    className="rounded-xl bg-destructive text-xs font-bold"
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Add choice to section */}
-                  <AddCustomSectionItem
-                    placeholder={`Add to ${sec.title}...`}
-                    onAdd={(val) => handleAddChoiceToCustom(sec.id, val)}
-                  />
-                </div>
-              ))}
-
-              {/* Add new section */}
-              {!isAddingNewSection ? (
-                <Button
-                  variant="outline"
-                  className="w-full h-9 border-dashed border-2 text-xs font-semibold text-muted-foreground hover:text-primary hover:border-primary bg-transparent"
-                  onClick={() => setIsAddingNewSection(true)}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1.5" />
-                  Add Custom Section
-                </Button>
-              ) : (
-                <div className="p-3 bg-card rounded-lg border-2 border-primary/20 shadow-sm space-y-2">
-                  <Input
-                    placeholder="Section title..."
-                    className="h-8 text-xs font-semibold"
-                    value={newSectionTitle}
-                    onChange={(e) => setNewSectionTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleCreateNewSection();
-                    }}
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={handleCreateNewSection}
-                      disabled={!newSectionTitle.trim()}
-                      className="flex-1 h-7 text-xs font-bold"
-                    >
-                      Save
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setIsAddingNewSection(false);
-                        setNewSectionTitle("");
-                      }}
-                      variant="ghost"
-                      className="h-7 text-xs font-bold"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
                 </div>
               )}
             </div>
@@ -2199,47 +2258,6 @@ export default function AddNewProduct({
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-
-function AddCustomSectionItem({
-  placeholder,
-  onAdd,
-}: {
-  placeholder: string;
-  onAdd: (v: string) => void;
-}) {
-  const [val, setVal] = useState("");
-  const go = () => {
-    if (val.trim()) {
-      onAdd(val.trim());
-      setVal("");
-    }
-  };
-  return (
-    <div className="flex items-center gap-1 pt-1 border-t">
-      <Input
-        placeholder={placeholder}
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            go();
-          }
-        }}
-        className="h-7 text-xs"
-      />
-      <Button
-        disabled={!val.trim()}
-        size="icon"
-        variant="ghost"
-        onClick={go}
-        className="h-7 w-7 hover:bg-primary/10 flex-shrink-0"
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
-}
 
 function QrDropzone({
   file,
