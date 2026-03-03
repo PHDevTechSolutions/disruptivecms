@@ -1442,7 +1442,7 @@ export default function BulkUploader({
           entityName: p.itemDescription,
           context: {
             page: "/products/all-products",
-            source: "bulk-uploader:jaris",
+            source: "bulk-uploader",
             collection: "products",
           },
           metadata: {
