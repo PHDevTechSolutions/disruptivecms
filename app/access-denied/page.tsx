@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +8,7 @@ import { AlertCircle, Home } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";
 
-export default function AccessDeniedPage() {
+function AccessDeniedContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
@@ -61,5 +62,17 @@ export default function AccessDeniedPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function AccessDeniedPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-muted/30">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    }>
+      <AccessDeniedContent />
+    </Suspense>
   );
 }
