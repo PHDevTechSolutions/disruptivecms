@@ -9,15 +9,9 @@ import { cookies } from "next/headers";
  */
 export async function GET(request: NextRequest) {
   try {
-    const cookieStore = await cookies();
-    const allCookies = cookieStore.getAll();
-    console.log("[API] All cookies:", allCookies.map(c => c.name));
-    
     const session = await getSession();
-    console.log("[API] Session result:", session ? "Found" : "Not found");
 
     if (!session) {
-      console.log("[API] No session, returning 401");
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
