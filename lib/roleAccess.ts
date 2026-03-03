@@ -96,7 +96,7 @@ export function getPrimaryRouteForRole(role: string): string {
     warehouse: "/products/all-products",
     staff: "/products/all-products",
     inventory: "/products/all-products",
-    hr: "/jobs/careers",
+    hr: "/jobs/applications",
     seo: "/content/blogs",
     csr: "/inquiries/customer-inquiries",
     ecomm: "/products/all-products",
