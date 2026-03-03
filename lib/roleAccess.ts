@@ -23,23 +23,24 @@ export interface RoleAccessConfig {
  * Admin has access to ALL pages (represented by "*")
  * Other roles have specific restricted access
  * Note: /auth/* routes are always public and don't require authentication
+ * 
+ * Access Rules:
+ * - All roles: /auth/* (login, signup, password reset, etc.)
+ * - admin: all pages
+ * - pd: /products/all-products only
+ * - seo: /content/blogs only
+ * - hr: /jobs only
  */
 export const roleAccessConfig: RoleAccessConfig = {
   admin: ["*"], // Admin has access to all pages
   warehouse: [],
   staff: [],
   inventory: [],
-  hr: [
-    "/jobs/applications",
-  ],
-  seo: [
-    "/content/blogs",
-  ],
+  hr: ["/jobs"],
+  seo: ["/content/blogs"],
   csr: [],
   ecomm: [],
-  pd: [
-    "/products/all-products",
-  ],
+  pd: ["/products/all-products"],
 };
 
 /**
@@ -79,7 +80,7 @@ export function getPrimaryRouteForRole(role: string): string {
     warehouse: "/products/all-products",
     staff: "/products/all-products",
     inventory: "/products/all-products",
-    hr: "/jobs/applications",
+    hr: "/jobs",
     seo: "/content/blogs",
     csr: "/inquiries/customer-inquiries",
     ecomm: "/products/all-products",

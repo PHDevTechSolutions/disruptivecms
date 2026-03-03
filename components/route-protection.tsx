@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
 import { canAccessRoute } from "@/lib/roleAccess";
@@ -13,6 +13,7 @@ interface RouteProtectionProps {
 export function RouteProtection({ children, requiredRoutes }: RouteProtectionProps) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
+  const [shouldRender, setShouldRender] = useState(false);
 
   // Get the current path from the request
   const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
@@ -20,12 +21,13 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
   // Check if user has access to any of the required routes
   const hasAccess = user ? requiredRoutes.some(route => canAccessRoute(user.role || "", route)) : false;
 
-  // Handle redirects in useEffect to avoid setState during render
+  // Handle redirects and rendering logic
   useEffect(() => {
     if (isLoading) return;
 
     // Allow public access to auth routes without authentication
     if (currentPath.startsWith("/auth")) {
+      setShouldRender(true);
       return;
     }
 
@@ -36,9 +38,14 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
 
     if (!hasAccess) {
       router.push(`/access-denied?from=${encodeURIComponent(currentPath)}`);
+      return;
     }
+
+    // User is authenticated and has access
+    setShouldRender(true);
   }, [user, hasAccess, isLoading, router, currentPath]);
 
+  // Show loading state only during initial auth check
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -47,9 +54,11 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
     );
   }
 
-  if (!user || !hasAccess) {
-    return null;
+  // Render content only when authorized
+  if (shouldRender) {
+    return <>{children}</>;
   }
 
-  return <>{children}</>;
+  // Still checking or redirecting - render nothing
+  return null;
 }
