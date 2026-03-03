@@ -29,6 +29,8 @@ import {
   Images,
   Eye,
   EyeOff,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 
 // UI Components
@@ -37,6 +39,20 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 
@@ -155,6 +171,10 @@ export default function TaskflowAddNewProduct({
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
 
+  const [catOpen, setCatOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
+  const [appsOpen, setAppsOpen] = useState(false);
+
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
   // IMAGES
@@ -169,10 +189,8 @@ export default function TaskflowAddNewProduct({
 
   // --- 1. FETCH MASTER DATA ---
   useEffect(() => {
-    const qFilter = where("websites", "array-contains-any", SELECTED_WEBS);
-
     const unsubCats = onSnapshot(
-      query(collection(db, "productfamilies"), qFilter),
+      query(collection(db, "productfamilies")),
       (snap) => {
         setAvailableCats((prev) =>
           mergeWithPending(
@@ -187,7 +205,7 @@ export default function TaskflowAddNewProduct({
     );
 
     const unsubBrands = onSnapshot(
-      query(collection(db, "brand_name"), qFilter),
+      query(collection(db, "brand_name"), where("websites", "array-contains-any", SELECTED_WEBS)),
       (snap) => {
         setAvailableBrands((prev) =>
           mergeWithPending(
@@ -202,7 +220,7 @@ export default function TaskflowAddNewProduct({
     );
 
     const unsubApps = onSnapshot(
-      query(collection(db, "applications"), qFilter),
+      query(collection(db, "applications"), where("websites", "array-contains-any", SELECTED_WEBS)),
       (snap) => {
         setAvailableApps((prev) =>
           mergeWithPending(
@@ -351,14 +369,16 @@ export default function TaskflowAddNewProduct({
 
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
+        // Normalise spec name to match uppercased labels in availableSpecs
+        const specLabel = String(spec.name).toUpperCase().trim();
+
         // Primary match: label + group name (works when name unchanged)
         let specItem = availableSpecs.find(
-          (s) => s.label === spec.name && s.specGroup === group.specGroup,
+          (s) => s.label === specLabel && s.specGroup === group.specGroup,
         );
         // Fallback: label only — handles renamed spec groups.
-        // specGroupId is stable even when the display name changes.
         if (!specItem) {
-          specItem = availableSpecs.find((s) => s.label === spec.name);
+          specItem = availableSpecs.find((s) => s.label === specLabel);
         }
 
         if (specItem) {
@@ -899,16 +919,15 @@ export default function TaskflowAddNewProduct({
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      const visibleSpecs = editData
-                        ? specs.filter((spec) => {
-                            const key = `${spec.specGroupId}-${spec.label}`;
-                            return (
-                              specValues[key] && specValues[key].trim() !== ""
-                            );
-                          })
-                        : specs;
+                      // De-duplicate specs by id within each group to ensure unique React keys
+                      const seenIds = new Set<string>();
+                      const uniqueSpecs = specs.filter((spec) => {
+                        if (seenIds.has(spec.id)) return false;
+                        seenIds.add(spec.id);
+                        return true;
+                      });
 
-                      if (visibleSpecs.length === 0) return null;
+                      if (uniqueSpecs.length === 0) return null;
 
                       return (
                         <div key={groupName} className="space-y-3">
@@ -917,7 +936,7 @@ export default function TaskflowAddNewProduct({
                             {groupName}
                           </h4>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-5">
-                            {visibleSpecs.map((spec) => {
+                            {uniqueSpecs.map((spec) => {
                               const specKey = `${spec.specGroupId}-${spec.label}`;
                               return (
                                 <div
@@ -962,57 +981,233 @@ export default function TaskflowAddNewProduct({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-8">
-            <SidebarList
-              label="Product Family"
-              icon={<Tag className="h-3 w-3" />}
-              items={availableCats}
-              selected={selectedCats}
-              disabled={false}
-              onToggle={(id: string) =>
-                setSelectedCats((prev) =>
-                  prev.includes(id)
-                    ? prev.filter((i) => i !== id)
-                    : [...prev, id],
-                )
-              }
-              onAdd={(name: string) =>
-                handleAddItem("category", name, "productfamilies", "title")
-              }
-            />
-            <SidebarList
-              label="Brand"
-              icon={<Factory className="h-3 w-3" />}
-              items={availableBrands}
-              selected={selectedBrands}
-              disabled={false}
-              onToggle={(id: string) =>
-                setSelectedBrands((prev) =>
-                  prev.includes(id)
-                    ? prev.filter((i) => i !== id)
-                    : [...prev, id],
-                )
-              }
-              onAdd={(name: string) =>
-                handleAddItem("brand", name, "brand_name", "title")
-              }
-            />
-            <SidebarList
-              label="Applications"
-              icon={<LayoutGrid className="h-3 w-3" />}
-              items={availableApps}
-              selected={selectedApps}
-              disabled={false}
-              onToggle={(id: string) =>
-                setSelectedApps((prev) =>
-                  prev.includes(id)
-                    ? prev.filter((a) => a !== id)
-                    : [...prev, id],
-                )
-              }
-              onAdd={(name: string) =>
-                handleAddItem("application", name, "applications", "title")
-              }
-            />
+            {/* Product Family (combobox) */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <Tag className="h-3 w-3" />
+                <Label className="text-xs font-medium">Product Family</Label>
+              </div>
+              <Popover open={catOpen} onOpenChange={setCatOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between h-9 text-xs font-medium"
+                  >
+                    <span className="truncate text-left">
+                      {selectedCats.length
+                        ? `${selectedCats.length} selected`
+                        : "Select product family..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-(--radix-popover-trigger-width) p-0"
+                  align="start"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder="Search families..."
+                      className="h-9 text-xs"
+                    />
+                    <CommandList>
+                      <CommandEmpty>No family found.</CommandEmpty>
+                      <CommandGroup>
+                        {selectedCats.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setSelectedCats([])}
+                            className="text-xs text-muted-foreground italic"
+                          >
+                            <X className="mr-2 h-3 w-3" />
+                            Clear selection
+                          </CommandItem>
+                        )}
+                        {availableCats.map((cat) => {
+                          const active = selectedCats.includes(cat.id);
+                          return (
+                            <CommandItem
+                              key={cat.id}
+                              value={cat.name}
+                              onSelect={() =>
+                                setSelectedCats((prev) =>
+                                  prev.includes(cat.id)
+                                    ? prev.filter((i) => i !== cat.id)
+                                    : [...prev, cat.id],
+                                )
+                              }
+                              className={cn(
+                                "text-xs",
+                                cat.isTemp && "italic text-muted-foreground",
+                              )}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  active ? "opacity-100 text-primary" : "opacity-0",
+                                )}
+                              />
+                              {cat.name}
+                              {cat.isTemp && (
+                                <span className="ml-1 text-[10px] opacity-60">
+                                  *new
+                                </span>
+                              )}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {/* Brand (combobox) */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <Factory className="h-3 w-3" />
+                <Label className="text-xs font-medium">Brand</Label>
+              </div>
+              <Popover open={brandOpen} onOpenChange={setBrandOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between h-9 text-xs font-medium"
+                  >
+                    <span className="truncate text-left">
+                      {selectedBrands.length
+                        ? `${selectedBrands.length} selected`
+                        : "Select brand..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-(--radix-popover-trigger-width) p-0"
+                  align="start"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder="Search brands..."
+                      className="h-9 text-xs"
+                    />
+                    <CommandList>
+                      <CommandEmpty>No brand found.</CommandEmpty>
+                      <CommandGroup>
+                        {selectedBrands.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setSelectedBrands([])}
+                            className="text-xs text-muted-foreground italic"
+                          >
+                            <X className="mr-2 h-3 w-3" />
+                            Clear selection
+                          </CommandItem>
+                        )}
+                        {availableBrands.map((brand) => {
+                          const active = selectedBrands.includes(brand.id);
+                          return (
+                            <CommandItem
+                              key={brand.id}
+                              value={brand.name}
+                              onSelect={() =>
+                                setSelectedBrands((prev) =>
+                                  prev.includes(brand.id)
+                                    ? prev.filter((i) => i !== brand.id)
+                                    : [...prev, brand.id],
+                                )
+                              }
+                              className="text-xs"
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  active ? "opacity-100 text-primary" : "opacity-0",
+                                )}
+                              />
+                              {brand.name}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {/* Applications (combobox) */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <LayoutGrid className="h-3 w-3" />
+                <Label className="text-xs font-medium">Applications</Label>
+              </div>
+              <Popover open={appsOpen} onOpenChange={setAppsOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between h-9 text-xs font-medium"
+                  >
+                    <span className="truncate text-left">
+                      {selectedApps.length
+                        ? `${selectedApps.length} selected`
+                        : "Select applications..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-(--radix-popover-trigger-width) p-0"
+                  align="start"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder="Search applications..."
+                      className="h-9 text-xs"
+                    />
+                    <CommandList>
+                      <CommandEmpty>No application found.</CommandEmpty>
+                      <CommandGroup>
+                        {selectedApps.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setSelectedApps([])}
+                            className="text-xs text-muted-foreground italic"
+                          >
+                            <X className="mr-2 h-3 w-3" />
+                            Clear all
+                          </CommandItem>
+                        )}
+                        {availableApps.map((app) => {
+                          const active = selectedApps.includes(app.id);
+                          return (
+                            <CommandItem
+                              key={app.id}
+                              value={app.name}
+                              onSelect={() =>
+                                setSelectedApps((prev) =>
+                                  prev.includes(app.id)
+                                    ? prev.filter((a) => a !== app.id)
+                                    : [...prev, app.id],
+                                )
+                              }
+                              className="text-xs"
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  active ? "opacity-100 text-primary" : "opacity-0",
+                                )}
+                              />
+                              {app.name}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
           </CardContent>
         </Card>
 

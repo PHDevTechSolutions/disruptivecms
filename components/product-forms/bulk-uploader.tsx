@@ -1323,10 +1323,24 @@ export default function BulkUploader({
       const familyTitle = p.productFamily;
       if (!familyToGroups[familyTitle]) familyToGroups[familyTitle] = new Set();
       if (!familySpecItems[familyTitle]) familySpecItems[familyTitle] = {};
+
       for (const [groupName, specEntries] of Object.entries(p.specs)) {
+        // Global collection of all labels per spec group name (for specs collection)
         if (!allSpecGroups[groupName]) allSpecGroups[groupName] = new Set();
         specEntries.forEach((e) => allSpecGroups[groupName].add(e.label));
+
+        // Track which spec groups this family uses
         familyToGroups[familyTitle].add(groupName);
+
+        // Track per‑family selected spec items per group (by groupName for now;
+        // later mapped to specGroupId in the productfamilies document)
+        if (!familySpecItems[familyTitle][groupName]) {
+          familySpecItems[familyTitle][groupName] = new Set();
+        }
+        specEntries.forEach((e) => {
+          const label = e.label.toUpperCase().trim();
+          if (label) familySpecItems[familyTitle][groupName].add(label);
+        });
       }
     }
 

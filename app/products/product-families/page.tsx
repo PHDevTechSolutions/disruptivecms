@@ -598,10 +598,15 @@ export default function ProductFamiliesPage() {
                             {selectedSpecGroupIds.map((gid) => {
                               const group = specGroupById.get(gid);
                               const groupName = group?.name ?? gid;
-                              const labels = (group?.items ?? [])
-                                .map((i) => i.label)
-                                .filter(Boolean)
-                                .map((l) => l.toUpperCase().trim());
+                              // Normalize and de-duplicate labels so React keys are unique
+                              const labels = Array.from(
+                                new Set(
+                                  (group?.items ?? [])
+                                    .map((i) => i.label)
+                                    .filter(Boolean)
+                                    .map((l) => l.toUpperCase().trim()),
+                                ),
+                              );
 
                               const search = (specItemSearch[gid] ?? "").toUpperCase();
                               const filtered = search
@@ -731,27 +736,36 @@ export default function ProductFamiliesPage() {
                             </Badge>
                           </div>
                           <div className="space-y-2">
-                            {selectedSummary.map((g) => (
-                              <div
-                                key={g.specGroupId}
-                                className="border border-foreground/10 bg-background p-2 rounded-none"
-                              >
-                                <p className="text-[10px] font-black uppercase mb-1">
-                                  {g.groupName}
-                                </p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {g.specItems.map((it) => (
-                                    <Badge
-                                      key={it.id}
-                                      variant="outline"
-                                      className="rounded-none text-[8px] font-black uppercase px-2 h-5"
-                                    >
-                                      {it.name}
-                                    </Badge>
-                                  ))}
+                            {selectedSummary.map((g) => {
+                              // De-duplicate specItems by id to ensure stable, unique keys
+                              const seen = new Set<string>();
+                              const uniqueItems = g.specItems.filter((it) => {
+                                if (seen.has(it.id)) return false;
+                                seen.add(it.id);
+                                return true;
+                              });
+                              return (
+                                <div
+                                  key={g.specGroupId}
+                                  className="border border-foreground/10 bg-background p-2 rounded-none"
+                                >
+                                  <p className="text-[10px] font-black uppercase mb-1">
+                                    {g.groupName}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {uniqueItems.map((it) => (
+                                      <Badge
+                                        key={it.id}
+                                        variant="outline"
+                                        className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                                      >
+                                        {it.name}
+                                      </Badge>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}

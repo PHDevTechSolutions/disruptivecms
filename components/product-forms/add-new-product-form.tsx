@@ -661,10 +661,12 @@ export default function AddNewProduct({
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
+        // Normalise spec name to match uppercased labels in availableSpecs
+        const specLabel = String(spec.name).toUpperCase().trim();
         let item = availableSpecs.find(
-          (s) => s.label === spec.name && s.specGroup === group.specGroup,
+          (s) => s.label === specLabel && s.specGroup === group.specGroup,
         );
-        if (!item) item = availableSpecs.find((s) => s.label === spec.name);
+        if (!item) item = availableSpecs.find((s) => s.label === specLabel);
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
@@ -1666,14 +1668,16 @@ export default function AddNewProduct({
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      // In edit mode, only render specs that already have a saved value
-                      const visibleSpecs = editData
-                        ? specs.filter((s) => {
-                            const k = `${s.specGroupId}-${s.label}`;
-                            return specValues[k]?.trim();
-                          })
-                        : specs;
-                      if (visibleSpecs.length === 0) return null;
+                      // De-duplicate specs by id within each group to ensure unique React keys
+                      const seenIds = new Set<string>();
+                      const uniqueSpecs = specs.filter((spec) => {
+                        if (seenIds.has(spec.id)) return false;
+                        seenIds.add(spec.id);
+                        return true;
+                      });
+
+                      if (uniqueSpecs.length === 0) return null;
+
                       return (
                         <div key={groupName} className="space-y-3">
                           <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
@@ -1681,7 +1685,7 @@ export default function AddNewProduct({
                             {groupName}
                           </h4>
                           <div className="space-y-3 pl-5">
-                            {visibleSpecs.map((spec) => {
+                            {uniqueSpecs.map((spec) => {
                               const specKey = `${spec.specGroupId}-${spec.label}`;
                               return (
                                 <div
