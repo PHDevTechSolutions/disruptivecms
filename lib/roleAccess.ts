@@ -12,7 +12,8 @@ export type UserRole =
   | "seo"
   | "csr"
   | "ecomm"
-  | "pd";
+  | "pd"
+  | "marketing";
 
 export type RoleAccessConfig = {
   [key in UserRole]: string[];
@@ -36,7 +37,8 @@ export const roleAccessConfig: RoleAccessConfig = {
   admin: ["*"],
   pd: ["/products/all-products"],
   seo: ["/content/blogs"],
-  hr: ["/jobs"],
+  hr: ["/jobs"], // Allows /jobs and all nested routes like /jobs/applications
+  marketing: ["/content/*"], // Allows all /content/* routes
   warehouse: [],
   staff: [],
   inventory: [],
@@ -70,6 +72,21 @@ export function isPublicRoute(path: string): boolean {
 
 /**
  * Check if a role can access a specific route
+ *
+ * EDGE CASES HANDLED:
+ * - Trailing slashes: /jobs/ → /jobs (normalized)
+ * - Query params: Safe (pathname doesn't include ?query)
+ * - Hash/anchors: Safe (pathname doesn't include #anchor)
+ * - Nested routes: /jobs/applications → matches /jobs rule
+ * - Unknown roles: Returns false (safe fallback)
+ *
+ * ROLE ACCESS TEST CASES:
+ * - admin: Can access all routes (*)
+ * - pd: Can access only /products/all-products
+ * - seo: Can access only /content/blogs
+ * - hr: Can access /jobs and nested routes (/jobs/applications, /jobs/careers, etc.)
+ * - marketing: Can access all /content/* routes
+ * - warehouse/staff/inventory/csr/ecomm: No routes (except public) → redirect to /access-denied
  */
 export function canAccessRoute(
   role: string | null | undefined,
@@ -116,6 +133,7 @@ export function getPrimaryRouteForRole(role: string): string {
     pd: "/products/all-products",
     seo: "/content/blogs",
     hr: "/jobs",
+    marketing: "/content/blogs", // Primary route for marketing role
     warehouse: "/access-denied",
     staff: "/access-denied",
     inventory: "/access-denied",
