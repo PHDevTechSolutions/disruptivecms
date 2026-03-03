@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { usePathname, useRouter } from "next/navigation";
 import { canAccessRoute, isPublicRoute } from "@/lib/roleAccess";
@@ -11,12 +11,6 @@ interface ProtectedLayoutProps {
   requiredRole?: string | string[];
 }
 
-/**
- * Wrapper component for protected routes
- * Ensures user is authenticated and has access to the current route
- * Redirects to login if not authenticated, or to access-denied if lacking permissions
- * Public routes (/auth/login, /auth/register, /access-denied) are always accessible
- */
 export function ProtectedLayout({
   children,
   requiredRole,
@@ -24,70 +18,81 @@ export function ProtectedLayout({
   const { isLoading, user } = useRequireAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const [shouldRender, setShouldRender] = useState(false);
 
   const publicRoute = isPublicRoute(pathname);
 
+  const requiredRoles = requiredRole
+    ? Array.isArray(requiredRole)
+      ? requiredRole
+      : [requiredRole]
+    : null;
+
+  const hasRoleAccess =
+    !requiredRoles || requiredRoles.includes(user?.role || "");
+
+  const hasRouteAccess = canAccessRoute(user?.role || "", pathname);
+
+  /* ==============================
+     REDIRECT LOGIC (Hydration Safe)
+     ============================== */
   useEffect(() => {
-    // Public routes are always accessible — no auth or role check needed
-    if (publicRoute) {
-      setShouldRender(true);
-      return;
-    }
+    if (publicRoute) return;
 
-    // Skip check if still loading
-    if (isLoading) {
-      return;
-    }
+    // Wait until auth state fully resolves
+    if (isLoading) return;
 
-    // If no user after loading is complete, allow useRequireAuth redirect to handle it
+    // If no authenticated user → redirect to login
     if (!user) {
+      router.push("/auth/login");
       return;
     }
 
-    // If specific roles are required, check if user has one of them
-    if (requiredRole) {
-      const requiredRoles = Array.isArray(requiredRole)
-        ? requiredRole
-        : [requiredRole];
-      if (!requiredRoles.includes(user.role || "")) {
-        router.push(`/access-denied?from=${encodeURIComponent(pathname)}`);
-        return;
-      }
-    }
+    console.log("USER ROLE:", user?.role);
+console.log("PATHNAME:", pathname);
+console.log("ACCESS:", canAccessRoute(user?.role, pathname));
 
-    // Check if user can access the current route based on their role
-    if (!canAccessRoute(user.role || "", pathname)) {
+    // If user exists but no access → redirect to access denied
+    if (!hasRoleAccess || !hasRouteAccess) {
       router.push(`/access-denied?from=${encodeURIComponent(pathname)}`);
-      return;
     }
+  }, [
+    isLoading,
+    user,
+    pathname,
+    router,
+    publicRoute,
+    hasRoleAccess,
+    hasRouteAccess,
+  ]);
 
-    // User is authenticated and has access, allow render
-    setShouldRender(true);
-  }, [isLoading, user, pathname, router, requiredRole, publicRoute]);
+  /* ==============================
+     RENDER LOGIC
+     ============================== */
 
-  // Public routes: render immediately without any loading state or auth checks
+  // Public pages always render
   if (publicRoute) {
-    return shouldRender ? <>{children}</> : null;
+    return <>{children}</>;
   }
 
-  // Show loading spinner while auth state is being resolved
+  // While loading auth → show spinner
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
-  // User is authenticated and access is confirmed — render content
-  if (user && shouldRender) {
+  // If not authenticated → do not render (redirect already triggered)
+  if (!user) {
+    return null;
+  }
+
+  // If authenticated and authorized → render page
+  if (hasRoleAccess && hasRouteAccess) {
     return <>{children}</>;
   }
 
-  // Checking access or awaiting redirect
+  // Otherwise → do not render (redirect already triggered)
   return null;
 }

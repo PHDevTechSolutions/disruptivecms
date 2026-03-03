@@ -3,7 +3,13 @@
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { AlertCircle, Home } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";
@@ -11,14 +17,27 @@ import { getPrimaryRouteForRole } from "@/lib/roleAccess";
 function AccessDeniedContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
 
-  const attemptedPath = searchParams.get("from") || "the page";
-  const primaryRoute = user ? getPrimaryRouteForRole(user.role || "admin") : "/dashboard";
+  const attemptedPath = searchParams.get("from") || "this page";
+
+  // 🔒 Safe role resolution
+  const primaryRoute = user?.role
+    ? getPrimaryRouteForRole(user.role)
+    : "/auth/login";
 
   const handleRedirect = () => {
     router.push(primaryRoute);
   };
+
+  // Prevent flash while auth is resolving
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
@@ -32,23 +51,28 @@ function AccessDeniedContent() {
             You cannot access this page
           </CardDescription>
         </CardHeader>
+
         <CardContent className="space-y-6">
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>
-              Your role doesn't have permission to access {attemptedPath}.
+              Your role doesn't have permission to access{" "}
+              <span className="font-medium text-foreground">
+                {attemptedPath}
+              </span>
+              .
             </p>
-            {user && (
+
+            {user?.role && (
               <p className="text-xs">
-                Current role: <span className="font-semibold text-foreground">{user.role?.toUpperCase()}</span>
+                Current role:{" "}
+                <span className="font-semibold text-foreground">
+                  {user.role.toUpperCase()}
+                </span>
               </p>
             )}
           </div>
 
-          <Button
-            onClick={handleRedirect}
-            className="w-full"
-            size="lg"
-          >
+          <Button onClick={handleRedirect} className="w-full" size="lg">
             <Home className="mr-2 h-4 w-4" />
             Go to Accessible Page
           </Button>
@@ -60,11 +84,13 @@ function AccessDeniedContent() {
 
 export default function AccessDeniedPage() {
   return (
-    <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-muted/30">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-muted/30">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        </div>
+      }
+    >
       <AccessDeniedContent />
     </Suspense>
   );

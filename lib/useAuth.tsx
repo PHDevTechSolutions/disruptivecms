@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
@@ -32,96 +38,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Check session on mount and restore from localStorage
+  /* =========================
+     INITIAL HYDRATION
+  ========================= */
   useEffect(() => {
-    // First, try to restore from localStorage (for immediate persistence)
     const cached = localStorage.getItem("disruptive_admin_user");
+
     if (cached) {
       try {
-        const cachedUser = JSON.parse(cached);
-        if (cachedUser?.uid) {
-          setUser(cachedUser);
+        const parsed = JSON.parse(cached);
+        if (parsed?.uid) {
+          setUser(parsed);
+          setIsLoading(false); // 🔥 Immediately stop loading
         }
-      } catch (e) {
-        console.error("[Auth] Failed to parse cached user:", e);
+      } catch (err) {
+        console.error("[Auth] Invalid cache:", err);
+        localStorage.removeItem("disruptive_admin_user");
       }
     }
-    
-    // Then verify with server
-    checkSession();
+
+    verifySession();
   }, []);
 
-  // Refresh session every 24 hours to keep it alive
-  useEffect(() => {
-    if (!user) return;
-
-    const refreshInterval = setInterval(async () => {
-      try {
-        const response = await fetch("/api/auth/refresh", { method: "POST" });
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data.user);
-        } else {
-          // Session expired - only logout if explicitly requested
-          console.warn("[Auth] Session refresh failed");
-        }
-      } catch (error) {
-        console.error("[Auth] Error refreshing session:", error);
-      }
-    }, 24 * 60 * 60 * 1000); // 24 hours
-
-    return () => clearInterval(refreshInterval);
-  }, [user]);
-
-  async function checkSession() {
+  /* =========================
+     SERVER VALIDATION
+  ========================= */
+  async function verifySession() {
     try {
       const response = await fetch("/api/auth/user");
 
       if (response.ok) {
         const data = await response.json();
         setUser(data.user);
-        // Also update localStorage for backward compatibility
         localStorage.setItem(
           "disruptive_admin_user",
-          JSON.stringify(data.user)
+          JSON.stringify(data.user),
         );
       } else if (response.status === 401) {
-        // 401 Unauthorized - session cookie doesn't exist on server
-        // But keep localStorage cache if it exists for offline support
-        const cached = localStorage.getItem("disruptive_admin_user");
-        if (!cached) {
-          setUser(null);
-        }
-      } else {
-        // Other errors (500, network, etc.) - keep existing user
-        // The user is already restored from localStorage in the initial effect
-        console.warn(`[Auth] Session check failed with status ${response.status}`);
+        setUser(null);
+        localStorage.removeItem("disruptive_admin_user");
       }
     } catch (error) {
-      console.error("[Auth] Error checking session:", error);
-      // Network error - keep existing user (already restored from localStorage)
+      console.warn("[Auth] Server check failed. Using cached session.");
     } finally {
       setIsLoading(false);
     }
   }
 
+  /* =========================
+     LOGOUT
+  ========================= */
   async function handleLogout() {
-    try {
-      // Sign out from Firebase
-      await signOut(auth);
+    await signOut(auth);
+    await fetch("/api/auth/logout", { method: "POST" });
 
-      // Clear server-side session
-      await fetch("/api/auth/logout", { method: "POST" });
+    setUser(null);
+    localStorage.removeItem("disruptive_admin_user");
 
-      // Clear client-side state
-      setUser(null);
-      localStorage.removeItem("disruptive_admin_user");
-
-      // Redirect to login
-      router.push("/auth/login");
-    } catch (error) {
-      console.error("[Auth] Error during logout:", error);
-    }
+    router.push("/auth/login");
   }
 
   return (
@@ -138,33 +112,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * Hook to access auth context
- * Usage: const { user, isLoggedIn, logout } = useAuth()
- */
+/* =========================
+   HOOKS
+========================= */
+
 export function useAuth() {
-  const context = useContext(AuthContext);
-
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
-
-  return context;
+  return useContext(AuthContext);
 }
 
-/**
- * Hook to require authentication
- * Redirects to login if not logged in
- */
 export function useRequireAuth() {
-  const { user, isLoading, isLoggedIn } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading && !isLoggedIn) {
+    if (!isLoading && !user) {
       router.push("/auth/login");
     }
-  }, [isLoading, isLoggedIn, router]);
+  }, [isLoading, user, router]);
 
   return { user, isLoading };
 }
