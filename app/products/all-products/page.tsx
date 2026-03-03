@@ -162,7 +162,7 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
   );
 
   const itemCode =
-    product.ecoItemCode || product.litItemCode || product.itemCode || "";
+    product.litItemCode || product.itemCode || product.ecoItemCode || "";
   const name = product.itemDescription || product.name || "";
   const brand = Array.isArray(product.brands)
     ? (product.brands[0] ?? "")
@@ -177,6 +177,12 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
     .replace(/^-|-$/g, "");
   const now = new Date().toISOString();
 
+  const rawMain =
+    Array.isArray(product.rawImage) && product.rawImage.length > 0
+      ? product.rawImage[0]
+      : ((product.rawImage as unknown as string) || "");
+  const mainImage = product.mainImage || rawMain || "";
+
   return {
     applications: [],
     brand,
@@ -184,7 +190,7 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
     galleryImages: [],
     importSource: "bulk-assign",
     itemCode,
-    mainImage: product.mainImage || "",
+    mainImage,
     name,
     productFamily,
     qrCodeImage: "",
@@ -194,14 +200,14 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
       canonical: "",
       description: "",
       lastUpdated: now,
-      ogImage: product.mainImage || "",
+      ogImage: mainImage || "",
       robots: "index, follow",
       title: name,
     },
     shortDescription: "",
     slug,
     status: "draft",
-    technicalSpecs: [],
+    technicalSpecs: product.technicalSpecs || [],
     updatedAt: serverTimestamp(),
     website: mergedWebsites,
     websites: mergedWebsites,
@@ -325,9 +331,9 @@ function TdsPreviewDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl w-full h-[90vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="px-5 py-4 border-b flex-shrink-0">
+        <DialogHeader className="px-5 py-4 border-b shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center flex-shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
               <FileText className="w-4 h-4 text-red-600" />
             </div>
             <div className="min-w-0 flex-1">
@@ -348,7 +354,7 @@ function TdsPreviewDialog({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-2 text-xs flex-shrink-0"
+                  className="gap-2 text-xs shrink-0"
                 >
                   <FileText className="h-3.5 w-3.5" />
                   Open in new tab
@@ -419,7 +425,7 @@ function BulkGenerateTdsDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center flex-shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center shrink-0">
               <FilePlus2 className="w-4 h-4 text-orange-600" />
             </div>
             <div>
@@ -455,7 +461,7 @@ function BulkGenerateTdsDialog({
               key={job.productId}
               className="flex items-center gap-3 px-3 py-2.5"
             >
-              <span className="flex-shrink-0">
+              <span className="shrink-0">
                 {job.status === "pending" && (
                   <CircleDashed className="w-4 h-4 text-muted-foreground/40" />
                 )}
@@ -482,7 +488,7 @@ function BulkGenerateTdsDialog({
                 {job.productName}
               </span>
 
-              <span className="text-[10px] text-muted-foreground flex-shrink-0 max-w-[140px] truncate text-right">
+              <span className="text-[10px] text-muted-foreground shrink-0 max-w-[140px] truncate text-right">
                 {job.status === "pending" && "Queued"}
                 {job.status === "generating" && "Generating…"}
                 {job.status === "done" && "Done"}
@@ -626,7 +632,7 @@ function AssignToWebsiteDialog({
                   }`}
               >
                 <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
                 />
                 <span
                   className={`flex-1 text-sm font-medium ${isSelected ? "" : "text-foreground"}`}
@@ -639,7 +645,7 @@ function AssignToWebsiteDialog({
                   </span>
                 )}
                 <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all
                     ${isSelected ? "bg-current/20 opacity-100" : "opacity-0"}`}
                 >
                   <Check className="w-3 h-3" />
@@ -783,7 +789,7 @@ function AssignProductClassDialog({
                   }`}
               >
                 <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`}
                 />
                 <span
                   className={`flex items-center gap-2 flex-1 ${isSelected ? "" : "text-foreground"}`}
@@ -796,7 +802,7 @@ function AssignProductClassDialog({
                   </span>
                 </span>
                 <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all
                     ${isSelected ? "opacity-100" : "opacity-0"}`}
                 >
                   <Check className="w-3 h-3" />
