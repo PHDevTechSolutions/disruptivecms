@@ -309,7 +309,7 @@ function logPrefix(level: LogLevel): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function CategoryMaintenance() {
+export default function ProductFamiliesPage() {
   const CLOUDINARY_UPLOAD_PRESET = "taskflow_preset";
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
 
