@@ -29,33 +29,29 @@ export const PUBLIC_ROUTES = [
 
 /**
  * Maps each role to the routes they have access to
- * Admin has access to ALL pages (represented by "*")
- * Other roles have specific restricted access
- * Note: PUBLIC_ROUTES are always accessible and don't require authentication
  *
  * Access Rules:
- * - Everyone: /auth/login, /auth/register, /access-denied
- * - admin: all pages
- * - pd: /products/all-products only
- * - seo: /content/blogs only
- * - hr: /jobs only
+ * - Everyone:  PUBLIC_ROUTES (/auth/*, /access-denied) — no auth required
+ * - admin:     all pages (wildcard "*")
+ * - pd:        /products/all-products only
+ * - seo:       /content/blogs only
+ * - hr:        all pages under /jobs (e.g. /jobs, /jobs/create, /jobs/123)
+ * - warehouse, staff, inventory, csr, ecomm: no access (redirect to /access-denied)
  */
 export const roleAccessConfig: RoleAccessConfig = {
-  admin: ["*"], // Admin has access to all pages
+  admin: ["*"],
+  pd: ["/products/all-products"],
+  seo: ["/content/blogs"],
+  hr: ["/jobs"],
   warehouse: [],
   staff: [],
   inventory: [],
-  hr: ["/jobs"],
-  seo: ["/content/blogs"],
   csr: [],
   ecomm: [],
-  pd: ["/products/all-products"],
 };
 
 /**
  * Check if a given path is a public route (no auth required)
- * @param path - The path to check
- * @returns true if the path is public
  */
 export function isPublicRoute(path: string): boolean {
   return PUBLIC_ROUTES.some(
@@ -65,9 +61,6 @@ export function isPublicRoute(path: string): boolean {
 
 /**
  * Check if a user with a specific role can access a given route
- * @param role - The user's role
- * @param path - The path to check access for
- * @returns true if the user can access the path, false otherwise
  */
 export function canAccessRoute(role: string, path: string): boolean {
   // Always allow public routes regardless of role or auth state
@@ -77,17 +70,18 @@ export function canAccessRoute(role: string, path: string): boolean {
 
   const allowedRoutes = roleAccessConfig[role];
 
+  // Unknown role → deny
   if (!allowedRoutes) {
     return false;
   }
 
-  // Admin has access to all pages (represented by "*")
+  // Admin wildcard → allow everything
   if (allowedRoutes.includes("*")) {
     return true;
   }
 
-  // Check for exact match or parent route match
-  // e.g., /products/all-products matches routes that start with /products/all-products
+  // Match exact path OR any sub-path
+  // e.g. "/jobs" allows /jobs, /jobs/create, /jobs/123/edit
   return allowedRoutes.some(
     (route) => path === route || path.startsWith(route + "/"),
   );
@@ -96,29 +90,26 @@ export function canAccessRoute(role: string, path: string): boolean {
 /**
  * Get the primary/home route for a given role
  * This is the route the user is redirected to after login
- * @param role - The user's role
- * @returns The primary route for this role
  */
 export function getPrimaryRouteForRole(role: string): string {
   const primaryRoutes: Record<string, string> = {
     admin: "/products/all-products",
-    warehouse: "/products/all-products",
-    staff: "/products/all-products",
-    inventory: "/products/all-products",
-    hr: "/jobs",
-    seo: "/content/blogs",
-    csr: "/inquiries/customer-inquiries",
-    ecomm: "/products/all-products",
     pd: "/products/all-products",
+    seo: "/content/blogs",
+    hr: "/jobs",
+    // Roles with no page access land on /access-denied
+    warehouse: "/access-denied",
+    staff: "/access-denied",
+    inventory: "/access-denied",
+    csr: "/access-denied",
+    ecomm: "/access-denied",
   };
 
-  return primaryRoutes[role] || "/products/all-products";
+  return primaryRoutes[role] || "/access-denied";
 }
 
 /**
  * Get all accessible routes for a given role
- * @param role - The user's role
- * @returns Array of routes the user can access
  */
 export function getAccessibleRoutes(role: string): string[] {
   return roleAccessConfig[role] || [];
