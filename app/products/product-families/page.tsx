@@ -151,28 +151,21 @@ async function parseTdsPdf(file: File): Promise<ParsedPdfResult> {
   // Dynamic import keeps the pdfjs bundle out of the initial chunk
   const pdfjsLib = await import("pdfjs-dist");
 
-  // ✅ FIX: unpkg mirrors npm exactly and hosts .mjs workers required for
-  // pdfjs-dist v4+. cdnjs only has the legacy .js build (v2/v3).
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) })
     .promise;
 
-  // ── Derive title ──────────────────────────────────────────────────────────
-  let title = file.name
+  // ── Derive title from filename only ───────────────────────────────────────
+  // We intentionally do NOT read PDF metadata — the embedded Title field often
+  // contains generic text like "LIT TECHNICAL DATA SHEET" which is useless as
+  // a ProductFamily name. The filename is always the authoritative source.
+  const title = file.name
     .replace(/\.pdf$/i, "")
     .replace(/[_\-]+/g, " ")
     .trim()
     .toUpperCase();
-
-  try {
-    const meta = await pdf.getMetadata();
-    const metaTitle = (meta.info as Record<string, any>)?.Title?.trim();
-    if (metaTitle) title = metaTitle.toUpperCase();
-  } catch {
-    // metadata unavailable — filename fallback already set
-  }
 
   // ── Extract text from page 1 only ─────────────────────────────────────────
   const page = await pdf.getPage(1);
@@ -346,7 +339,9 @@ export default function CategoryMaintenance() {
 
   // ── Search, filter & bulk operations ──────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
+  const [filterStatus, setFilterStatus] = useState<
+    "all" | "active" | "inactive"
+  >("all");
   const [filterTds, setFilterTds] = useState<"all" | "with" | "without">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -389,14 +384,16 @@ export default function CategoryMaintenance() {
     getInputProps: pdfInput,
     isDragActive: isPdfDragActive,
   } = useDropzone({
-    accept: { 
+    accept: {
       "application/pdf": [".pdf"],
       "image/*": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
     },
     multiple: true,
     onDrop: (accepted, rejected) => {
       if (rejected.length > 0) {
-        toast.error(`${rejected.length} file(s) rejected — PDF and images only`);
+        toast.error(
+          `${rejected.length} file(s) rejected — PDF and images only`,
+        );
       }
       if (accepted.length === 0) return;
 
@@ -408,9 +405,11 @@ export default function CategoryMaintenance() {
       const newEntries: FileStatus[] = pdfFiles.map((f) => ({
         file: f,
         step: "idle",
+        // Title comes from filename only — strip extension, normalise separators
         title: f.name
           .replace(/\.pdf$/i, "")
           .replace(/[_\-]+/g, " ")
+          .trim()
           .toUpperCase(),
         logs: [],
         imageFiles: [],
@@ -443,14 +442,14 @@ export default function CategoryMaintenance() {
 
   // ── Filter & search logic ────────────────────────────────────────────────
   const filteredCategories = categories.filter((cat) => {
-    // Search filter
-    if (searchTerm && !cat.title.toLowerCase().includes(searchTerm.toLowerCase())) {
+    if (
+      searchTerm &&
+      !cat.title.toLowerCase().includes(searchTerm.toLowerCase())
+    ) {
       return false;
     }
-    // Status filter
     if (filterStatus === "active" && !cat.isActive) return false;
     if (filterStatus === "inactive" && cat.isActive) return false;
-    // TDS filter
     if (filterTds === "with" && !cat.tdsTemplate) return false;
     if (filterTds === "without" && cat.tdsTemplate) return false;
     return true;
@@ -462,7 +461,9 @@ export default function CategoryMaintenance() {
     setIsBulkDeleting(true);
     try {
       await Promise.all(
-        Array.from(selectedIds).map((id) => deleteDoc(doc(db, "productfamilies", id)))
+        Array.from(selectedIds).map((id) =>
+          deleteDoc(doc(db, "productfamilies", id)),
+        ),
       );
       toast.success(`Deleted ${selectedIds.size} product families`);
       setSelectedIds(new Set());
@@ -560,9 +561,8 @@ export default function CategoryMaintenance() {
     }
   };
 
-  // ── Bulk upload helpers ─────────────────────────���─────────────────────────
+  // ── Bulk upload helpers ───────────────────────────────────────────────────
 
-  /** Upload a raw file (PDF) to Cloudinary and return the secure URL. */
   const uploadRawToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -577,7 +577,6 @@ export default function CategoryMaintenance() {
     return json.secure_url as string;
   };
 
-  /** Upload an image file to Cloudinary and return the secure URL. */
   const uploadImageToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -592,7 +591,6 @@ export default function CategoryMaintenance() {
     return json.secure_url as string;
   };
 
-  /** Mutate a single FileStatus entry by index. */
   const patchFile = useCallback((idx: number, patch: Partial<FileStatus>) => {
     setFileStatuses((prev) => {
       const next = [...prev];
@@ -601,14 +599,12 @@ export default function CategoryMaintenance() {
     });
   }, []);
 
-  /** Append a log entry to a FileStatus by index. */
   const appendLog = useCallback((idx: number, level: LogLevel, msg: string) => {
     setFileStatuses((prev) => {
       const next = [...prev];
       next[idx] = {
         ...next[idx],
         logs: [...next[idx].logs, { level, msg }],
-        // Auto-expand logs when saving starts
         expanded: next[idx].expanded || level !== "info",
       };
       return next;
@@ -622,16 +618,14 @@ export default function CategoryMaintenance() {
    *  1. Upload PDF → Cloudinary (raw) → tdsTemplate URL
    *  2. Parse AcroForm fields → groups
    *  3. Upsert each SpecGroup (create or extend, no duplicates)
-   *  4. Create ProductFamily document with tdsTemplate + specGroup IDs
+   *  4. Create ProductFamily using the filename as title (NOT PDF metadata)
    */
   const processBulkPdfs = async () => {
     const pending = fileStatuses.filter((f) => f.step === "idle");
     if (pending.length === 0) return;
     setIsBulkProcessing(true);
 
-    // Snapshot current spec groups from Firestore for deduplication
     const specsSnap = await getDocs(collection(db, "specs"));
-    // Map: UPPERCASE_GROUP_NAME → { id, existingLabels: Set<uppercase_label> }
     const groupCache = new Map<string, { id: string; labels: Set<string> }>();
     specsSnap.forEach((d) => {
       const data = d.data();
@@ -662,8 +656,8 @@ export default function CategoryMaintenance() {
 
         const parsed = await parseTdsPdf(fs.file);
 
-        patchFile(idx, { title: parsed.title });
-        appendLog(idx, "info", `Title → "${parsed.title}"`);
+        // Title is always the filename — confirm it in the log
+        appendLog(idx, "info", `Title → "${parsed.title}" (from filename)`);
         appendLog(
           idx,
           "info",
@@ -687,7 +681,6 @@ export default function CategoryMaintenance() {
           const cached = groupCache.get(groupKey);
 
           if (cached) {
-            // Group already exists — find genuinely new labels
             const newLabels = group.items.filter(
               (item) => !cached.labels.has(item.toUpperCase().trim()),
             );
@@ -719,7 +712,6 @@ export default function CategoryMaintenance() {
 
             specGroupIds.push(cached.id);
           } else {
-            // Create brand-new SpecGroup
             const newRef = await addDoc(collection(db, "specs"), {
               name: groupKey,
               items: group.items.map((l) => ({ label: l.toUpperCase() })),
@@ -728,7 +720,6 @@ export default function CategoryMaintenance() {
               updatedAt: serverTimestamp(),
             });
 
-            // Populate cache for subsequent PDFs in the same batch
             groupCache.set(groupKey, {
               id: newRef.id,
               labels: new Set(group.items.map((l) => l.toUpperCase().trim())),
@@ -742,8 +733,7 @@ export default function CategoryMaintenance() {
           }
         }
 
-        // ── Step 4: Build TDS Spec Mapping ───────────────────────────────
-        // Extract which spec items are relevant based on TDS template fields
+        // ── Step 4: Build TDS Spec Mapping ────────────────────────────────
         let tdsSpecMapping: Record<string, string[]> = {};
         try {
           const { buildTdsSpecMapping } = await import("@/lib/fillTdsPdf");
@@ -752,13 +742,21 @@ export default function CategoryMaintenance() {
             name: g.name,
             items: g.items.map((label) => ({ label })),
           }));
-          tdsSpecMapping = await buildTdsSpecMapping(pdfUrl, specGroupsForMapping);
+          tdsSpecMapping = await buildTdsSpecMapping(
+            pdfUrl,
+            specGroupsForMapping,
+          );
           appendLog(idx, "info", "TDS spec mapping computed");
         } catch (e) {
-          appendLog(idx, "warn", "Could not compute TDS spec mapping (will use all specs)");
+          appendLog(
+            idx,
+            "warn",
+            "Could not compute TDS spec mapping (will use all specs)",
+          );
         }
 
         // ── Step 5: Create ProductFamily ──────────────────────────────────
+        // Always use parsed.title which is derived exclusively from the filename
         await addDoc(collection(db, "productfamilies"), {
           title: parsed.title,
           description: "",
@@ -766,7 +764,7 @@ export default function CategoryMaintenance() {
           specifications: specGroupIds,
           imageUrl: "",
           tdsTemplate: pdfUrl,
-          tdsSpecMapping: tdsSpecMapping, // Store filtered spec items per group
+          tdsSpecMapping,
           isActive: true,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -782,10 +780,6 @@ export default function CategoryMaintenance() {
     }
 
     setIsBulkProcessing(false);
-
-    const doneCount = fileStatuses.filter(
-      (_, i) => fileStatuses[i]?.step === "done",
-    ).length;
     toast.success(`Bulk processing complete — check logs for details`);
   };
 
@@ -831,7 +825,6 @@ export default function CategoryMaintenance() {
                 <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
                   {/* ── Card Header with tabs ── */}
                   <CardHeader className="border-b py-0 sticky top-0 bg-background z-10">
-                    {/* Tab strip */}
                     <div className="flex">
                       <button
                         type="button"
@@ -869,7 +862,6 @@ export default function CategoryMaintenance() {
                   {/* ══ TAB: Manual Add / Edit ══ */}
                   {activeTab === "manual" && (
                     <CardContent className="pt-5 space-y-5">
-                      {/* Cancel edit button */}
                       {editId && (
                         <div className="flex justify-end -mt-1">
                           <Button
@@ -1063,11 +1055,11 @@ export default function CategoryMaintenance() {
                   {/* ══ TAB: PDF Bulk Upload ══ */}
                   {activeTab === "bulk" && (
                     <CardContent className="pt-5 space-y-5">
-                      {/* Description */}
                       <p className="text-[10px] text-muted-foreground uppercase font-bold leading-relaxed border border-dashed border-foreground/10 p-3 bg-muted/30">
                         Drop AcroForm TDS PDFs below. Each file becomes a new
-                        ProductFamily. SpecGroups & Specs are extracted and
-                        synced automatically — duplicates are skipped.
+                        ProductFamily named after its filename. SpecGroups &
+                        Specs are extracted and synced automatically —
+                        duplicates are skipped.
                       </p>
 
                       {/* PDF Dropzone */}
@@ -1147,7 +1139,6 @@ export default function CategoryMaintenance() {
                                   </div>
 
                                   <div className="flex items-center gap-1 flex-shrink-0">
-                                    {/* Toggle log panel */}
                                     {fs.logs.length > 0 && (
                                       <button
                                         type="button"
@@ -1165,7 +1156,6 @@ export default function CategoryMaintenance() {
                                         )}
                                       </button>
                                     )}
-                                    {/* Remove idle file */}
                                     {fs.step === "idle" &&
                                       !isBulkProcessing && (
                                         <button
@@ -1259,11 +1249,11 @@ export default function CategoryMaintenance() {
                         )}
                       </Button>
 
-                      {/* Note about tdsTemplate */}
                       <p className="text-[8px] text-muted-foreground uppercase font-bold text-center opacity-60">
                         Each PDF is uploaded to Cloudinary and saved as{" "}
                         <span className="font-mono">tdsTemplate</span> on the
-                        ProductFamily document.
+                        ProductFamily document. The family title is taken from
+                        the filename, not the PDF contents.
                       </p>
                     </CardContent>
                   )}
@@ -1275,7 +1265,6 @@ export default function CategoryMaintenance() {
                 {/* Search & Filters */}
                 {!loading && categories.length > 0 && (
                   <div className="space-y-3 mb-6">
-                    {/* Search Bar */}
                     <div>
                       <Input
                         placeholder="Search product families..."
@@ -1285,37 +1274,23 @@ export default function CategoryMaintenance() {
                       />
                     </div>
 
-                    {/* Filters & Bulk Actions */}
                     <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-                      {/* Status Filter */}
                       <div className="flex gap-1 flex-wrap">
-                        <Button
-                          variant={filterStatus === "all" ? "default" : "outline"}
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterStatus("all")}
-                        >
-                          All
-                        </Button>
-                        <Button
-                          variant={filterStatus === "active" ? "default" : "outline"}
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterStatus("active")}
-                        >
-                          Active
-                        </Button>
-                        <Button
-                          variant={filterStatus === "inactive" ? "default" : "outline"}
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterStatus("inactive")}
-                        >
-                          Inactive
-                        </Button>
+                        {(["all", "active", "inactive"] as const).map((s) => (
+                          <Button
+                            key={s}
+                            variant={filterStatus === s ? "default" : "outline"}
+                            size="sm"
+                            className="rounded-none text-xs h-8 capitalize"
+                            onClick={() => setFilterStatus(s)}
+                          >
+                            {s === "all"
+                              ? "All"
+                              : s.charAt(0).toUpperCase() + s.slice(1)}
+                          </Button>
+                        ))}
                       </div>
 
-                      {/* TDS Filter */}
                       <div className="flex gap-1 flex-wrap">
                         <Button
                           variant={filterTds === "all" ? "default" : "outline"}
@@ -1334,7 +1309,9 @@ export default function CategoryMaintenance() {
                           With TDS
                         </Button>
                         <Button
-                          variant={filterTds === "without" ? "default" : "outline"}
+                          variant={
+                            filterTds === "without" ? "default" : "outline"
+                          }
                           size="sm"
                           className="rounded-none text-xs h-8"
                           onClick={() => setFilterTds("without")}
@@ -1343,7 +1320,6 @@ export default function CategoryMaintenance() {
                         </Button>
                       </div>
 
-                      {/* Bulk Delete & Select All */}
                       <div className="flex gap-1 ml-auto">
                         {selectedIds.size > 0 && (
                           <>
@@ -1374,7 +1350,8 @@ export default function CategoryMaintenance() {
                                     Confirm Deletion
                                   </AlertDialogTitle>
                                   <AlertDialogDescription className="text-xs">
-                                    Delete {selectedIds.size} product families? This cannot be undone.
+                                    Delete {selectedIds.size} product families?
+                                    This cannot be undone.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -1413,9 +1390,9 @@ export default function CategoryMaintenance() {
                       </div>
                     </div>
 
-                    {/* Results count */}
                     <div className="text-xs text-muted-foreground">
-                      Showing {filteredCategories.length} of {categories.length} product families
+                      Showing {filteredCategories.length} of {categories.length}{" "}
+                      product families
                     </div>
                   </div>
                 )}
@@ -1430,7 +1407,9 @@ export default function CategoryMaintenance() {
                       <FolderPlus className="h-8 w-8 text-muted-foreground/40" />
                     </div>
                     <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
-                      {categories.length === 0 ? "No Product Families" : "No Results"}
+                      {categories.length === 0
+                        ? "No Product Families"
+                        : "No Results"}
                     </h3>
                     <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
                       {categories.length === 0
@@ -1445,7 +1424,8 @@ export default function CategoryMaintenance() {
                         key={cat.id}
                         className={cn(
                           "rounded-none shadow-none group relative overflow-hidden border-foreground/10 transition-all",
-                          selectedIds.has(cat.id) && "ring-2 ring-primary border-primary/50"
+                          selectedIds.has(cat.id) &&
+                            "ring-2 ring-primary border-primary/50",
                         )}
                       >
                         <div className="aspect-[4/3] relative bg-muted border-b overflow-hidden">
@@ -1453,7 +1433,6 @@ export default function CategoryMaintenance() {
                             src={cat.imageUrl || "/placeholder.png"}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           />
-                          {/* Checkbox for selection */}
                           <div
                             className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors"
                             onClick={() => toggleSelect(cat.id)}
@@ -1461,7 +1440,7 @@ export default function CategoryMaintenance() {
                             <input
                               type="checkbox"
                               checked={selectedIds.has(cat.id)}
-                              onChange={() => {}} // Controlled by onClick above
+                              onChange={() => {}}
                               className="h-4 w-4 cursor-pointer"
                             />
                           </div>
@@ -1523,7 +1502,6 @@ export default function CategoryMaintenance() {
                             </AlertDialog>
                           </div>
 
-                          {/* TDS badge — shown when a template PDF is attached */}
                           {cat.tdsTemplate && (
                             <a
                               href={cat.tdsTemplate}
