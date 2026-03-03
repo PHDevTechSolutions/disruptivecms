@@ -3,15 +3,15 @@
  * Defines which pages/routes each role has access to
  */
 
-export type UserRole = 
-  | "admin" 
-  | "warehouse" 
-  | "staff" 
-  | "inventory" 
-  | "hr" 
-  | "seo" 
-  | "csr" 
-  | "ecomm" 
+export type UserRole =
+  | "admin"
+  | "warehouse"
+  | "staff"
+  | "inventory"
+  | "hr"
+  | "seo"
+  | "csr"
+  | "ecomm"
   | "pd";
 
 export interface RoleAccessConfig {
@@ -19,13 +19,22 @@ export interface RoleAccessConfig {
 }
 
 /**
+ * Public routes accessible to everyone regardless of authentication or role
+ */
+export const PUBLIC_ROUTES = [
+  "/auth/login",
+  "/auth/register",
+  "/access-denied",
+];
+
+/**
  * Maps each role to the routes they have access to
  * Admin has access to ALL pages (represented by "*")
  * Other roles have specific restricted access
- * Note: /auth/* routes are always public and don't require authentication
- * 
+ * Note: PUBLIC_ROUTES are always accessible and don't require authentication
+ *
  * Access Rules:
- * - All roles: /auth/* (login, signup, password reset, etc.)
+ * - Everyone: /auth/login, /auth/register, /access-denied
  * - admin: all pages
  * - pd: /products/all-products only
  * - seo: /content/blogs only
@@ -44,14 +53,30 @@ export const roleAccessConfig: RoleAccessConfig = {
 };
 
 /**
+ * Check if a given path is a public route (no auth required)
+ * @param path - The path to check
+ * @returns true if the path is public
+ */
+export function isPublicRoute(path: string): boolean {
+  return PUBLIC_ROUTES.some(
+    (route) => path === route || path.startsWith(route + "/"),
+  );
+}
+
+/**
  * Check if a user with a specific role can access a given route
  * @param role - The user's role
  * @param path - The path to check access for
  * @returns true if the user can access the path, false otherwise
  */
 export function canAccessRoute(role: string, path: string): boolean {
+  // Always allow public routes regardless of role or auth state
+  if (isPublicRoute(path)) {
+    return true;
+  }
+
   const allowedRoutes = roleAccessConfig[role];
-  
+
   if (!allowedRoutes) {
     return false;
   }
@@ -63,8 +88,8 @@ export function canAccessRoute(role: string, path: string): boolean {
 
   // Check for exact match or parent route match
   // e.g., /products/all-products matches routes that start with /products/all-products
-  return allowedRoutes.some(route => 
-    path === route || path.startsWith(route + "/")
+  return allowedRoutes.some(
+    (route) => path === route || path.startsWith(route + "/"),
   );
 }
 
