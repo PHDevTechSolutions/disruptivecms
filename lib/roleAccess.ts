@@ -22,6 +22,7 @@ export interface RoleAccessConfig {
  * Maps each role to the routes they have access to
  * Admin has access to ALL pages (represented by "*")
  * Other roles have specific restricted access
+ * Note: /auth/* routes are always public and don't require authentication
  */
 export const roleAccessConfig: RoleAccessConfig = {
   admin: ["*"], // Admin has access to all pages

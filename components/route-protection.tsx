@@ -24,6 +24,11 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
   useEffect(() => {
     if (isLoading) return;
 
+    // Allow public access to auth routes without authentication
+    if (currentPath.startsWith("/auth")) {
+      return;
+    }
+
     if (!user) {
       router.push("/auth/login");
       return;
