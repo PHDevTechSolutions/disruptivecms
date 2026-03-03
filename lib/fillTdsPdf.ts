@@ -25,10 +25,10 @@ function sanitizeForPdf(text: string): string {
     "Ω": "Ohm",    // Ohm → "Ohm"
     "π": "pi",     // Pi → "pi"
     "∞": "inf",    // Infinity → "inf"
-    """: '"',      // Smart quotes → regular quotes
-    """: '"',
-    "'": "'",
-    "'": "'",
+    "\u201C": '"', // Left smart quote → regular quote
+    "\u201D": '"', // Right smart quote → regular quote
+    "\u2018": "'", // Left single smart quote → regular quote
+    "\u2019": "'", // Right single smart quote → regular quote
     "–": "-",      // En dash → hyphen
     "—": "-",      // Em dash → hyphen
   };
