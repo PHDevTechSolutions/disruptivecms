@@ -32,8 +32,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Check session only on mount
+  // Check session on mount and restore from localStorage
   useEffect(() => {
+    // First, try to restore from localStorage (for immediate persistence)
+    const cached = localStorage.getItem("disruptive_admin_user");
+    if (cached) {
+      try {
+        const cachedUser = JSON.parse(cached);
+        if (cachedUser?.uid) {
+          setUser(cachedUser);
+        }
+      } catch (e) {
+        console.error("[Auth] Failed to parse cached user:", e);
+      }
+    }
+    
+    // Then verify with server
     checkSession();
   }, []);
 
@@ -61,52 +75,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkSession() {
     try {
-      console.log("[v0] Checking session...");
       const response = await fetch("/api/auth/user");
-      console.log("[v0] Session check response status:", response.status);
 
       if (response.ok) {
         const data = await response.json();
-        console.log("[v0] Session valid, user:", data.user?.email);
         setUser(data.user);
         // Also update localStorage for backward compatibility
         localStorage.setItem(
           "disruptive_admin_user",
           JSON.stringify(data.user)
         );
-      } else {
-        // 401 Unauthorized - clear session
-        if (response.status === 401) {
-          console.log("[v0] Session 401, clearing user");
+      } else if (response.status === 401) {
+        // 401 Unauthorized - session cookie doesn't exist on server
+        // But keep localStorage cache if it exists for offline support
+        const cached = localStorage.getItem("disruptive_admin_user");
+        if (!cached) {
           setUser(null);
-          localStorage.removeItem("disruptive_admin_user");
-        } else {
-          // Other errors (500, network, etc.) - keep existing user to prevent logout
-          console.warn(`[Auth] Session check failed with status ${response.status}`);
-          // Try to restore from localStorage as fallback
-          const cached = localStorage.getItem("disruptive_admin_user");
-          console.log("[v0] Trying to restore from cache:", !!cached);
-          if (cached) {
-            try {
-              setUser(JSON.parse(cached));
-            } catch (e) {
-              console.error("[Auth] Failed to parse cached user:", e);
-            }
-          }
         }
+      } else {
+        // Other errors (500, network, etc.) - keep existing user
+        // The user is already restored from localStorage in the initial effect
+        console.warn(`[Auth] Session check failed with status ${response.status}`);
       }
     } catch (error) {
       console.error("[Auth] Error checking session:", error);
-      // Network error or other issue - restore from cache to maintain persistence
-      const cached = localStorage.getItem("disruptive_admin_user");
-      console.log("[v0] Network error, trying cache:", !!cached);
-      if (cached) {
-        try {
-          setUser(JSON.parse(cached));
-        } catch (e) {
-          console.error("[Auth] Failed to parse cached user:", e);
-        }
-      }
+      // Network error - keep existing user (already restored from localStorage)
     } finally {
       setIsLoading(false);
     }

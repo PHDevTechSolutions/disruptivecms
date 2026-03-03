@@ -25,7 +25,7 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
     if (isLoading) return;
 
     if (!user) {
-      router.push("/login");
+      router.push("/auth/login");
       return;
     }
 
