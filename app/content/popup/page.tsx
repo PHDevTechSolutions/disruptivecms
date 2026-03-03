@@ -35,8 +35,7 @@ import {
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { toast } from "sonner";
 import { useDropzone } from "react-dropzone";
-import { motion, AnimatePresence } from "framer-motion";
-
+import { motion, AnimatePresence } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";

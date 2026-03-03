@@ -29,15 +29,14 @@ import {
   Check,
   X as XIcon,
 } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
-import { cn } from "@/lib/utils";
-
+import { motion, AnimatePresence } from "motion/react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import {
   AlertDialog,
   AlertDialogAction,

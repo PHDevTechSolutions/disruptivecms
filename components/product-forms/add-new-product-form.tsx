@@ -1640,40 +1640,50 @@ export default function AddNewProduct({
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {Object.entries(groupedSpecs).map(([groupName, specs]) => (
-                      <div key={groupName} className="space-y-3">
-                        <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
-                          <Zap className="h-3 w-3" />
-                          {groupName}
-                        </h4>
-                        <div className="space-y-3 pl-5">
-                          {specs.map((spec) => {
-                            const specKey = `${spec.specGroupId}-${spec.label}`;
-                            return (
-                              <div
-                                key={spec.id}
-                                className="space-y-1.5 p-3 rounded-lg border bg-card"
-                              >
-                                <Label className="text-xs font-medium">
-                                  {spec.label}
-                                </Label>
-                                <Input
-                                  placeholder={`Enter ${spec.label}...`}
-                                  className="h-9 text-sm"
-                                  value={specValues[specKey] || ""}
-                                  onChange={(e) =>
-                                    setSpecValues((p) => ({
-                                      ...p,
-                                      [specKey]: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
-                            );
-                          })}
+                    {Object.entries(groupedSpecs).map(([groupName, specs]) => {
+                      // In edit mode, only render specs that already have a saved value
+                      const visibleSpecs = editData
+                        ? specs.filter((s) => {
+                            const k = `${s.specGroupId}-${s.label}`;
+                            return specValues[k]?.trim();
+                          })
+                        : specs;
+                      if (visibleSpecs.length === 0) return null;
+                      return (
+                        <div key={groupName} className="space-y-3">
+                          <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
+                            <Zap className="h-3 w-3" />
+                            {groupName}
+                          </h4>
+                          <div className="space-y-3 pl-5">
+                            {visibleSpecs.map((spec) => {
+                              const specKey = `${spec.specGroupId}-${spec.label}`;
+                              return (
+                                <div
+                                  key={spec.id}
+                                  className="space-y-1.5 p-3 rounded-lg border bg-card"
+                                >
+                                  <Label className="text-xs font-medium">
+                                    {spec.label}
+                                  </Label>
+                                  <Input
+                                    placeholder={`Enter ${spec.label}...`}
+                                    className="h-9 text-sm"
+                                    value={specValues[specKey] || ""}
+                                    onChange={(e) =>
+                                      setSpecValues((p) => ({
+                                        ...p,
+                                        [specKey]: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
