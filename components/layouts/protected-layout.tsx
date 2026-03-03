@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { usePathname, useRouter } from "next/navigation";
 import { canAccessRoute } from "@/lib/roleAccess";
@@ -23,10 +23,16 @@ export function ProtectedLayout({
   const { isLoading, user } = useRequireAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [shouldRender, setShouldRender] = useState(false);
 
   useEffect(() => {
-    // Skip check if still loading or no user
-    if (isLoading || !user) {
+    // Skip check if still loading
+    if (isLoading) {
+      return;
+    }
+
+    // If no user after loading is complete, allow redirect to handle it
+    if (!user) {
       return;
     }
 
@@ -42,8 +48,12 @@ export function ProtectedLayout({
     // Check if user can access the current route based on their role
     if (!canAccessRoute(user.role || "", pathname)) {
       router.push(`/access-denied?from=${encodeURIComponent(pathname)}`);
+      return;
     }
-  }, [isLoading, user, pathname, router]);
+
+    // User is authenticated and has access, allow render
+    setShouldRender(true);
+  }, [isLoading, user, pathname, router, requiredRole]);
 
   if (isLoading) {
     return (
@@ -56,5 +66,16 @@ export function ProtectedLayout({
     );
   }
 
-  return <>{children}</>;
+  // If user is authenticated and has access, render content
+  if (user && shouldRender) {
+    return <>{children}</>;
+  }
+
+  // Still checking access or redirecting
+  if (user && !shouldRender) {
+    return null;
+  }
+
+  // No user, will be handled by useRequireAuth redirect
+  return null;
 }
