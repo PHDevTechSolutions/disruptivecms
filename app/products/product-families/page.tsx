@@ -303,8 +303,7 @@ export default function CategoryMaintenance() {
                   </CardHeader>
 
                   {/* ══ Form Content ══ */}
-                  <>
-                    <CardContent className="pt-5 space-y-5">
+                  <CardContent className="pt-5 space-y-5">
                       {editId && (
                         <div className="flex justify-end -mt-1">
                           <Button
