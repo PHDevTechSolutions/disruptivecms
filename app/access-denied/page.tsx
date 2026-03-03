@@ -52,13 +52,6 @@ function AccessDeniedContent() {
             <Home className="mr-2 h-4 w-4" />
             Go to Accessible Page
           </Button>
-
-          <button
-            onClick={() => router.back()}
-            className="w-full text-sm text-muted-foreground hover:text-foreground"
-          >
-            Go Back
-          </button>
         </CardContent>
       </Card>
     </div>
