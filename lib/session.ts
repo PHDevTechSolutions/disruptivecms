@@ -46,14 +46,21 @@ export async function getSession(): Promise<SessionUser | null> {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
     
+    console.log("[Session] Cookie name:", SESSION_COOKIE_NAME);
+    console.log("[Session] Cookie found:", !!sessionCookie);
+    
     if (!sessionCookie) {
+      console.log("[Session] No session cookie found");
       return null;
     }
 
     // Parse the stored user data
     const userData = JSON.parse(sessionCookie) as SessionUser;
     
+    console.log("[Session] Parsed user data:", userData);
+    
     if (!userData.uid) {
+      console.log("[Session] No UID in user data");
       await clearSession();
       return null;
     }
