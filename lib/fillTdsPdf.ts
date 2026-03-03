@@ -7,6 +7,43 @@ export interface TechSpec {
   specs: { name: string; value: string }[];
 }
 
+/**
+ * Sanitizes text for WinAnsi encoding by replacing problematic Unicode characters
+ * with ASCII equivalents or removing them entirely.
+ * This prevents the "WinAnsi cannot encode" error.
+ */
+function sanitizeForPdf(text: string): string {
+  if (!text) return "";
+  
+  const charMap: Record<string, string> = {
+    "⌀": "Ø",      // Diameter symbol → Scandinavian O
+    "°": "deg",    // Degree symbol → "deg"
+    "±": "+/-",    // Plus-minus → "+/-"
+    "×": "x",      // Multiplication → "x"
+    "÷": "/",      // Division → "/"
+    "μ": "u",      // Micro → "u"
+    "Ω": "Ohm",    // Ohm → "Ohm"
+    "π": "pi",     // Pi → "pi"
+    "∞": "inf",    // Infinity → "inf"
+    """: '"',      // Smart quotes → regular quotes
+    """: '"',
+    "'": "'",
+    "'": "'",
+    "–": "-",      // En dash → hyphen
+    "—": "-",      // Em dash → hyphen
+  };
+
+  let sanitized = text;
+  for (const [char, replacement] of Object.entries(charMap)) {
+    sanitized = sanitized.replace(new RegExp(char, "g"), replacement);
+  }
+  
+  // Remove any remaining non-ASCII characters that WinAnsi cannot encode
+  sanitized = sanitized.replace(/[^\x20-\x7E\n\r\t]/g, "");
+  
+  return sanitized;
+}
+
 export interface FillTdsPdfParams {
   templateUrl: string;
   itemDescription: string;
@@ -93,18 +130,20 @@ function buildValueLookup(params: FillTdsPdfParams): Record<string, string> {
   const itemCode = params.litItemCode || params.ecoItemCode;
 
   // Core aliases — covers whatever naming convention the template designer used
-  for (const a of ["brand", "brandname"]) lookup[a] = params.brand;
-  for (const a of ["itemcode", "lititemcode", "ecoitemcode", "code"]) lookup[a] = itemCode;
+  // All values are sanitized for WinAnsi encoding
+  for (const a of ["brand", "brandname"]) lookup[a] = sanitizeForPdf(params.brand);
+  for (const a of ["itemcode", "lititemcode", "ecoitemcode", "code"]) lookup[a] = sanitizeForPdf(itemCode);
   for (const a of ["itemdescription", "description", "productname", "name", "product"])
-    lookup[norm(a)] = params.itemDescription;
+    lookup[norm(a)] = sanitizeForPdf(params.itemDescription);
 
   // All spec groups
   params.technicalSpecs.forEach((group) => {
     group.specs.forEach((spec) => {
       const v = spec.value?.trim();
       if (v) {
-        lookup[norm(spec.name)] = v;
-        lookup[spec.name.toLowerCase()] = v;
+        const sanitized = sanitizeForPdf(v);
+        lookup[norm(spec.name)] = sanitized;
+        lookup[spec.name.toLowerCase()] = sanitized;
       }
     });
   });
@@ -221,7 +260,11 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
         if (field instanceof PDFTextField) {
           const v = resolveFieldValue(field.getName(), valueLookup);
           if (v) {
-            try { field.setText(v); filled++; } catch {}
+            try { 
+              const sanitized = sanitizeForPdf(v);
+              field.setText(sanitized); 
+              filled++; 
+            } catch {}
           }
         }
         if (field instanceof PDFButton) {
@@ -273,7 +316,8 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
       const v = resolveFieldValue(label, valueLookup);
       if (!v) continue;
       try {
-        page1.drawText(v.length > 80 ? v.slice(0, 80) + "\u2026" : v, {
+        const text = sanitizeForPdf(v.length > 80 ? v.slice(0, 80) + "..." : v);
+        page1.drawText(text, {
           x: 202, y, size: 7, font, color: rgb(0, 0, 0), maxWidth: 380, lineHeight: 9.1,
         });
       } catch {}
@@ -281,7 +325,8 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
 
     if (itemDescription) {
       try {
-        page1.drawText(itemDescription, {
+        const text = sanitizeForPdf(itemDescription);
+        page1.drawText(text, {
           x: 200, y: 658, size: 9, font: boldFont,
           color: rgb(0, 0, 0), maxWidth: 355, lineHeight: 12,
         });
