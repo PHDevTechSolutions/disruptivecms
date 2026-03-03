@@ -551,7 +551,8 @@ export default function AddNewProduct({
         }
 
         // Get TDS spec mapping to filter specs shown in the form
-        const tdsSpecMapping: Record<string, string[]> = familyData?.tdsSpecMapping || {};
+        const tdsSpecMapping: Record<string, string[]> =
+          familyData?.tdsSpecMapping || {};
 
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
@@ -563,10 +564,12 @@ export default function AddNewProduct({
               // Filter items based on TDS spec mapping if it exists
               const allowedLabels = tdsSpecMapping[groupId];
               const itemsToShow = allowedLabels
-                ? (data.items || []).filter((item: any) => allowedLabels.includes(item.label))
-                : (data.items || []);
+                ? (data.items || []).filter((item: any) =>
+                    allowedLabels.includes(item.label),
+                  )
+                : data.items || [];
 
-              (itemsToShow).forEach((item: any) => {
+              itemsToShow.forEach((item: any) => {
                 if (item.label)
                   items.push({
                     id: `${d.id}-${item.label}`,
@@ -900,7 +903,8 @@ export default function AddNewProduct({
             mainImageUrl: mainUrl || undefined,
             dimensionDrawingUrl: existingDimensionDrawingImage || undefined,
             mountingHeightUrl: existingMountingHeightImage || undefined,
-            driverCompatibilityUrl: existingDriverCompatibilityImage || undefined,
+            driverCompatibilityUrl:
+              existingDriverCompatibilityImage || undefined,
             baseImageUrl: existingBaseImage || undefined,
             illuminanceLevelUrl: existingIlluminanceLevelImage || undefined,
             wiringDiagramUrl: existingWiringDiagramImage || undefined,
@@ -1162,7 +1166,9 @@ export default function AddNewProduct({
                     TDS PDF will be auto-generated on publish
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Fill in the form below with product details and media. The TDS PDF will be created from the selected product family template.
+                    Fill in the form below with product details and media. The
+                    TDS PDF will be created from the selected product family
+                    template.
                   </p>
                 </div>
               </div>
@@ -1349,140 +1355,140 @@ export default function AddNewProduct({
                   />
                 </button>
                 {techDrawingsOpen && (
-                    <div className="space-y-4 mt-3">
-                      <div className="grid grid-cols-2 gap-4">
-                        {renderSimpleDropzone({
-                          rootProps: dimensionDrawRoot,
-                          inputProps: dimensionDrawInput,
-                          file: dimensionDrawingImage,
-                          existingUrl: existingDimensionDrawingImage,
-                          onClear: () => {
-                            setDimensionDrawingImage(null);
-                            setExistingDimensionDrawingImage("");
-                          },
-                          icon: <Ruler className="h-3 w-3" />,
-                          label: "Dimension Drawing",
-                        })}
-                        {renderSimpleDropzone({
-                          rootProps: mountHRoot,
-                          inputProps: mountHInput,
-                          file: mountingHeightImage,
-                          existingUrl: existingMountingHeightImage,
-                          onClear: () => {
-                            setMountingHeightImage(null);
-                            setExistingMountingHeightImage("");
-                          },
-                          icon: <ArrowUpDown className="h-3 w-3" />,
-                          label: "Mounting Height",
-                        })}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        {renderSimpleDropzone({
-                          rootProps: driverCompRoot,
-                          inputProps: driverCompInput,
-                          file: driverCompatibilityImage,
-                          existingUrl: existingDriverCompatibilityImage,
-                          onClear: () => {
-                            setDriverCompatibilityImage(null);
-                            setExistingDriverCompatibilityImage("");
-                          },
-                          icon: <Cpu className="h-3 w-3" />,
-                          label: "Driver Compatibility",
-                        })}
-                        {renderSimpleDropzone({
-                          rootProps: baseRoot2,
-                          inputProps: baseInput2,
-                          file: baseImage,
-                          existingUrl: existingBaseImage,
-                          onClear: () => {
-                            setBaseImage(null);
-                            setExistingBaseImage("");
-                          },
-                          icon: <Layers className="h-3 w-3" />,
-                          label: "Base",
-                        })}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        {renderSimpleDropzone({
-                          rootProps: illumRoot,
-                          inputProps: illumInput,
-                          file: illuminanceLevelImage,
-                          existingUrl: existingIlluminanceLevelImage,
-                          onClear: () => {
-                            setIlluminanceLevelImage(null);
-                            setExistingIlluminanceLevelImage("");
-                          },
-                          icon: <Sun className="h-3 w-3" />,
-                          label: "Illuminance Level",
-                        })}
-                        {renderSimpleDropzone({
-                          rootProps: wiringDiagRoot,
-                          inputProps: wiringDiagInput,
-                          file: wiringDiagramImage,
-                          existingUrl: existingWiringDiagramImage,
-                          onClear: () => {
-                            setWiringDiagramImage(null);
-                            setExistingWiringDiagramImage("");
-                          },
-                          icon: <GitBranch className="h-3 w-3" />,
-                          label: "Wiring Diagram",
-                        })}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        {renderSimpleDropzone({
-                          rootProps: installRoot,
-                          inputProps: installInput,
-                          file: installationImage,
-                          existingUrl: existingInstallationImage,
-                          onClear: () => {
-                            setInstallationImage(null);
-                            setExistingInstallationImage("");
-                          },
-                          icon: <HardHat className="h-3 w-3" />,
-                          label: "Installation",
-                        })}
-                        {renderSimpleDropzone({
-                          rootProps: wiringLayRoot,
-                          inputProps: wiringLayInput,
-                          file: wiringLayoutImage,
-                          existingUrl: existingWiringLayoutImage,
-                          onClear: () => {
-                            setWiringLayoutImage(null);
-                            setExistingWiringLayoutImage("");
-                          },
-                          icon: <LayoutTemplate className="h-3 w-3" />,
-                          label: "Wiring Layout",
-                        })}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        {renderSimpleDropzone({
-                          rootProps: termLayRoot,
-                          inputProps: termLayInput,
-                          file: terminalLayoutImage,
-                          existingUrl: existingTerminalLayoutImage,
-                          onClear: () => {
-                            setTerminalLayoutImage(null);
-                            setExistingTerminalLayoutImage("");
-                          },
-                          icon: <Grid className="h-3 w-3" />,
-                          label: "Terminal Layout",
-                        })}
-                        {renderSimpleDropzone({
-                          rootProps: accessoriesRoot2,
-                          inputProps: accessoriesInput2,
-                          file: accessoriesImage,
-                          existingUrl: existingAccessoriesImage,
-                          onClear: () => {
-                            setAccessoriesImage(null);
-                            setExistingAccessoriesImage("");
-                          },
-                          icon: <ShoppingBag className="h-3 w-3" />,
-                          label: "Accessories",
-                        })}
-                      </div>
+                  <div className="space-y-4 mt-3">
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: dimensionDrawRoot,
+                        inputProps: dimensionDrawInput,
+                        file: dimensionDrawingImage,
+                        existingUrl: existingDimensionDrawingImage,
+                        onClear: () => {
+                          setDimensionDrawingImage(null);
+                          setExistingDimensionDrawingImage("");
+                        },
+                        icon: <Ruler className="h-3 w-3" />,
+                        label: "Dimension Drawing",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: mountHRoot,
+                        inputProps: mountHInput,
+                        file: mountingHeightImage,
+                        existingUrl: existingMountingHeightImage,
+                        onClear: () => {
+                          setMountingHeightImage(null);
+                          setExistingMountingHeightImage("");
+                        },
+                        icon: <ArrowUpDown className="h-3 w-3" />,
+                        label: "Mounting Height",
+                      })}
                     </div>
-                  )}
-                </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: driverCompRoot,
+                        inputProps: driverCompInput,
+                        file: driverCompatibilityImage,
+                        existingUrl: existingDriverCompatibilityImage,
+                        onClear: () => {
+                          setDriverCompatibilityImage(null);
+                          setExistingDriverCompatibilityImage("");
+                        },
+                        icon: <Cpu className="h-3 w-3" />,
+                        label: "Driver Compatibility",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: baseRoot2,
+                        inputProps: baseInput2,
+                        file: baseImage,
+                        existingUrl: existingBaseImage,
+                        onClear: () => {
+                          setBaseImage(null);
+                          setExistingBaseImage("");
+                        },
+                        icon: <Layers className="h-3 w-3" />,
+                        label: "Base",
+                      })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: illumRoot,
+                        inputProps: illumInput,
+                        file: illuminanceLevelImage,
+                        existingUrl: existingIlluminanceLevelImage,
+                        onClear: () => {
+                          setIlluminanceLevelImage(null);
+                          setExistingIlluminanceLevelImage("");
+                        },
+                        icon: <Sun className="h-3 w-3" />,
+                        label: "Illuminance Level",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: wiringDiagRoot,
+                        inputProps: wiringDiagInput,
+                        file: wiringDiagramImage,
+                        existingUrl: existingWiringDiagramImage,
+                        onClear: () => {
+                          setWiringDiagramImage(null);
+                          setExistingWiringDiagramImage("");
+                        },
+                        icon: <GitBranch className="h-3 w-3" />,
+                        label: "Wiring Diagram",
+                      })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: installRoot,
+                        inputProps: installInput,
+                        file: installationImage,
+                        existingUrl: existingInstallationImage,
+                        onClear: () => {
+                          setInstallationImage(null);
+                          setExistingInstallationImage("");
+                        },
+                        icon: <HardHat className="h-3 w-3" />,
+                        label: "Installation",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: wiringLayRoot,
+                        inputProps: wiringLayInput,
+                        file: wiringLayoutImage,
+                        existingUrl: existingWiringLayoutImage,
+                        onClear: () => {
+                          setWiringLayoutImage(null);
+                          setExistingWiringLayoutImage("");
+                        },
+                        icon: <LayoutTemplate className="h-3 w-3" />,
+                        label: "Wiring Layout",
+                      })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {renderSimpleDropzone({
+                        rootProps: termLayRoot,
+                        inputProps: termLayInput,
+                        file: terminalLayoutImage,
+                        existingUrl: existingTerminalLayoutImage,
+                        onClear: () => {
+                          setTerminalLayoutImage(null);
+                          setExistingTerminalLayoutImage("");
+                        },
+                        icon: <Grid className="h-3 w-3" />,
+                        label: "Terminal Layout",
+                      })}
+                      {renderSimpleDropzone({
+                        rootProps: accessoriesRoot2,
+                        inputProps: accessoriesInput2,
+                        file: accessoriesImage,
+                        existingUrl: existingAccessoriesImage,
+                        onClear: () => {
+                          setAccessoriesImage(null);
+                          setExistingAccessoriesImage("");
+                        },
+                        icon: <ShoppingBag className="h-3 w-3" />,
+                        label: "Accessories",
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {(existingGalleryImages.length > 0 ||
                 galleryImages.length > 0) && (
@@ -1639,12 +1645,17 @@ export default function AddNewProduct({
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      const visible = editData
-                        ? specs.filter((s) => {
-                            const k = `${s.specGroupId}-${s.label}`;
-                            return specValues[k] && specValues[k].trim() !== "";
-                          })
-                        : specs;
+                      // When TDS is loaded or editing, show all available specs
+                      // When creating new product without TDS, only show specs with values
+                      const visible =
+                        editData && !tdsTemplateUrl
+                          ? specs.filter((s) => {
+                              const k = `${s.specGroupId}-${s.label}`;
+                              return (
+                                specValues[k] && specValues[k].trim() !== ""
+                              );
+                            })
+                          : specs;
                       if (visible.length === 0) return null;
                       return (
                         <div key={groupName} className="space-y-3">
