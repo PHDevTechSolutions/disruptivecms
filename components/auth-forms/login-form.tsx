@@ -92,15 +92,21 @@ export function LoginForm({
         userData.accessLevel || (role === "admin" ? "full" : "staff"),
     };
 
+    console.log("[v0] Creating session with data:", sessionData);
+    
     const sessionResponse = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sessionData),
     });
 
+    console.log("[v0] Session response status:", sessionResponse.status);
+    
     if (!sessionResponse.ok) {
       throw new Error("Failed to create session");
     }
+    
+    console.log("[v0] Session created successfully");
 
     // Also store in localStorage for client-side access
     localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData));

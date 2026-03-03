@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
+import { cookies } from "next/headers";
 
 /**
  * GET /api/auth/user
@@ -8,9 +9,15 @@ import { getSession } from "@/lib/session";
  */
 export async function GET(request: NextRequest) {
   try {
+    const cookieStore = await cookies();
+    const allCookies = cookieStore.getAll();
+    console.log("[API] All cookies:", allCookies.map(c => c.name));
+    
     const session = await getSession();
+    console.log("[API] Session result:", session ? "Found" : "Not found");
 
     if (!session) {
+      console.log("[API] No session, returning 401");
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
