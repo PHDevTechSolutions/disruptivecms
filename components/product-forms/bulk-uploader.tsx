@@ -151,29 +151,45 @@ interface ImportStats {
 type PreviewTab = "files" | "categories" | "products";
 
 // ─── JARIS Excel column constants ────────────────────────────────────────────
-// Row 1 = headers (0-indexed columns):
+// Row 1 = individual column headers (spec labels OR image field names)
+// Row 2 = MERGED spec-group names spanning their spec columns
+// Row 3+ = product data
+//
+// Fixed identity columns (0-indexed, always present):
 //   0  Product Usage
 //   1  Product Family
 //   2  Product Class
-//   3  ECOSHIFT Item Code
-//   4  LIT Item Code
-//   5  Item Description     ← REQUIRED
-//   6  Raw Image
-//   7  Main Image
-//   8  Gallery Images       (comma-separated URLs)
-//   9  Dimensional Drawing
-//  10  Recommended Mounting Height
-//  11  Driver Compatibility
-//  12  Base
-//  13  Illuminance Level
-//  14  Wiring Diagram
-//  15  Installation
-//  16  Wiring Layout
-//  17  Terminal Layout
-//  18  Accessories (image)
-//  19+ Technical spec values (group name in Row 2)
+//   3  ECOSHIFT Item Code      ← REQUIRED
+//   4  LIT Item Code           ← REQUIRED
+//   5  Item Description        ← REQUIRED
+//   6  Raw Image URL
+//   7  Main Image URL
+//   8  Gallery Images URL      (comma-separated)
+//
+// Columns 9+ are classified DYNAMICALLY per template:
+//   • If Row 2 has a group name over the column  → SPEC column
+//     (the spec label comes from Row 1, the group name from the Row 2 merged cell)
+//   • If Row 2 is empty but Row 1 matches a known image field name → IMAGE URL column
+//
+// This means a "REGULAR BULB" template where specs start at col 9 works just as
+// well as a template that has 10 image-URL columns before the spec block.
 
-const IDENTITY_COL_COUNT = 19; // cols 0-18 are identity/image cols
+const FIXED_IDENTITY_COLS = 9; // cols 0-8 are always identity
+
+// Maps normalised Row-1 header text → ParsedProduct image URL field name.
+// These columns only exist in templates that include them; REGULAR_BULB etc. skip them.
+const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
+  "DIMENSIONAL DRAWING": "dimensionalDrawingUrl",
+  "RECOMMENDED MOUNTING HEIGHT": "recommendedMountingHeightUrl",
+  "DRIVER COMPATIBILITY": "driverCompatibilityUrl",
+  BASE: "baseImageUrl",
+  "ILLUMINANCE LEVEL": "illuminanceLevelUrl",
+  "WIRING DIAGRAM": "wiringDiagramUrl",
+  INSTALLATION: "installationUrl",
+  "WIRING LAYOUT": "wiringLayoutUrl",
+  "TERMINAL LAYOUT": "terminalLayoutUrl",
+  ACCESSORIES: "accessoriesImageUrl",
+};
 
 // Normalise a raw product-class string into our union
 function normaliseProductClass(raw: string): "spf" | "standard" | "" {
@@ -214,11 +230,13 @@ function cellStr(v: unknown): string {
     .trim();
 }
 
-// Build a map of colIndex → group name from Row 2
+// Build a map of colIndex → group name from Row 2.
+// Propagates the last-seen group name rightward to fill merged-cell gaps
+// (ExcelJS only gives the value to the top-left cell of a merge range).
 function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   const map: Record<number, string> = {};
   let current = "";
-  for (let i = IDENTITY_COL_COUNT; i < groupRow.length; i++) {
+  for (let i = FIXED_IDENTITY_COLS; i < groupRow.length; i++) {
     const cell = groupRow[i];
     if (cell && cell.trim()) current = cell.trim();
     if (current) map[i] = current;
@@ -264,12 +282,25 @@ async function parseWorkbook(
   const groupRow = allRows[1]; // Row 2 — spec group names
   const dataRows = allRows.slice(2); // Row 3+ — actual products
 
-  // Build label map for spec columns (col 19+)
+  // Build group map from Row 2 (merged cells propagated rightward)
   const groupMap: Record<number, string> = buildGroupMap(groupRow as string[]);
-  const labelMap: Record<number, string> = {};
+
+  // Classify each column >= FIXED_IDENTITY_COLS dynamically:
+  //   • Row 2 has a group name over this column → SPEC column (label from Row 1)
+  //   • Row 2 is empty but Row 1 matches a known image field → IMAGE URL column
+  const specLabelMap: Record<number, string> = {}; // col → spec label
+  const imgColMap: Record<number, keyof ParsedProduct> = {}; // col → product field
+
   headerRow.forEach((h, i) => {
-    if (i >= IDENTITY_COL_COUNT && h)
-      labelMap[i] = h.replace(/[\r\n\t]+/g, " ").trim();
+    if (i < FIXED_IDENTITY_COLS || !h) return;
+    const clean = h.replace(/[\r\n\t]+/g, " ").trim();
+    const upper = clean.toUpperCase();
+    if (groupMap[i]) {
+      specLabelMap[i] = clean;
+    } else {
+      const field = IMG_HEADER_TO_FIELD[upper];
+      if (field) imgColMap[i] = field;
+    }
   });
 
   const products: ParsedProduct[] = [];
@@ -303,16 +334,23 @@ async function parseWorkbook(
       continue;
     }
 
-    // Spec columns → grouped
+    // ── Spec columns → grouped by Row-2 group name ─────────────────────────
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
-    for (const [colStr, label] of Object.entries(labelMap)) {
+    for (const [colStr, label] of Object.entries(specLabelMap)) {
       const col = Number(colStr);
-      const val = row[col];
-      if (!val || val === "") continue;
+      const val = row[col]?.trim();
+      if (!val) continue;
       const group = groupMap[col];
       if (!group) continue;
       if (!specsByGroup[group]) specsByGroup[group] = [];
       specsByGroup[group].push({ label, value: val });
+    }
+
+    // ── Image URL columns → resolved dynamically from Row-1 headers ─────────
+    // Templates that don't include these columns will simply get empty strings.
+    const imgVals: Partial<Record<keyof ParsedProduct, string>> = {};
+    for (const [colStr, field] of Object.entries(imgColMap)) {
+      imgVals[field] = row[Number(colStr)]?.trim() ?? "";
     }
 
     products.push({
@@ -325,16 +363,16 @@ async function parseWorkbook(
       mainImageUrl: g(7),
       rawImageUrl: g(6),
       galleryImageUrls: parseGalleryUrls(g(8)),
-      dimensionalDrawingUrl: g(9),
-      recommendedMountingHeightUrl: g(10),
-      driverCompatibilityUrl: g(11),
-      baseImageUrl: g(12),
-      illuminanceLevelUrl: g(13),
-      wiringDiagramUrl: g(14),
-      installationUrl: g(15),
-      wiringLayoutUrl: g(16),
-      terminalLayoutUrl: g(17),
-      accessoriesImageUrl: g(18),
+      dimensionalDrawingUrl: imgVals.dimensionalDrawingUrl ?? "",
+      recommendedMountingHeightUrl: imgVals.recommendedMountingHeightUrl ?? "",
+      driverCompatibilityUrl: imgVals.driverCompatibilityUrl ?? "",
+      baseImageUrl: imgVals.baseImageUrl ?? "",
+      illuminanceLevelUrl: imgVals.illuminanceLevelUrl ?? "",
+      wiringDiagramUrl: imgVals.wiringDiagramUrl ?? "",
+      installationUrl: imgVals.installationUrl ?? "",
+      wiringLayoutUrl: imgVals.wiringLayoutUrl ?? "",
+      terminalLayoutUrl: imgVals.terminalLayoutUrl ?? "",
+      accessoriesImageUrl: imgVals.accessoriesImageUrl ?? "",
       specs: specsByGroup,
     });
   }
@@ -1613,7 +1651,7 @@ export default function BulkUploader({
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[760px] h-[88vh] flex flex-col p-0 overflow-hidden">
+      <DialogContent className="sm:max-w-190 h-[88vh] flex flex-col p-0 overflow-hidden">
         {/* ── Header ── */}
         <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
           <div className="flex items-center gap-3">
