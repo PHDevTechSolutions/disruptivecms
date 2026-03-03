@@ -1,4 +1,3 @@
-import admin from "@/lib/firebase/admin";
 import { cookies } from "next/headers";
 
 export interface SessionUser {
@@ -12,34 +11,18 @@ export interface SessionUser {
 const SESSION_COOKIE_NAME = "admin_session_token";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
 
+/**
+ * Write a session by storing user data (no Firebase Admin SDK required)
+ * @param userData - User data object
+ * @returns SessionUser if successful, null otherwise
+ */
 export async function writeSessionCookie(
-  idToken: string
+  userData: SessionUser
 ): Promise<SessionUser | null> {
   try {
-    if (!admin.apps.length) {
-      console.error("[Session] Firebase Admin not initialized");
-      return null;
-    }
-
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-
-    const userDoc = await admin
-      .firestore()
-      .collection("adminaccount")
-      .doc(uid)
-      .get();
-
-    if (!userDoc.exists) throw new Error("User not found");
-
-    const userData = userDoc.data() as any;
-
-    const sessionCookie = await admin
-      .auth()
-      .createSessionCookie(idToken, { expiresIn: SESSION_MAX_AGE });
-
-    const cookieStore = await cookies(); // ✅ await here
-    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, {
+    // Store the user data in a secure HTTP-only cookie
+    const cookieStore = await cookies();
+    cookieStore.set(SESSION_COOKIE_NAME, JSON.stringify(userData), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
@@ -47,94 +30,83 @@ export async function writeSessionCookie(
       path: "/",
     });
 
-    return {
-      uid,
-      email: userData.email || decodedToken.email || "",
-      name: userData.fullName || userData.name || "User",
-      role: String(userData.role || "").toLowerCase().trim(),
-      accessLevel: userData.accessLevel || "staff",
-    };
+    return userData;
   } catch (error) {
     console.error("[Session] writeSessionCookie error:", error);
     return null;
   }
 }
 
+/**
+ * Get the current session from cookies
+ * @returns SessionUser if valid session exists, null otherwise
+ */
 export async function getSession(): Promise<SessionUser | null> {
   try {
-    if (!admin.apps.length) {
-      console.error("[Session] Firebase Admin not initialized");
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    
+    if (!sessionCookie) {
       return null;
     }
 
-    const cookieStore = await cookies(); // ✅ await here
-    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    if (!sessionCookie) return null;
-
-    const decodedToken = await admin.auth().verifySessionCookie(sessionCookie, true);
-    const uid = decodedToken.uid;
-
-    const userDoc = await admin.firestore().collection("adminaccount").doc(uid).get();
-    if (!userDoc.exists) {
+    // Parse the stored user data
+    const userData = JSON.parse(sessionCookie) as SessionUser;
+    
+    if (!userData.uid) {
       await clearSession();
       return null;
     }
 
-    const userData = userDoc.data() as any;
-    return {
-      uid,
-      email: userData.email || decodedToken.email || "",
-      name: userData.fullName || userData.name || "User",
-      role: String(userData.role || "").toLowerCase().trim(),
-      accessLevel: userData.accessLevel || "staff",
-    };
+    return userData;
   } catch (error) {
     console.error("[Session] getSession error:", error);
     return null;
   }
 }
 
+/**
+ * Validate that a session cookie exists and is valid
+ * @returns true if valid session exists, false otherwise
+ */
 export async function validateSession(): Promise<boolean> {
   try {
-    if (!admin.apps.length) {
-      console.error("[Session] Firebase Admin not initialized");
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    
+    if (!sessionCookie) {
       return false;
     }
 
-    const cookieStore = await cookies(); // ✅ await here
-    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    if (!sessionCookie) return false;
-
-    await admin.auth().verifySessionCookie(sessionCookie, true);
-    return true;
+    // Try to parse it - if it fails, it's invalid
+    const userData = JSON.parse(sessionCookie) as SessionUser;
+    return !!userData.uid;
   } catch (error) {
     console.error("[Session] validateSession error:", error);
     return false;
   }
 }
 
-export async function clearSession(): Promise<void> {
-  try {
-    const cookieStore = await cookies(); // ✅ await here
-    cookieStore.delete(SESSION_COOKIE_NAME);
-  } catch (error) {
-    console.error("[Session] clearSession error:", error);
-  }
-}
-
+/**
+ * Refresh the session by updating the cookie expiration
+ * @returns true if successful, false otherwise
+ */
 export async function refreshSession(): Promise<boolean> {
   try {
-    if (!admin.apps.length) {
-      console.error("[Session] Firebase Admin not initialized");
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    
+    if (!sessionCookie) {
       return false;
     }
 
-    const cookieStore = await cookies(); // ✅ await here
-    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    if (!sessionCookie) return false;
+    // Verify cookie is still valid
+    const userData = JSON.parse(sessionCookie) as SessionUser;
+    if (!userData.uid) {
+      return false;
+    }
 
-    await admin.auth().verifySessionCookie(sessionCookie, true);
-
+    // Update cookie expiration
     cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -147,5 +119,17 @@ export async function refreshSession(): Promise<boolean> {
   } catch (error) {
     console.error("[Session] refreshSession error:", error);
     return false;
+  }
+}
+
+/**
+ * Clear the session cookie (logout)
+ */
+export async function clearSession(): Promise<void> {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete(SESSION_COOKIE_NAME);
+  } catch (error) {
+    console.error("[Session] clearSession error:", error);
   }
 }

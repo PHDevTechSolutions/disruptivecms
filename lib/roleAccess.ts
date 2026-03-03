@@ -20,45 +20,22 @@ export interface RoleAccessConfig {
 
 /**
  * Maps each role to the routes they have access to
+ * Admin has access to ALL pages (represented by "*")
+ * Other roles have specific restricted access
  */
 export const roleAccessConfig: RoleAccessConfig = {
-  admin: [
-    "/dashboard",
-    "/products/all-products",
-    "/content/blogs",
-    "/jobs/careers",
-    "/settings",
-    "/admin",
-    "/inquiries",
-  ],
-  warehouse: [
-    "/dashboard",
-    "/products/all-products",
-  ],
-  staff: [
-    "/dashboard",
-    "/products/all-products",
-  ],
-  inventory: [
-    "/dashboard",
-    "/products/all-products",
-  ],
+  admin: ["*"], // Admin has access to all pages
+  warehouse: [],
+  staff: [],
+  inventory: [],
   hr: [
-    "/dashboard",
-    "/jobs/careers",
+    "/jobs/applications",
   ],
   seo: [
-    "/dashboard",
     "/content/blogs",
   ],
-  csr: [
-    "/dashboard",
-    "/inquiries",
-  ],
-  ecomm: [
-    "/dashboard",
-    "/products/all-products",
-  ],
+  csr: [],
+  ecomm: [],
   pd: [
     "/products/all-products",
   ],
@@ -75,6 +52,11 @@ export function canAccessRoute(role: string, path: string): boolean {
   
   if (!allowedRoutes) {
     return false;
+  }
+
+  // Admin has access to all pages (represented by "*")
+  if (allowedRoutes.includes("*")) {
+    return true;
   }
 
   // Check for exact match or parent route match
@@ -96,7 +78,7 @@ export function getPrimaryRouteForRole(role: string): string {
     warehouse: "/products/all-products",
     staff: "/products/all-products",
     inventory: "/products/all-products",
-    hr: "/jobs/careers",
+    hr: "/jobs/applications",
     seo: "/content/blogs",
     csr: "/inquiries/customer-inquiries",
     ecomm: "/products/all-products",
