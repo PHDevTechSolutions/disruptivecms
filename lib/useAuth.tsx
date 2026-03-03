@@ -132,3 +132,37 @@ export function useRequireAuth() {
 
   return { user, isLoading };
 }
+
+/**
+ * Hook to require specific roles for a page/component
+ * Redirects to /access-denied if user doesn't have required role(s)
+ */
+export function useRequireRole(requiredRoles: string | string[]) {
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+
+  const rolesArray = Array.isArray(requiredRoles)
+    ? requiredRoles
+    : [requiredRoles];
+  const hasRequiredRole =
+    user && rolesArray.includes(user.role.toLowerCase());
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    // Not authenticated
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+
+    // No required role
+    if (!hasRequiredRole) {
+      const pathname = window.location.pathname;
+      router.push(`/access-denied?from=${encodeURIComponent(pathname)}`);
+      return;
+    }
+  }, [isLoading, user, hasRequiredRole, router]);
+
+  return { user, isLoading, hasRequiredRole };
+}

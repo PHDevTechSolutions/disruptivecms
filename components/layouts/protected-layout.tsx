@@ -47,9 +47,12 @@ export function ProtectedLayout({
       return;
     }
 
-    console.log("USER ROLE:", user?.role);
-console.log("PATHNAME:", pathname);
-console.log("ACCESS:", canAccessRoute(user?.role, pathname));
+    // If user is logged in AND accessing /auth page → redirect to primary route
+    if (pathname.startsWith("/auth/")) {
+      const { getPrimaryRouteForRole } = require("@/lib/roleAccess");
+      router.push(getPrimaryRouteForRole(user.role));
+      return;
+    }
 
     // If user exists but no access → redirect to access denied
     if (!hasRoleAccess || !hasRouteAccess) {
