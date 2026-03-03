@@ -51,6 +51,14 @@ export interface FillTdsPdfParams {
   ecoItemCode: string;
   brand: string;
   technicalSpecs: TechSpec[];
+  /**
+   * Optional mapping of spec group ID → array of spec labels that correspond
+   * to AcroForm fields in the PDF template. Stored on the product family in
+   * Firestore. Passed here for reference but fuzzy matching via
+   * resolveFieldValue handles field resolution automatically — this is kept
+   * for future use or stricter matching if needed.
+   */
+  tdsSpecMapping?: Record<string, string[]>;
   mainImageUrl?: string;
   dimensionDrawingUrl?: string;
   mountingHeightUrl?: string;
@@ -301,9 +309,6 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
   let usedAcroForm = false;
 
   // ── Strategy 1: Fill preset AcroForm fields (primary path) ─────────────────
-  // Templates are expected to have named form fields that match spec labels.
-  // After filling, flatten() bakes values into the page stream and removes all
-  // visible field borders, blue highlights, and placeholder indicators.
   try {
     const form = pdfDoc.getForm();
     const fields = form.getFields();
@@ -341,7 +346,6 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
       }
 
       if (filled > 0) {
-        // flatten() removes ALL widget annotations → no visual indicators in output
         form.flatten();
         usedAcroForm = true;
       }
@@ -351,7 +355,6 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
   }
 
   // ── Strategy 2: Coordinate-based text (for templates without AcroForm) ──────
-  // ONLY runs when AcroForm was not used, to prevent double-writing.
   if (!usedAcroForm) {
     const pages = pdfDoc.getPages();
     const page1 = pages[0];
@@ -359,7 +362,6 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    // y-coordinates extracted from the base Disruptive TDS template
     const ROWS: { label: string; y: number }[] = [
       { label: "Brand", y: 523.1 },
       { label: "Item Code", y: 507.1 },
@@ -426,9 +428,6 @@ export async function fillTdsPdf(params: FillTdsPdfParams): Promise<string> {
   }
 
   // ── Extra pages: remaining technical drawings ──────────────────────────────
-  // For AcroForm templates: dimDraw + illuminance may be in template slots already;
-  // for non-AcroForm: they were drawn above. Either way, remaining drawings go on
-  // appended pages so nothing is lost.
   const extraImages: { label: string; url?: string }[] = [
     ...(usedAcroForm
       ? [

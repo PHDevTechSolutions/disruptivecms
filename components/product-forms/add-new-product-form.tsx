@@ -185,7 +185,6 @@ function TdsImageOverlay({ style, mapping, fieldName }: TdsImageOverlayProps) {
     disabled: !mapping,
   });
 
-  // Stable object URL that properly revokes on change
   const [previewSrc, setPreviewSrc] = useState<string>("");
 
   useEffect(() => {
@@ -327,10 +326,6 @@ function TdsBadge({
   return null;
 }
 
-// ─── TdsInteractiveFormFiller ─────────────────────────────────────────────────
-// REMOVED: This component is no longer used. TDS PDF generation occurs on publish.
-// Specs now auto-filter based on TDS template AcroForm fields.
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function AddNewProduct({
@@ -347,6 +342,10 @@ export default function AddNewProduct({
   const [tdsTemplateUrl, setTdsTemplateUrl] = useState<string>("");
   const [tdsStatus, setTdsStatus] = useState<TdsStatus>("idle");
   const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
+  // Store tdsSpecMapping separately for use during PDF generation only
+  const [tdsSpecMapping, setTdsSpecMapping] = useState<
+    Record<string, string[]>
+  >({});
 
   const [productClass, setProductClass] = useState<ProductClass>(
     editData?.productClass || "",
@@ -512,6 +511,7 @@ export default function AddNewProduct({
     if (!selectedCatId) {
       setTdsTemplateUrl("");
       setTdsStatus("idle");
+      setTdsSpecMapping({});
       setAvailableSpecs([]);
       setSpecsLoading(false);
       return;
@@ -537,6 +537,9 @@ export default function AddNewProduct({
           setTdsStatus("no-template");
         }
 
+        // Store tdsSpecMapping for PDF generation — NOT used to filter the form
+        setTdsSpecMapping(familyData?.tdsSpecMapping || {});
+
         const specIds = new Set<string>(
           Array.isArray(familyData?.specifications)
             ? familyData!.specifications
@@ -550,26 +553,15 @@ export default function AddNewProduct({
           return;
         }
 
-        // Get TDS spec mapping to filter specs shown in the form
-        const tdsSpecMapping: Record<string, string[]> =
-          familyData?.tdsSpecMapping || {};
-
+        // Load ALL specs for this family — no filtering by tdsSpecMapping here.
+        // tdsSpecMapping is only applied during PDF generation in fillTdsPdf.
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
             .forEach((d) => {
               const data = d.data();
-              const groupId = d.id;
-              // Filter items based on TDS spec mapping if it exists
-              const allowedLabels = tdsSpecMapping[groupId];
-              const itemsToShow = allowedLabels
-                ? (data.items || []).filter((item: any) =>
-                    allowedLabels.includes(item.label),
-                  )
-                : data.items || [];
-
-              itemsToShow.forEach((item: any) => {
+              (data.items || []).forEach((item: any) => {
                 if (item.label)
                   items.push({
                     id: `${d.id}-${item.label}`,
@@ -579,8 +571,10 @@ export default function AddNewProduct({
                   });
               });
             });
-          setAvailableSpecs(items);
-          setSpecsLoading(false);
+          if (!cancelled) {
+            setAvailableSpecs(items);
+            setSpecsLoading(false);
+          }
         });
       } catch (e) {
         console.error("[AddNewProduct]", e);
@@ -900,18 +894,20 @@ export default function AddNewProduct({
             ecoItemCode,
             brand: brandName,
             technicalSpecs,
+            // Pass tdsSpecMapping so fillTdsPdf can map only the relevant spec
+            // fields to the correct AcroForm field names in the PDF template
+            tdsSpecMapping,
             mainImageUrl: mainUrl || undefined,
-            dimensionDrawingUrl: existingDimensionDrawingImage || undefined,
-            mountingHeightUrl: existingMountingHeightImage || undefined,
-            driverCompatibilityUrl:
-              existingDriverCompatibilityImage || undefined,
-            baseImageUrl: existingBaseImage || undefined,
-            illuminanceLevelUrl: existingIlluminanceLevelImage || undefined,
-            wiringDiagramUrl: existingWiringDiagramImage || undefined,
-            installationUrl: existingInstallationImage || undefined,
-            wiringLayoutUrl: existingWiringLayoutImage || undefined,
-            terminalLayoutUrl: existingTerminalLayoutImage || undefined,
-            accessoriesUrl: existingAccessoriesImage || undefined,
+            dimensionDrawingUrl: dimensionDrawingUrl || undefined,
+            mountingHeightUrl: mountingHeightUrl || undefined,
+            driverCompatibilityUrl: driverCompatibilityUrl || undefined,
+            baseImageUrl: baseUrl || undefined,
+            illuminanceLevelUrl: illuminanceLevelUrl || undefined,
+            wiringDiagramUrl: wiringDiagramUrl || undefined,
+            installationUrl: installationUrl || undefined,
+            wiringLayoutUrl: wiringLayoutUrl || undefined,
+            terminalLayoutUrl: terminalLayoutUrl || undefined,
+            accessoriesUrl: accessoriesUrl || undefined,
             cloudinaryUploadFn: uploadPdfToCloudinary,
           });
           if (savedDocId && generatedTdsUrl.startsWith("http")) {
@@ -1624,7 +1620,7 @@ export default function AddNewProduct({
                     Technical Specifications
                     {tdsTemplateUrl && (
                       <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                        (filtered by TDS template)
+                        (mapped to TDS fields on publish)
                       </span>
                     )}
                   </Label>
@@ -1644,54 +1640,40 @@ export default function AddNewProduct({
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      // When TDS is loaded or editing, show all available specs
-                      // When creating new product without TDS, only show specs with values
-                      const visible =
-                        editData && !tdsTemplateUrl
-                          ? specs.filter((s) => {
-                              const k = `${s.specGroupId}-${s.label}`;
-                              return (
-                                specValues[k] && specValues[k].trim() !== ""
-                              );
-                            })
-                          : specs;
-                      if (visible.length === 0) return null;
-                      return (
-                        <div key={groupName} className="space-y-3">
-                          <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
-                            <Zap className="h-3 w-3" />
-                            {groupName}
-                          </h4>
-                          <div className="space-y-3 pl-5">
-                            {visible.map((spec) => {
-                              const specKey = `${spec.specGroupId}-${spec.label}`;
-                              return (
-                                <div
-                                  key={spec.id}
-                                  className="space-y-1.5 p-3 rounded-lg border bg-card"
-                                >
-                                  <Label className="text-xs font-medium">
-                                    {spec.label}
-                                  </Label>
-                                  <Input
-                                    placeholder={`Enter ${spec.label}...`}
-                                    className="h-9 text-sm"
-                                    value={specValues[specKey] || ""}
-                                    onChange={(e) =>
-                                      setSpecValues((p) => ({
-                                        ...p,
-                                        [specKey]: e.target.value,
-                                      }))
-                                    }
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
+                    {Object.entries(groupedSpecs).map(([groupName, specs]) => (
+                      <div key={groupName} className="space-y-3">
+                        <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
+                          <Zap className="h-3 w-3" />
+                          {groupName}
+                        </h4>
+                        <div className="space-y-3 pl-5">
+                          {specs.map((spec) => {
+                            const specKey = `${spec.specGroupId}-${spec.label}`;
+                            return (
+                              <div
+                                key={spec.id}
+                                className="space-y-1.5 p-3 rounded-lg border bg-card"
+                              >
+                                <Label className="text-xs font-medium">
+                                  {spec.label}
+                                </Label>
+                                <Input
+                                  placeholder={`Enter ${spec.label}...`}
+                                  className="h-9 text-sm"
+                                  value={specValues[specKey] || ""}
+                                  onChange={(e) =>
+                                    setSpecValues((p) => ({
+                                      ...p,
+                                      [specKey]: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1782,7 +1764,7 @@ export default function AddNewProduct({
         )}
       </div>
 
-      {/* ═══════════════════════ SIDEBAR ═════════════════���═════════ */}
+      {/* ═══════════════════════ SIDEBAR ══════════════════════════ */}
       <div className="space-y-6">
         <Card>
           <CardHeader>
