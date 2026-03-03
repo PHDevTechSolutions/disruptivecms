@@ -1639,7 +1639,9 @@ export default function AddNewProduct({
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedSpecs).map(([groupName, specs]) => {
-                      const visible = editData
+                      // When TDS is loaded or editing, show all available specs
+                      // When creating new product without TDS, only show specs with values
+                      const visible = editData && !tdsTemplateUrl
                         ? specs.filter((s) => {
                             const k = `${s.specGroupId}-${s.label}`;
                             return specValues[k] && specValues[k].trim() !== "";
