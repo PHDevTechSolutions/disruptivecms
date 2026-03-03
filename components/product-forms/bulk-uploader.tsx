@@ -12,8 +12,10 @@ import {
   getDocs,
   doc,
   updateDoc,
+  getDoc,
 } from "firebase/firestore";
 import ExcelJS from "exceljs";
+import { fillTdsPdf } from "@/lib/fillTdsPdf";
 
 import {
   Dialog,
@@ -48,6 +50,7 @@ import {
   EyeOff,
   ShoppingBag,
   ImageOff,
+  Info,
 } from "lucide-react";
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
@@ -63,13 +66,31 @@ const OWN_CLOUDINARY_BASE = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}
 type ImportSource = "excel" | "shopify";
 type ShopifyMode = "draft" | "public";
 
-// ── Excel types ──
+// ── JARIS Excel product (new template) ──
 interface ParsedProduct {
-  category: string;
-  productCode: string;
-  csvSku: string;
-  cloudinaryUrl: string;
-  productName: string;
+  // Required — at least one code + itemDescription
+  itemDescription: string;
+  ecoItemCode: string;
+  litItemCode: string;
+  // Optional classification
+  productFamily: string;
+  productClass: string; // "spf" | "standard" | ""
+  productUsage: string[]; // ["INDOOR","OUTDOOR","SOLAR"]
+  // Image URL columns (raw strings from sheet — uploaded to Cloudinary on import)
+  mainImageUrl: string;
+  rawImageUrl: string;
+  galleryImageUrls: string[];
+  dimensionDrawingUrl: string;
+  mountingHeightUrl: string;
+  driverCompatibilityUrl: string;
+  baseImageUrl: string;
+  illuminanceLevelUrl: string;
+  wiringDiagramUrl: string;
+  installationUrl: string;
+  wiringLayoutUrl: string;
+  terminalLayoutUrl: string;
+  accessoriesImageUrl: string;
+  // Spec values grouped by spec-group name (Row 2 of template)
   specs: Record<string, { label: string; value: string }[]>;
 }
 
@@ -129,7 +150,58 @@ interface ImportStats {
 }
 type PreviewTab = "files" | "categories" | "products";
 
-// ─── Excel helpers ────────────────────────────────────────────────────────────
+// ─── JARIS Excel column constants ────────────────────────────────────────────
+// Row 1 = headers (0-indexed columns):
+//   0  Product Usage
+//   1  Product Family
+//   2  Product Class
+//   3  ECOSHIFT Item Code
+//   4  LIT Item Code
+//   5  Item Description     ← REQUIRED
+//   6  Raw Image
+//   7  Main Image
+//   8  Gallery Images       (comma-separated URLs)
+//   9  Dimensional Drawing
+//  10  Recommended Mounting Height
+//  11  Driver Compatibility
+//  12  Base
+//  13  Illuminance Level
+//  14  Wiring Diagram
+//  15  Installation
+//  16  Wiring Layout
+//  17  Terminal Layout
+//  18  Accessories (image)
+//  19+ Technical spec values (group name in Row 2)
+
+const IDENTITY_COL_COUNT = 19; // cols 0-18 are identity/image cols
+
+// Normalise a raw product-class string into our union
+function normaliseProductClass(raw: string): "spf" | "standard" | "" {
+  const s = raw.toLowerCase().trim();
+  if (s === "spf" || s.includes("spf")) return "spf";
+  if (s === "standard" || s.includes("standard")) return "standard";
+  return "";
+}
+
+// Split a product-usage cell ("INDOOR, OUTDOOR") into an array
+function parseProductUsage(raw: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,;|/]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => ["INDOOR", "OUTDOOR", "SOLAR"].includes(s));
+}
+
+// Split a gallery cell — URLs separated by commas/newlines
+function parseGalleryUrls(raw: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// ─── Excel cell helper ────────────────────────────────────────────────────────
 
 function cellStr(v: unknown): string {
   if (v == null) return "";
@@ -142,112 +214,198 @@ function cellStr(v: unknown): string {
     .trim();
 }
 
+// Build a map of colIndex → group name from Row 2
 function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   const map: Record<number, string> = {};
-  let currentGroup = "";
-  for (let i = 0; i < groupRow.length; i++) {
+  let current = "";
+  for (let i = IDENTITY_COL_COUNT; i < groupRow.length; i++) {
     const cell = groupRow[i];
-    if (cell && cell.trim()) currentGroup = cell.trim();
-    if (currentGroup) map[i] = currentGroup;
+    if (cell && cell.trim()) current = cell.trim();
+    if (current) map[i] = current;
   }
   return map;
 }
 
+// ─── Parse workbook (JARIS template) ─────────────────────────────────────────
+
 async function parseWorkbook(
   file: File,
-): Promise<{ sheetName: string; products: ParsedProduct[] }> {
+): Promise<{
+  sheetName: string;
+  products: ParsedProduct[];
+  warnings: string[];
+}> {
   const buffer = await file.arrayBuffer();
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
 
-  const candidateSheets = wb.worksheets.filter(
+  // Prefer first non "all products" sheet
+  const candidates = wb.worksheets.filter(
     (s) => !/^all\s*products$/i.test(s.name.trim()),
   );
-  let ws = candidateSheets[0];
-
-  if (candidateSheets.length > 1) {
-    let bestCount = -1;
-    for (const sheet of candidateSheets) {
-      let count = 0;
-      sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
-        if (rowNum <= 2) return;
-        if (row.getCell(2).value != null && String(row.getCell(2).value).trim())
-          count++;
-      });
-      if (count > bestCount) {
-        bestCount = count;
-        ws = sheet;
-      }
-    }
-  }
-
-  if (!ws) ws = wb.worksheets[0];
+  let ws = candidates[0] ?? wb.worksheets[0];
   if (!ws) throw new Error(`No usable worksheet found in ${file.name}.`);
 
+  // Materialise all rows
   const allRows: (string | null)[][] = [];
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell) => {
-      const colIndex = Number(cell.col) - 1;
-      cells[colIndex] = cell.value != null ? cellStr(cell.value) : null;
+      cells[Number(cell.col) - 1] =
+        cell.value != null ? cellStr(cell.value) : null;
     });
     allRows.push(cells);
   });
 
-  if (allRows.length < 3) throw new Error("Sheet has no data rows.");
+  if (allRows.length < 2)
+    throw new Error("Sheet must have at least a header row.");
 
-  const headerRow = allRows[0];
-  const groupRow = allRows[1];
-  const dataRows = allRows.slice(2);
-  const groupMap = buildGroupMap(groupRow as string[]);
+  const headerRow = allRows[0]; // Row 1 — column labels
+  const groupRow = allRows[1]; // Row 2 — spec group names
+  const dataRows = allRows.slice(2); // Row 3+ — actual products
 
-  const IDENTITY_COLS = new Set([0, 1, 2, 3, 4]);
+  // Build label map for spec columns (col 19+)
+  const groupMap: Record<number, string> = buildGroupMap(groupRow as string[]);
   const labelMap: Record<number, string> = {};
   headerRow.forEach((h, i) => {
-    if (!IDENTITY_COLS.has(i) && h) labelMap[i] = h.trim();
+    if (i >= IDENTITY_COL_COUNT && h)
+      labelMap[i] = h.replace(/[\r\n\t]+/g, " ").trim();
   });
 
-  let lastCategory = "",
-    lastProductName = "",
-    lastCloudinaryUrl = "";
   const products: ParsedProduct[] = [];
+  const warnings: string[] = [];
 
-  for (const row of dataRows) {
+  for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
+    const row = dataRows[rowIdx];
     if (!row || row.every((c) => c == null || c === "")) continue;
 
-    const category = row[0] || lastCategory;
-    const productCode = row[1] || "";
-    const csvSku = row[2] || "";
-    const cloudinaryUrl = row[3] || lastCloudinaryUrl;
-    const productName = row[4] || lastProductName;
+    const g = (col: number) => row[col]?.trim() ?? "";
 
-    if (row[0]) lastCategory = row[0];
-    if (row[4]) lastProductName = row[4];
-    if (row[3]) lastCloudinaryUrl = row[3];
-    if (!productCode) continue;
+    const itemDescription = g(5);
+    const ecoItemCode = g(3);
+    const litItemCode = g(4);
 
+    // Validation: must have itemDescription AND at least one item code
+    if (!itemDescription) {
+      warnings.push(`Row ${rowIdx + 3}: skipped — missing Item Description`);
+      continue;
+    }
+    if (!ecoItemCode && !litItemCode) {
+      warnings.push(
+        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing both ECO and LIT item codes`,
+      );
+      continue;
+    }
+
+    // Spec columns → grouped
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
-    for (const [colIdxStr, label] of Object.entries(labelMap)) {
-      const colIndex = Number(colIdxStr);
-      const rawVal = row[colIndex];
-      if (rawVal == null || rawVal === "") continue;
-      const groupName = groupMap[colIndex];
-      if (!groupName) continue;
-      if (!specsByGroup[groupName]) specsByGroup[groupName] = [];
-      specsByGroup[groupName].push({ label, value: rawVal });
+    for (const [colStr, label] of Object.entries(labelMap)) {
+      const col = Number(colStr);
+      const val = row[col];
+      if (!val || val === "") continue;
+      const group = groupMap[col];
+      if (!group) continue;
+      if (!specsByGroup[group]) specsByGroup[group] = [];
+      specsByGroup[group].push({ label, value: val });
     }
 
     products.push({
-      category,
-      productCode,
-      csvSku,
-      cloudinaryUrl,
-      productName: productName || `${category} ${productCode}`.trim(),
+      itemDescription,
+      ecoItemCode,
+      litItemCode,
+      productFamily: g(1).toUpperCase() || "UNCATEGORISED",
+      productClass: normaliseProductClass(g(2)),
+      productUsage: parseProductUsage(g(0)),
+      mainImageUrl: g(7),
+      rawImageUrl: g(6),
+      galleryImageUrls: parseGalleryUrls(g(8)),
+      dimensionDrawingUrl: g(9),
+      mountingHeightUrl: g(10),
+      driverCompatibilityUrl: g(11),
+      baseImageUrl: g(12),
+      illuminanceLevelUrl: g(13),
+      wiringDiagramUrl: g(14),
+      installationUrl: g(15),
+      wiringLayoutUrl: g(16),
+      terminalLayoutUrl: g(17),
+      accessoriesImageUrl: g(18),
       specs: specsByGroup,
     });
   }
 
-  return { sheetName: ws.name, products };
+  return { sheetName: ws.name, products, warnings };
+}
+
+// ─── Cloudinary helpers ───────────────────────────────────────────────────────
+
+async function uploadUrlToCloudinary(url: string): Promise<string> {
+  if (!url) return "";
+  if (url.startsWith(OWN_CLOUDINARY_BASE)) return url; // already there
+  const driveMatch = url.match(
+    /drive\.google\.com\/(?:file\/d\/|open\?id=)([\w-]+)/,
+  );
+  const resolved = driveMatch
+    ? `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`
+    : url;
+  const fd = new FormData();
+  fd.append("file", resolved);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: "POST", body: fd },
+  );
+  if (!res.ok)
+    throw new Error(
+      `Cloudinary upload failed (${res.status}) for: ${resolved}`,
+    );
+  return (await res.json()).secure_url as string;
+}
+
+async function uploadPdfToCloudinary(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`,
+    { method: "POST", body: fd },
+  );
+  const json = await res.json();
+  if (!json?.secure_url)
+    throw new Error(
+      `Cloudinary PDF upload failed: ${json?.error?.message ?? "no secure_url"}`,
+    );
+  return json.secure_url as string;
+}
+
+async function safeUploadUrl(
+  url: string,
+  log: (m: string) => void,
+): Promise<string> {
+  if (!url) return "";
+  try {
+    return await uploadUrlToCloudinary(url);
+  } catch (e: any) {
+    log(`    ⚠️  Image upload skipped (${url.slice(0, 60)}…): ${e.message}`);
+    return "";
+  }
+}
+
+async function uploadManyUrls(
+  urls: string[],
+  log: (m: string) => void,
+  concurrency = 3,
+): Promise<string[]> {
+  const out: string[] = new Array(urls.length).fill("");
+  for (let i = 0; i < urls.length; i += concurrency) {
+    const chunk = urls.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(
+      chunk.map((u) => safeUploadUrl(u, log)),
+    );
+    settled.forEach((r, j) => {
+      if (r.status === "fulfilled") out[i + j] = r.value;
+    });
+  }
+  return out;
 }
 
 // ─── Shopify helpers ──────────────────────────────────────────────────────────
@@ -271,45 +429,6 @@ function parsePrice(raw: string | null | undefined): number {
   if (!raw) return 0;
   const n = parseFloat(raw.replace(/[^0-9.]/g, ""));
   return isNaN(n) ? 0 : n;
-}
-
-async function uploadUrlToCloudinary(url: string): Promise<string> {
-  if (!url) return "";
-  if (url.startsWith(OWN_CLOUDINARY_BASE)) return url;
-  const driveMatch = url.match(
-    /drive\.google\.com\/(?:file\/d\/|open\?id=)([\w-]+)/,
-  );
-  const resolved = driveMatch
-    ? `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`
-    : url;
-  const fd = new FormData();
-  fd.append("file", resolved);
-  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: "POST", body: fd },
-  );
-  if (!res.ok)
-    throw new Error(
-      `Cloudinary upload failed (${res.status}) for: ${resolved}`,
-    );
-  return (await res.json()).secure_url as string;
-}
-
-async function uploadManyUrls(
-  urls: string[],
-  concurrency = 4,
-): Promise<string[]> {
-  const out: string[] = new Array(urls.length).fill("");
-  for (let i = 0; i < urls.length; i += concurrency) {
-    const chunk = urls.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(chunk.map(uploadUrlToCloudinary));
-    settled.forEach((r, j) => {
-      if (r.status === "fulfilled") out[i + j] = r.value;
-      else console.warn("[shopify-import] image skipped:", chunk[j], r.reason);
-    });
-  }
-  return out.filter(Boolean);
 }
 
 function extractRawSpecs(product: ShopifyProduct): RawSpec[] {
@@ -397,15 +516,6 @@ async function upsertSpecGroup(
   return ref.id;
 }
 
-async function upsertStandaloneSpecItem(label: string): Promise<void> {
-  const existingId = await findDoc("specItems", "label", label);
-  if (existingId) return;
-  await addDoc(collection(db, "specItems"), {
-    label,
-    createdAt: serverTimestamp(),
-  });
-}
-
 async function upsertProductFamily(
   title: string,
   specGroupIds: string[],
@@ -434,6 +544,15 @@ async function upsertProductFamily(
     updatedAt: serverTimestamp(),
   });
   return ref.id;
+}
+
+async function upsertStandaloneSpecItem(label: string): Promise<void> {
+  const existingId = await findDoc("specItems", "label", label);
+  if (existingId) return;
+  await addDoc(collection(db, "specItems"), {
+    label,
+    createdAt: serverTimestamp(),
+  });
 }
 
 async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
@@ -475,7 +594,6 @@ async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
   return { technicalSpecs, specGroupIds };
 }
 
-// Always saves as "draft" in our system regardless of Shopify status
 async function normalizeShopifyProduct(
   product: ShopifyProduct,
   log: (msg: string) => void,
@@ -499,18 +617,19 @@ async function normalizeShopifyProduct(
   const sortedImages = [...product.images].sort(
     (a, b) => a.position - b.position,
   );
-  const uploaded = await uploadManyUrls(sortedImages.map((img) => img.src));
+  const uploaded = await uploadManyUrls(
+    sortedImages.map((img) => img.src),
+    log,
+  );
   const mainImage = uploaded[0] ?? "";
   const rawImage = uploaded[1] ?? "";
-  
-  // Auto-match technical drawing images from gallery using imageMapping utility
+
   const { autoMatchImages } = await import("@/lib/imageMapping");
   const imageFiles = uploaded.slice(2).map((url, idx) => ({
     url,
     name: product.images[idx + 2]?.alt || `image-${idx}`,
   }));
   const imageMatches = autoMatchImages(imageFiles);
-  
   const galleryImages = uploaded.slice(2);
 
   log(`  → Extracting specs...`);
@@ -535,7 +654,6 @@ async function normalizeShopifyProduct(
     rawImage,
     qrCodeImage: "",
     galleryImages,
-    // Auto-matched technical drawing images
     dimensionDrawingImage: imageMatches.dimensionalDrawing || "",
     mountingHeightImage: imageMatches.mountingHeight || "",
     driverCompatibilityImage: imageMatches.driverCompatibility || "",
@@ -551,7 +669,6 @@ async function normalizeShopifyProduct(
     productFamily,
     brand,
     applications: [] as string[],
-    // Always draft regardless of Shopify status
     status: "draft" as const,
     seo: {
       itemDescription,
@@ -566,15 +683,56 @@ async function normalizeShopifyProduct(
   };
 }
 
-async function checkExcelDuplicate(
-  itemCode: string,
+// ─── Duplicate check for JARIS Excel ─────────────────────────────────────────
+
+async function checkJarisDuplicate(
+  ecoItemCode: string,
+  litItemCode: string,
 ): Promise<{ isDuplicate: boolean; reason: string }> {
-  const snap = await getDocs(
-    query(collection(db, "products"), where("itemCode", "==", itemCode)),
-  );
-  if (!snap.empty)
-    return { isDuplicate: true, reason: `itemCode "${itemCode}"` };
+  if (ecoItemCode) {
+    const snap = await getDocs(
+      query(
+        collection(db, "products"),
+        where("ecoItemCode", "==", ecoItemCode),
+      ),
+    );
+    if (!snap.empty)
+      return { isDuplicate: true, reason: `ecoItemCode "${ecoItemCode}"` };
+  }
+  if (litItemCode) {
+    const snap = await getDocs(
+      query(
+        collection(db, "products"),
+        where("litItemCode", "==", litItemCode),
+      ),
+    );
+    if (!snap.empty)
+      return { isDuplicate: true, reason: `litItemCode "${litItemCode}"` };
+  }
   return { isDuplicate: false, reason: "" };
+}
+
+// Cache: productFamily title → { tdsTemplate, id }
+const familyTdsCache = new Map<
+  string,
+  { templateUrl: string; familyId: string }
+>();
+
+async function getFamilyTdsTemplate(
+  familyTitle: string,
+): Promise<{ templateUrl: string; familyId: string }> {
+  if (familyTdsCache.has(familyTitle)) return familyTdsCache.get(familyTitle)!;
+  const snap = await getDocs(
+    query(collection(db, "productfamilies"), where("title", "==", familyTitle)),
+  );
+  const result = snap.empty
+    ? { templateUrl: "", familyId: "" }
+    : {
+        templateUrl: snap.docs[0].data().tdsTemplate ?? "",
+        familyId: snap.docs[0].id,
+      };
+  familyTdsCache.set(familyTitle, result);
+  return result;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -623,7 +781,8 @@ function FilesPanel({
     name: string;
     sheetName: string;
     productCount: number;
-    categories: Set<string>;
+    families: Set<string>;
+    warnings: string[];
   }[];
 }) {
   return (
@@ -641,17 +800,30 @@ function FilesPanel({
               {file.productCount} products
             </Badge>
           </div>
-          <div className="flex flex-wrap gap-1">
-            {Array.from(file.categories).map((cat) => (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {Array.from(file.families).map((f) => (
               <Badge
-                key={cat}
+                key={f}
                 variant="outline"
                 className="text-[10px] font-normal"
               >
-                {cat}
+                {f}
               </Badge>
             ))}
           </div>
+          {file.warnings.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {file.warnings.map((w, wi) => (
+                <p
+                  key={wi}
+                  className="text-[10px] text-amber-600 flex items-start gap-1"
+                >
+                  <AlertCircle className="w-2.5 h-2.5 mt-0.5 shrink-0" />
+                  {w}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -667,22 +839,22 @@ function ExcelCategoriesPanel({
 }) {
   return (
     <div className="h-full overflow-y-auto space-y-2 pr-1">
-      {Object.entries(categorySummary).map(([cat, count]) => {
-        const groups = new Set(
+      {Object.entries(categorySummary).map(([family, count]) => {
+        const specGroups = new Set(
           allProducts
-            .filter((p) => p.category === cat)
+            .filter((p) => p.productFamily === family)
             .flatMap((p) => Object.keys(p.specs)),
         );
         return (
-          <div key={cat} className="rounded-lg border bg-card p-3">
+          <div key={family} className="rounded-lg border bg-card p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold">{cat}</span>
+              <span className="text-sm font-semibold">{family}</span>
               <Badge variant="secondary" className="text-xs">
                 {count} products
               </Badge>
             </div>
             <div className="flex flex-wrap gap-1">
-              {Array.from(groups).map((g) => (
+              {Array.from(specGroups).map((g) => (
                 <Badge
                   key={g}
                   variant="outline"
@@ -706,10 +878,10 @@ function ExcelProductsPanel({
 }) {
   return (
     <div className="h-full flex flex-col rounded-lg border overflow-hidden">
-      <div className="grid grid-cols-[1fr_110px_90px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
-        <span>Product / Code</span>
-        <span>File</span>
-        <span>Item Code</span>
+      <div className="grid grid-cols-[1fr_120px_90px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
+        <span>Item Description</span>
+        <span>Family</span>
+        <span>ECO / LIT Code</span>
         <span className="text-center">Img</span>
       </div>
       <div className="flex-1 overflow-y-auto divide-y">
@@ -717,25 +889,31 @@ function ExcelProductsPanel({
           file.products.map((p, prodIdx) => (
             <div
               key={`${fileIdx}-${prodIdx}`}
-              className="grid grid-cols-[1fr_110px_90px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
+              className="grid grid-cols-[1fr_120px_90px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
             >
               <div className="min-w-0 pr-2">
-                <p className="font-medium truncate">{p.productName || "—"}</p>
+                <p className="font-medium truncate">{p.itemDescription}</p>
                 <p className="text-muted-foreground font-mono text-[10px]">
-                  {p.productCode}
+                  {p.ecoItemCode || p.litItemCode}
                 </p>
               </div>
-              <span
-                className="text-muted-foreground text-[10px] truncate pr-2"
-                title={file.name}
-              >
-                {file.name.replace(".xlsx", "")}
+              <span className="text-muted-foreground text-[10px] truncate pr-2">
+                {p.productFamily}
               </span>
-              <span className="font-mono text-muted-foreground text-[10px] pr-2">
-                {p.csvSku || "—"}
-              </span>
+              <div className="pr-2">
+                {p.ecoItemCode && (
+                  <p className="font-mono text-muted-foreground text-[10px] truncate">
+                    ECO: {p.ecoItemCode}
+                  </p>
+                )}
+                {p.litItemCode && (
+                  <p className="font-mono text-muted-foreground text-[10px] truncate">
+                    LIT: {p.litItemCode}
+                  </p>
+                )}
+              </div>
               <span className="flex justify-center">
-                {p.cloudinaryUrl ? (
+                {p.mainImageUrl ? (
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
                 ) : (
                   <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
@@ -848,15 +1026,17 @@ export default function BulkUploader({
   >("idle");
   const [activeTab, setActiveTab] = useState<PreviewTab>("files");
 
-  // ── Source selector ──────────────────────────────────────────────────────────
   const [importSource, setImportSource] = useState<ImportSource>("excel");
 
-  // ── Excel state ──────────────────────────────────────────────────────────────
   const [uploadedFiles, setUploadedFiles] = useState<
-    { name: string; sheetName: string; products: ParsedProduct[] }[]
+    {
+      name: string;
+      sheetName: string;
+      products: ParsedProduct[];
+      warnings: string[];
+    }[]
   >([]);
 
-  // ── Shopify state ────────────────────────────────────────────────────────────
   const [shopifyMode, setShopifyMode] = useState<ShopifyMode>("draft");
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProduct[]>([]);
 
@@ -867,49 +1047,49 @@ export default function BulkUploader({
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  const addLog = (
-    type: "ok" | "err" | "skip" | "info" | "warn",
-    msg: string,
-  ) => {
-    setLogs((prev) => [
-      ...prev,
-      { type, msg: `${new Date().toLocaleTimeString()} ${msg}` },
-    ]);
-  };
+  const addLog = useCallback(
+    (type: "ok" | "err" | "skip" | "info" | "warn", msg: string) => {
+      setLogs((prev) => [
+        ...prev,
+        { type, msg: `${new Date().toLocaleTimeString()} ${msg}` },
+      ]);
+    },
+    [],
+  );
 
   // ── Excel dropzone ───────────────────────────────────────────────────────────
 
-  const handleFileDrop = useCallback(async (files: File[]) => {
-    if (!files.length) return;
-    addLog("info", `📂 Parsing ${files.length} file(s)...`);
-    const parsedFiles: {
-      name: string;
-      sheetName: string;
-      products: ParsedProduct[];
-    }[] = [];
-    for (const file of files) {
-      try {
-        const { sheetName, products } = await parseWorkbook(file);
-        parsedFiles.push({ name: file.name, sheetName, products });
-        addLog("info", `  ✅ ${file.name}: ${products.length} products`);
-      } catch (err: any) {
-        addLog("err", `  ❌ ${file.name}: ${err.message}`);
+  const handleFileDrop = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
+      addLog("info", `📂 Parsing ${files.length} file(s)...`);
+      const parsed: typeof uploadedFiles = [];
+      for (const file of files) {
+        try {
+          const { sheetName, products, warnings } = await parseWorkbook(file);
+          parsed.push({ name: file.name, sheetName, products, warnings });
+          addLog("info", `  ✅ ${file.name}: ${products.length} products`);
+          warnings.forEach((w) => addLog("warn", `  ⚠️  ${w}`));
+        } catch (err: any) {
+          addLog("err", `  ❌ ${file.name}: ${err.message}`);
+        }
       }
-    }
-    if (!parsedFiles.length) {
-      toast.error("No files were successfully parsed");
-      return;
-    }
-    setUploadedFiles(parsedFiles);
-    setActiveTab("files");
-    setStep("preview");
-    const total = parsedFiles.reduce((s, f) => s + f.products.length, 0);
-    addLog(
-      "info",
-      `✅ Parsed ${parsedFiles.length} file(s) — ${total} total products`,
-    );
+      if (!parsed.length) {
+        toast.error("No files were successfully parsed");
+        return;
+      }
+      setUploadedFiles(parsed);
+      setActiveTab("files");
+      setStep("preview");
+      const total = parsed.reduce((s, f) => s + f.products.length, 0);
+      addLog(
+        "info",
+        `✅ Parsed ${parsed.length} file(s) — ${total} valid products`,
+      );
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    [],
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleFileDrop,
@@ -974,12 +1154,14 @@ export default function BulkUploader({
     );
   };
 
-  // ── Run Excel import ─────────────────────────────────────────────────────────
-  // Saves with: status = "draft", website = [], websites = []
+  // ── Run JARIS Excel import ────────────────────────────────────────────────────
 
   const runExcelImport = async () => {
     const allProducts = uploadedFiles.flatMap((f) => f.products);
     if (!allProducts.length) return;
+
+    // Clear per-run family cache
+    familyTdsCache.clear();
 
     cancelledRef.current = false;
     setImporting(true);
@@ -988,19 +1170,20 @@ export default function BulkUploader({
     setStats({ total: allProducts.length, success: 0, failed: 0, skipped: 0 });
     addLog(
       "info",
-      `🚀 Starting import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
+      `🚀 Starting JARIS import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
     );
 
+    // ── Phase 1: Upsert spec groups ──────────────────────────────────────────
     const allSpecGroups: Record<string, Set<string>> = {};
-    const categoryToGroups: Record<string, Set<string>> = {};
+    const familyToGroups: Record<string, Set<string>> = {};
 
     for (const p of allProducts) {
-      if (!categoryToGroups[p.category])
-        categoryToGroups[p.category] = new Set();
+      if (!familyToGroups[p.productFamily])
+        familyToGroups[p.productFamily] = new Set();
       for (const [groupName, specEntries] of Object.entries(p.specs)) {
         if (!allSpecGroups[groupName]) allSpecGroups[groupName] = new Set();
         specEntries.forEach((e) => allSpecGroups[groupName].add(e.label));
-        categoryToGroups[p.category].add(groupName);
+        familyToGroups[p.productFamily].add(groupName);
       }
     }
 
@@ -1019,22 +1202,24 @@ export default function BulkUploader({
       }
     }
 
+    // ── Phase 2: Upsert product families ────────────────────────────────────
     addLog(
       "info",
-      `📦 Upserting ${Object.keys(categoryToGroups).length} product family/families...`,
+      `📦 Upserting ${Object.keys(familyToGroups).length} product famil(ies)...`,
     );
-    for (const [catTitle, groupNames] of Object.entries(categoryToGroups)) {
+    for (const [familyTitle, groupNames] of Object.entries(familyToGroups)) {
       const specIds = Array.from(groupNames)
         .map((g) => specGroupIds[g])
         .filter(Boolean);
       try {
-        const id = await upsertProductFamily(catTitle, specIds);
-        addLog("info", `  ✓ Product family "${catTitle}" → ${id}`);
+        const id = await upsertProductFamily(familyTitle, specIds);
+        addLog("info", `  ✓ Product family "${familyTitle}" → ${id}`);
       } catch (err: any) {
-        addLog("err", `  ✗ Product family "${catTitle}": ${err.message}`);
+        addLog("err", `  ✗ Product family "${familyTitle}": ${err.message}`);
       }
     }
 
+    // ── Phase 3: Import products ─────────────────────────────────────────────
     addLog("info", `\n📝 Importing products...`);
 
     for (let i = 0; i < allProducts.length; i++) {
@@ -1049,19 +1234,19 @@ export default function BulkUploader({
       }
 
       const p = allProducts[i];
-      setCurrentItem(p.productCode);
+      const displayCode = p.ecoItemCode || p.litItemCode;
+      setCurrentItem(`${displayCode} — ${p.itemDescription}`);
 
       try {
-        const itemCodeField = p.csvSku || p.productCode;
-        const resolvedName =
-          p.productName || `${p.category} ${p.productCode}`.trim();
-        const { isDuplicate, reason } =
-          await checkExcelDuplicate(itemCodeField);
-
+        // Duplicate check
+        const { isDuplicate, reason } = await checkJarisDuplicate(
+          p.ecoItemCode,
+          p.litItemCode,
+        );
         if (isDuplicate) {
           addLog(
             "skip",
-            `⏭  SKIPPED (duplicate ${reason}): ${p.productCode} — ${resolvedName}`,
+            `⏭  SKIPPED (duplicate ${reason}): ${p.itemDescription}`,
           );
           setStats((prev) => ({ ...prev, skipped: prev.skipped + 1 }));
           setProgress(((i + 1) / allProducts.length) * 100);
@@ -1069,77 +1254,166 @@ export default function BulkUploader({
           continue;
         }
 
-        const technicalSpecs = Object.entries(p.specs).map(
-          ([groupName, entries]) => ({
-            specGroup: groupName,
+        // ── Upload images from URL columns ───────────────────────────────────
+        addLog("info", `  → Uploading images for "${p.itemDescription}"...`);
+
+        const [
+          mainImage,
+          rawImage,
+          dimensionDrawingImage,
+          mountingHeightImage,
+          driverCompatibilityImage,
+          baseImage,
+          illuminanceLevelImage,
+          wiringDiagramImage,
+          installationImage,
+          wiringLayoutImage,
+          terminalLayoutImage,
+          accessoriesImage,
+          ...galleryUploaded
+        ] = await uploadManyUrls(
+          [
+            p.mainImageUrl,
+            p.rawImageUrl,
+            p.dimensionDrawingUrl,
+            p.mountingHeightUrl,
+            p.driverCompatibilityUrl,
+            p.baseImageUrl,
+            p.illuminanceLevelUrl,
+            p.wiringDiagramUrl,
+            p.installationUrl,
+            p.wiringLayoutUrl,
+            p.terminalLayoutUrl,
+            p.accessoriesImageUrl,
+            ...p.galleryImageUrls,
+          ],
+          (m) => addLog("info", m),
+        );
+
+        // ── Build technicalSpecs array (same shape as AddNewProduct) ─────────
+        const technicalSpecs: TechnicalSpec[] = Object.entries(p.specs).map(
+          ([specGroup, entries]) => ({
+            specGroup,
             specs: entries.map((e) => ({ name: e.label, value: e.value })),
           }),
         );
 
-        const slug = p.productCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        // ── Build slug ───────────────────────────────────────────────────────
+        const slug = (p.ecoItemCode || p.litItemCode)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-");
 
+        // ── Save product document ────────────────────────────────────────────
         const docRef = await addDoc(collection(db, "products"), {
-          name: resolvedName,
+          productClass: p.productClass,
+          itemDescription: p.itemDescription,
           shortDescription: "",
           slug,
-          itemCode: p.productCode,
+          ecoItemCode: p.ecoItemCode,
+          litItemCode: p.litItemCode,
           regularPrice: 0,
           salePrice: 0,
-          mainImage: p.cloudinaryUrl || "",
+          technicalSpecs,
+          mainImage: mainImage || "",
+          rawImage: rawImage || "",
           qrCodeImage: "",
-          rawImage: "",
-          galleryImages: [],
-          // Technical drawing images (empty for Excel imports unless specified in additional columns)
-          dimensionDrawingImage: "",
-          mountingHeightImage: "",
-          driverCompatibilityImage: "",
-          baseImage: "",
-          illuminanceLevelImage: "",
-          wiringDiagramImage: "",
-          installationImage: "",
-          wiringLayoutImage: "",
-          terminalLayoutImage: "",
-          accessoriesImage: "",
-          productFamily: p.category,
-          website: [], // no website assigned
-          websites: [], // no website assigned
-          status: "draft", // always draft
+          galleryImages: galleryUploaded.filter(Boolean),
+          dimensionDrawingImage: dimensionDrawingImage || "",
+          mountingHeightImage: mountingHeightImage || "",
+          driverCompatibilityImage: driverCompatibilityImage || "",
+          baseImage: baseImage || "",
+          illuminanceLevelImage: illuminanceLevelImage || "",
+          wiringDiagramImage: wiringDiagramImage || "",
+          installationImage: installationImage || "",
+          wiringLayoutImage: wiringLayoutImage || "",
+          terminalLayoutImage: terminalLayoutImage || "",
+          accessoriesImage: accessoriesImage || "",
+          productFamily: p.productFamily,
+          productUsage: p.productUsage,
           brand: "",
           applications: [],
-          technicalSpecs,
+          website: [],
+          websites: [],
+          status: "draft",
           seo: {
-            title: resolvedName,
+            title: p.itemDescription,
             description: "",
             canonical: "",
-            ogImage: p.cloudinaryUrl || "",
+            ogImage: mainImage || "",
             robots: "index, follow",
             lastUpdated: new Date().toISOString(),
           },
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          importSource: "bulk-uploader",
+          importSource: "bulk-uploader:jaris",
         });
+
+        addLog("info", `  → Saved product doc ${docRef.id}`);
+
+        // ── TDS generation ───────────────────────────────────────────────────
+        try {
+          const { templateUrl } = await getFamilyTdsTemplate(p.productFamily);
+          if (templateUrl) {
+            addLog(
+              "info",
+              `  → Generating TDS PDF for "${p.itemDescription}"...`,
+            );
+            const tdsUrl = await fillTdsPdf({
+              templateUrl,
+              itemDescription: p.itemDescription,
+              litItemCode: p.litItemCode,
+              ecoItemCode: p.ecoItemCode,
+              brand: "",
+              technicalSpecs,
+              mainImageUrl: mainImage || undefined,
+              dimensionDrawingUrl: dimensionDrawingImage || undefined,
+              mountingHeightUrl: mountingHeightImage || undefined,
+              driverCompatibilityUrl: driverCompatibilityImage || undefined,
+              baseImageUrl: baseImage || undefined,
+              illuminanceLevelUrl: illuminanceLevelImage || undefined,
+              wiringDiagramUrl: wiringDiagramImage || undefined,
+              installationUrl: installationImage || undefined,
+              wiringLayoutUrl: wiringLayoutImage || undefined,
+              terminalLayoutUrl: terminalLayoutImage || undefined,
+              accessoriesUrl: accessoriesImage || undefined,
+              cloudinaryUploadFn: uploadPdfToCloudinary,
+            });
+            if (tdsUrl.startsWith("http")) {
+              await updateDoc(doc(db, "products", docRef.id), {
+                tdsFileUrl: tdsUrl,
+                updatedAt: serverTimestamp(),
+              });
+              addLog("ok", `  ✅ TDS PDF generated for "${p.itemDescription}"`);
+            }
+          }
+        } catch (tdsErr: any) {
+          addLog(
+            "warn",
+            `  ⚠️  TDS generation failed for "${p.itemDescription}": ${tdsErr.message}`,
+          );
+        }
 
         await logAuditEvent({
           action: "create",
           entityType: "product",
           entityId: docRef.id,
-          entityName: resolvedName,
+          entityName: p.itemDescription,
           context: {
             page: "/products/all-products",
-            source: "bulk-uploader:excel",
+            source: "bulk-uploader:jaris",
             collection: "products",
           },
           metadata: {
-            itemCode: p.productCode,
-            ecoItemCode: p.csvSku || null,
+            ecoItemCode: p.ecoItemCode || null,
+            litItemCode: p.litItemCode || null,
+            productFamily: p.productFamily,
           },
         });
 
-        addLog("ok", `✅ ${p.productCode} — ${resolvedName}`);
+        addLog("ok", `✅ ${displayCode} — ${p.itemDescription}`);
         setStats((prev) => ({ ...prev, success: prev.success + 1 }));
       } catch (err: any) {
-        addLog("err", `❌ FAILED ${p.productCode}: ${err.message}`);
+        addLog("err", `❌ FAILED "${p.itemDescription}": ${err.message}`);
         setStats((prev) => ({ ...prev, failed: prev.failed + 1 }));
       }
 
@@ -1151,7 +1425,6 @@ export default function BulkUploader({
   };
 
   // ── Run Shopify import ───────────────────────────────────────────────────────
-  // Always saves as "draft" regardless of Shopify status
 
   const runShopifyImport = async () => {
     if (!shopifyProducts.length) return;
@@ -1265,14 +1538,15 @@ export default function BulkUploader({
     setCurrentItem("");
     setShopifyMode("draft");
     cancelledRef.current = false;
+    familyTdsCache.clear();
   };
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   const excelAllProducts = uploadedFiles.flatMap((f) => f.products);
-  const excelCategorySummary = excelAllProducts.reduce<Record<string, number>>(
+  const excelFamilySummary = excelAllProducts.reduce<Record<string, number>>(
     (acc, p) => {
-      acc[p.category] = (acc[p.category] || 0) + 1;
+      acc[p.productFamily] = (acc[p.productFamily] || 0) + 1;
       return acc;
     },
     {},
@@ -1281,7 +1555,8 @@ export default function BulkUploader({
     name: file.name,
     sheetName: file.sheetName,
     productCount: file.products.length,
-    categories: new Set(file.products.map((p) => p.category)),
+    families: new Set(file.products.map((p) => p.productFamily)),
+    warnings: file.warnings,
   }));
   const shopifyCategorySummary = shopifyProducts.reduce<Record<string, number>>(
     (acc, p) => {
@@ -1299,7 +1574,12 @@ export default function BulkUploader({
   const previewCategoryCount =
     importSource === "shopify"
       ? Object.keys(shopifyCategorySummary).length
-      : Object.keys(excelCategorySummary).length;
+      : Object.keys(excelFamilySummary).length;
+
+  const totalWarnings = uploadedFiles.reduce(
+    (s, f) => s + f.warnings.length,
+    0,
+  );
 
   const logColor = (type: string) => {
     if (type === "ok") return "text-emerald-400";
@@ -1342,9 +1622,12 @@ export default function BulkUploader({
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
                 Import from{" "}
-                <code className="font-mono bg-muted px-1 rounded">.xlsx</code>{" "}
-                or Shopify. All products are saved as <strong>Draft</strong>{" "}
-                with no website assigned by default.
+                <code className="font-mono bg-muted px-1 rounded">
+                  JARIS .xlsx
+                </code>{" "}
+                template or Shopify. All products are saved as{" "}
+                <strong>Draft</strong> — TDS PDFs auto-generated per family
+                template.
               </DialogDescription>
             </div>
           </div>
@@ -1389,7 +1672,7 @@ export default function BulkUploader({
           {step === "idle" && (
             <div className="h-full overflow-y-auto">
               <div className="p-6 space-y-5">
-                {/* ── Step 1: Source selector ── */}
+                {/* Step 1: Source selector */}
                 <div className="rounded-xl border bg-card overflow-hidden">
                   <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
                     <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -1404,8 +1687,8 @@ export default function BulkUploader({
                       {[
                         {
                           value: "excel" as const,
-                          label: "Excel / XLSX",
-                          desc: "Upload .xlsx spreadsheet files with product data",
+                          label: "JARIS Excel Template",
+                          desc: "Upload .xlsx using the standard CMS template",
                           icon: <FileSpreadsheet className="w-4 h-4" />,
                           color: "text-blue-600",
                           activeBg:
@@ -1470,24 +1753,22 @@ export default function BulkUploader({
                 {/* ════ EXCEL CONFIG ════ */}
                 {importSource === "excel" && (
                   <>
-                    {/* Step 2: Drop zone — no config required */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2">
                         <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
                           2
                         </div>
                         <p className="text-sm font-semibold">
-                          Upload Excel Files
+                          Upload JARIS CMS Template
                         </p>
                       </div>
 
-                      {/* Defaults notice */}
                       <div className="flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
                         <EyeOff className="w-3.5 h-3.5 shrink-0" />
                         <span>
-                          Products will be saved as <strong>Draft</strong> with
-                          no website assigned. You can update these fields after
-                          import.
+                          Products saved as <strong>Draft</strong>, no website
+                          assigned. TDS PDFs auto-generated where a family
+                          template exists.
                         </span>
                       </div>
 
@@ -1517,7 +1798,7 @@ export default function BulkUploader({
                           <p className="text-sm font-semibold text-foreground">
                             {isDragActive
                               ? "Release to parse"
-                              : "Drop your Excel files here"}
+                              : "Drop JARIS template files here"}
                           </p>
                           <p className="text-xs text-muted-foreground mt-1">
                             or{" "}
@@ -1530,41 +1811,60 @@ export default function BulkUploader({
                       </div>
                     </div>
 
-                    {/* Info cards */}
+                    {/* Column reference cards */}
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div className="rounded-lg border p-3 space-y-1.5 bg-card">
                         <p className="font-semibold flex items-center gap-1.5 text-primary">
-                          <Layers className="w-3.5 h-3.5" /> Required Columns
+                          <Layers className="w-3.5 h-3.5" /> Template Columns
                           (Row 1)
                         </p>
                         {[
-                          "A — Category",
-                          "B — Product Code",
-                          "C — CSV SKU",
-                          "D — Cloudinary URL",
-                          "E — Product Name (OCR)",
+                          "A — Product Usage (INDOOR/OUTDOOR/SOLAR)",
+                          "B — Product Family",
+                          "C — Product Class (spf/standard)",
+                          "D — ECO Item Code ✱",
+                          "E — LIT Item Code ✱",
+                          "F — Item Description ✱",
+                          "G — Raw Image URL",
+                          "H — Main Image URL",
+                          "I — Gallery URLs (comma-sep)",
+                          "J–S — Technical Drawing URLs",
+                          "T+ — Spec values (grouped by Row 2)",
                         ].map((c) => (
-                          <div key={c} className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
-                            <code className="font-mono">{c}</code>
+                          <div key={c} className="flex items-start gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0 mt-1" />
+                            <code className="font-mono leading-tight">{c}</code>
                           </div>
                         ))}
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          ✱ Required: Item Description + at least one item code
+                        </p>
                       </div>
                       <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                        <p className="font-semibold flex items-center gap-1.5 text-amber-600">
-                          <AlertCircle className="w-3.5 h-3.5" /> Duplicate
-                          detection
+                        <p className="font-semibold flex items-center gap-1.5 text-emerald-600">
+                          <FileText className="w-3.5 h-3.5" /> What happens on
+                          import
                         </p>
                         {[
-                          "Checks existing itemCode in Firestore",
-                          "Skips if a match is found",
-                          "Product name falls back to Category + Code",
+                          "Images uploaded to Cloudinary automatically",
+                          "Spec groups upserted from Row 2 headers",
+                          "Product families created/updated",
+                          "TDS PDF generated if family has template",
+                          "Duplicate check: ecoItemCode + litItemCode",
+                          "Missing fields gracefully ignored",
                         ].map((c) => (
-                          <div key={c} className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                          <div key={c} className="flex items-start gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1" />
                             <span className="text-muted-foreground">{c}</span>
                           </div>
                         ))}
+                        <div className="mt-2 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
+                          <p className="text-[10px] text-blue-700 dark:text-blue-400 flex items-start gap-1">
+                            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                            Row 2 defines spec group names (e.g. LAMP DETAILS,
+                            ELECTRICAL SPECIFICATION, FIXTURE DETAILS)
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -1573,7 +1873,6 @@ export default function BulkUploader({
                 {/* ════ SHOPIFY CONFIG ════ */}
                 {importSource === "shopify" && (
                   <>
-                    {/* Step 2: Fetch mode */}
                     <div className="rounded-xl border bg-card overflow-hidden">
                       <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
                         <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -1645,8 +1944,6 @@ export default function BulkUploader({
                             );
                           })}
                         </div>
-
-                        {/* Always-draft notice */}
                         <div className="mt-3 flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
                           <EyeOff className="w-3.5 h-3.5 shrink-0" />
                           <span>
@@ -1657,7 +1954,6 @@ export default function BulkUploader({
                       </div>
                     </div>
 
-                    {/* Step 3: Fetch button */}
                     <div className="rounded-xl border bg-card overflow-hidden">
                       <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
                         <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -1677,12 +1973,13 @@ export default function BulkUploader({
                         >
                           {fetching ? (
                             <>
-                              <Loader2 className="w-4 h-4 animate-spin" />{" "}
+                              <Loader2 className="w-4 h-4 animate-spin" />
                               Fetching from Shopify...
                             </>
                           ) : (
                             <>
-                              <ShoppingBag className="w-4 h-4" /> Fetch{" "}
+                              <ShoppingBag className="w-4 h-4" />
+                              Fetch{" "}
                               {shopifyMode === "draft"
                                 ? "Draft / Archived"
                                 : "Active"}{" "}
@@ -1692,51 +1989,10 @@ export default function BulkUploader({
                         </Button>
                       </div>
                     </div>
-
-                    {/* Info cards */}
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                        <p className="font-semibold flex items-center gap-1.5 text-primary">
-                          <ShoppingBag className="w-3.5 h-3.5" /> What gets
-                          imported
-                        </p>
-                        {[
-                          "Title → Item Description",
-                          "SKU → Eco Item Code",
-                          "Product Type → Product Family",
-                          "Vendor → Brand",
-                          "Images → Cloudinary (auto-upload)",
-                          "Metafields → Technical Specs",
-                        ].map((c) => (
-                          <div key={c} className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
-                            <span className="text-muted-foreground">{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                        <p className="font-semibold flex items-center gap-1.5 text-amber-600">
-                          <AlertCircle className="w-3.5 h-3.5" /> Duplicate
-                          detection
-                        </p>
-                        {[
-                          "Checks ecoItemCode (SKU) in Firestore",
-                          "Skips if a matching SKU exists",
-                          "Ungrouped specs saved to specItems pool",
-                          "Grouped specs merged into spec groups",
-                          "Product families upserted automatically",
-                        ].map((c) => (
-                          <div key={c} className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-                            <span className="text-muted-foreground">{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </>
                 )}
 
-                {/* Console (idle fetch logs) */}
+                {/* Console (idle / fetch logs) */}
                 {logs.length > 0 && (
                   <div className="rounded-xl overflow-hidden border border-slate-800">
                     <div className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-900 px-4 py-2">
@@ -1778,8 +2034,8 @@ export default function BulkUploader({
                       {previewCategoryCount !== 1 ? "ies" : "y"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Existing duplicates will be skipped. All products saved as{" "}
-                      <strong>Draft</strong>.
+                      Duplicates skipped · Saved as <strong>Draft</strong> · TDS
+                      auto-generated per family
                     </p>
                   </div>
                   <Button
@@ -1792,7 +2048,6 @@ export default function BulkUploader({
                   </Button>
                 </div>
 
-                {/* Chips */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">
                     Source:
@@ -1803,14 +2058,13 @@ export default function BulkUploader({
                     ) : (
                       <FileSpreadsheet className="w-2.5 h-2.5" />
                     )}
-                    {importSource === "shopify" ? "Shopify" : "Excel"}
+                    {importSource === "shopify" ? "Shopify" : "JARIS Excel"}
                   </Badge>
                   {importSource === "shopify" && (
                     <Badge
                       variant="outline"
                       className="text-[10px] gap-1 ml-1 border-slate-300 text-slate-500"
                     >
-                      Fetched:{" "}
                       {shopifyMode === "draft" ? "Draft/Archived" : "Active"}
                     </Badge>
                   )}
@@ -1821,6 +2075,16 @@ export default function BulkUploader({
                     <EyeOff className="w-2.5 h-2.5" />
                     Saving as Draft
                   </Badge>
+                  {totalWarnings > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] gap-1 ml-1 border-orange-400 text-orange-600"
+                    >
+                      <AlertCircle className="w-2.5 h-2.5" />
+                      {totalWarnings} row{totalWarnings !== 1 ? "s" : ""}{" "}
+                      skipped
+                    </Badge>
+                  )}
                 </div>
               </div>
 
@@ -1858,7 +2122,7 @@ export default function BulkUploader({
                 )}
                 {importSource === "excel" && activeTab === "categories" && (
                   <ExcelCategoriesPanel
-                    categorySummary={excelCategorySummary}
+                    categorySummary={excelFamilySummary}
                     allProducts={excelAllProducts}
                   />
                 )}
