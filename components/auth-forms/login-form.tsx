@@ -82,20 +82,28 @@ export function LoginForm({
       throw new Error("unauthorized_role");
     }
 
-    // Set Session Tracking
-    document.cookie =
-      "admin_session=true; path=/; max-age=3600; SameSite=Strict";
-    localStorage.setItem(
-      "disruptive_admin_user",
-      JSON.stringify({
-        uid: user.uid,
-        name: userData.fullName || userData.name || "Internal Staff",
-        email: user.email,
-        role,
-        accessLevel:
-          userData.accessLevel || (role === "admin" ? "full" : "staff"),
-      }),
-    );
+    // Create session via API
+    const sessionData = {
+      uid: user.uid,
+      name: userData.fullName || userData.name || "Internal Staff",
+      email: user.email,
+      role,
+      accessLevel:
+        userData.accessLevel || (role === "admin" ? "full" : "staff"),
+    };
+
+    const sessionResponse = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sessionData),
+    });
+
+    if (!sessionResponse.ok) {
+      throw new Error("Failed to create session");
+    }
+
+    // Also store in localStorage for client-side access
+    localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData));
 
     toast.success(`Access Authorized: ${role.toUpperCase()}`, {
       id: loginToast,
