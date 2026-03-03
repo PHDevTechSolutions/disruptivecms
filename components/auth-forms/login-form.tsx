@@ -34,16 +34,25 @@ import {
 } from "firebase/auth";
 import { toast } from "sonner";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";
+import { useAuth } from "@/lib/useAuth";
+import { useSearchParams } from "next/navigation";
+
+const LOGIN_MARKER_KEY = "disruptive_last_login_at";
 
 export function LoginForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
   const router = useRouter();
+  const { user: authedUser, isLoading: authLoading } = useAuth();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false); // Visibility state
+
+  // No automatic redirects from /auth/login.
+  // Redirect happens only after a successful login submit.
 
   /* =========================
       SHARED CMS AUTH CHECK
@@ -104,7 +113,12 @@ export function LoginForm({
     }
 
     // Also store in localStorage for client-side access
-    localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData));
+    const loginAt = Date.now();
+    localStorage.setItem(LOGIN_MARKER_KEY, String(loginAt));
+    localStorage.setItem(
+      "disruptive_admin_user",
+      JSON.stringify(sessionData),
+    );
 
     toast.success(`Access Authorized: ${role.toUpperCase()}`, {
       id: loginToast,
@@ -112,7 +126,7 @@ export function LoginForm({
 
     // Role-based routing using centralized configuration
     const redirectPath = getPrimaryRouteForRole(role);
-    router.push(redirectPath);
+    router.replace(redirectPath);
   };
 
   /* =========================

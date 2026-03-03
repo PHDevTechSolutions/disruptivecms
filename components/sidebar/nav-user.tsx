@@ -57,7 +57,7 @@ export function NavUser({
         id: logoutToast,
       });
 
-      router.push("/auth/login");
+      router.replace("/auth/login");
     } catch (error: any) {
       toast.error("Logout failed", {
         id: logoutToast,

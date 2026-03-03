@@ -10,7 +10,9 @@ export interface SessionUser {
 }
 
 export const SESSION_COOKIE_NAME = "admin_session_token";
-const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+// Keep sessions valid until explicit logout.
+// Note: Cookies must have some expiry for persistence across browser restarts; set far-future.
+const SESSION_MAX_AGE = 10 * 365 * 24 * 60 * 60 * 1000; // 10 years in ms
 
 export function getSessionCookieOptions() {
   return {

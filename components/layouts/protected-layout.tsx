@@ -44,13 +44,6 @@ export function ProtectedLayout({
      REDIRECT LOGIC (Hydration Safe)
      ============================== */
   useEffect(() => {
-    // If user is logged in AND accessing /auth page → redirect to primary route
-    // (auth routes are "public", but logged-in users should not stay there)
-    if (!isLoading && user && isAuthRoute) {
-      router.push(getPrimaryRouteForRole(user.role));
-      return;
-    }
-
     // Other public pages always allowed (ex: /access-denied)
     if (publicRoute) return;
 

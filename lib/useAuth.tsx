@@ -11,6 +11,8 @@ import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
+const LOGIN_MARKER_KEY = "disruptive_last_login_at";
+
 export interface User {
   uid: string;
   email: string;
@@ -42,21 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      INITIAL HYDRATION
   ========================= */
   useEffect(() => {
-    const cached = localStorage.getItem("disruptive_admin_user");
-
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (parsed?.uid) {
-          setUser(parsed);
-          setIsLoading(false); // 🔥 Immediately stop loading
-        }
-      } catch (err) {
-        console.error("[Auth] Invalid cache:", err);
-        localStorage.removeItem("disruptive_admin_user");
-      }
-    }
-
+    // Do not trust localStorage as an auth source-of-truth (prevents bounce-back after logout).
+    // Persisted session is validated by /api/auth/user (HTTP-only cookie).
     verifySession();
   }, []);
 
@@ -70,16 +59,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const data = await response.json();
         setUser(data.user);
-        localStorage.setItem(
-          "disruptive_admin_user",
-          JSON.stringify(data.user),
-        );
+        localStorage.setItem("disruptive_admin_user", JSON.stringify(data.user));
       } else if (response.status === 401) {
+        // Avoid redirect loops caused by in-flight session checks during login.
+        // If a login just happened, don't clear state on a stale 401; re-check once shortly after.
+        const lastLoginAtRaw =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem(LOGIN_MARKER_KEY)
+            : null;
+        const lastLoginAt = lastLoginAtRaw ? Number(lastLoginAtRaw) : NaN;
+        if (Number.isFinite(lastLoginAt) && Date.now() - lastLoginAt < 15_000) {
+          setTimeout(() => verifySession(), 400);
+          return;
+        }
+
         setUser(null);
         localStorage.removeItem("disruptive_admin_user");
       }
     } catch (error) {
-      console.warn("[Auth] Server check failed. Using cached session.");
+      console.warn("[Auth] Server check failed.");
     } finally {
       setIsLoading(false);
     }
@@ -89,13 +87,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      LOGOUT
   ========================= */
   async function handleLogout() {
-    await signOut(auth);
-    await fetch("/api/auth/logout", { method: "POST" });
+    // Manual logout: destroy session and stay on /auth/login
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore
+    }
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
 
     setUser(null);
     localStorage.removeItem("disruptive_admin_user");
+    localStorage.removeItem(LOGIN_MARKER_KEY);
 
-    router.push("/auth/login");
+    router.replace("/auth/login");
   }
 
   return (

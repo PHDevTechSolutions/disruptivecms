@@ -49,7 +49,7 @@ function AccessDeniedContent() {
       // ignore
     } finally {
       localStorage.removeItem("disruptive_admin_user");
-      router.push("/auth/login");
+      router.replace("/auth/login");
     }
   };
 
