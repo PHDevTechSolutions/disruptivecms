@@ -77,6 +77,7 @@ export function LoginForm({
       "csr",
       "ecomm",
       "pd",
+      "marketing",
     ];
     if (!validRoles.includes(role)) {
       throw new Error("unauthorized_role");
@@ -119,8 +120,12 @@ export function LoginForm({
      ========================= */
   const handleAuthError = async (error: any, loginToast: string | number) => {
     await signOut(auth);
-    document.cookie =
-      "admin_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    // Best-effort: clear any server session cookie (HTTP-only) via API
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
     localStorage.removeItem("disruptive_admin_user");
 
     if (error?.code === "auth/popup-closed-by-user") {

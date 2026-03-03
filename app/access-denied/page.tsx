@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,8 +26,31 @@ function AccessDeniedContent() {
     ? getPrimaryRouteForRole(user.role)
     : "/auth/login";
 
+  const normalizedRole = String(user?.role || "").toLowerCase().trim();
+  const isAdmin = normalizedRole === "admin";
+  const hasNoPrimaryRoute = !!user?.role && primaryRoute === "/access-denied";
+
+  // Admin should never see this page (even if they navigate here directly)
+  useEffect(() => {
+    if (isLoading) return;
+    if (isAdmin) {
+      router.replace(primaryRoute);
+    }
+  }, [isLoading, isAdmin, primaryRoute, router]);
+
   const handleRedirect = () => {
     router.push(primaryRoute);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    } finally {
+      localStorage.removeItem("disruptive_admin_user");
+      router.push("/auth/login");
+    }
   };
 
   // Prevent flash while auth is resolving
@@ -38,6 +61,9 @@ function AccessDeniedContent() {
       </div>
     );
   }
+
+  // If we just redirected admin, avoid rendering anything
+  if (isAdmin) return null;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
@@ -72,10 +98,16 @@ function AccessDeniedContent() {
             )}
           </div>
 
-          <Button onClick={handleRedirect} className="w-full" size="lg">
-            <Home className="mr-2 h-4 w-4" />
-            Go to Accessible Page
-          </Button>
+          {hasNoPrimaryRoute ? (
+            <Button onClick={handleLogout} className="w-full" size="lg" variant="destructive">
+              Log out
+            </Button>
+          ) : (
+            <Button onClick={handleRedirect} className="w-full" size="lg">
+              <Home className="mr-2 h-4 w-4" />
+              Go to Accessible Page
+            </Button>
+          )}
         </CardContent>
       </Card>
     </div>

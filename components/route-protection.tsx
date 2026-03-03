@@ -18,8 +18,22 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
   // Get the current path from the request
   const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
 
-  // Check if user has access to any of the required routes
-  const hasAccess = user ? requiredRoutes.some(route => canAccessRoute(user.role || "", route)) : false;
+  const normalizedRole = String(user?.role || "").toLowerCase().trim();
+  const isAdmin = normalizedRole === "admin";
+
+  // Determine whether this protection applies to the current path (layout scope)
+  const inScope = requiredRoutes.some((route) => {
+    const normalizedRoute = String(route || "").replace(/\/$/, "");
+    const normalizedPath = String(currentPath || "").replace(/\/$/, "");
+    return (
+      normalizedPath === normalizedRoute ||
+      normalizedPath.startsWith(normalizedRoute + "/")
+    );
+  });
+
+  // Authorize against the *current* path (not the scope prefix)
+  const hasAccess =
+    !inScope ? true : isAdmin ? true : !!user && canAccessRoute(user.role || "", currentPath);
 
   // Handle redirects and rendering logic
   useEffect(() => {

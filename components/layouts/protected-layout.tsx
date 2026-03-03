@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { usePathname, useRouter } from "next/navigation";
-import { canAccessRoute, isPublicRoute } from "@/lib/roleAccess";
+import { canAccessRoute, getPrimaryRouteForRole, isPublicRoute } from "@/lib/roleAccess";
 import { Loader2 } from "lucide-react";
 
 interface ProtectedLayoutProps {
@@ -20,6 +20,7 @@ export function ProtectedLayout({
   const router = useRouter();
 
   const publicRoute = isPublicRoute(pathname);
+  const isAuthRoute = pathname === "/auth" || pathname.startsWith("/auth/");
 
   const requiredRoles = requiredRole
     ? Array.isArray(requiredRole)
@@ -27,8 +28,15 @@ export function ProtectedLayout({
       : [requiredRole]
     : null;
 
+  const isAdmin = String(user?.role || "").toLowerCase().trim() === "admin";
+
+  // Admin must never be blocked by requiredRole gates
+  const normalizedUserRole = String(user?.role || "").toLowerCase().trim();
+  const normalizedRequiredRoles = requiredRoles?.map((r) => String(r).toLowerCase().trim()) ?? null;
   const hasRoleAccess =
-    !requiredRoles || requiredRoles.includes(user?.role || "");
+    isAdmin ||
+    !normalizedRequiredRoles ||
+    normalizedRequiredRoles.includes(normalizedUserRole);
 
   const hasRouteAccess = canAccessRoute(user?.role || "", pathname);
 
@@ -36,6 +44,14 @@ export function ProtectedLayout({
      REDIRECT LOGIC (Hydration Safe)
      ============================== */
   useEffect(() => {
+    // If user is logged in AND accessing /auth page → redirect to primary route
+    // (auth routes are "public", but logged-in users should not stay there)
+    if (!isLoading && user && isAuthRoute) {
+      router.push(getPrimaryRouteForRole(user.role));
+      return;
+    }
+
+    // Other public pages always allowed (ex: /access-denied)
     if (publicRoute) return;
 
     // Wait until auth state fully resolves
@@ -47,15 +63,13 @@ export function ProtectedLayout({
       return;
     }
 
-    // If user is logged in AND accessing /auth page → redirect to primary route
-    if (pathname.startsWith("/auth/")) {
-      const { getPrimaryRouteForRole } = require("@/lib/roleAccess");
-      router.push(getPrimaryRouteForRole(user.role));
-      return;
-    }
-
     // If user exists but no access → redirect to access denied
     if (!hasRoleAccess || !hasRouteAccess) {
+      // Ensure admin never lands on /access-denied via redirects
+      if (isAdmin) {
+        router.push(getPrimaryRouteForRole(user.role));
+        return;
+      }
       router.push(`/access-denied?from=${encodeURIComponent(pathname)}`);
     }
   }, [
@@ -64,8 +78,10 @@ export function ProtectedLayout({
     pathname,
     router,
     publicRoute,
+    isAuthRoute,
     hasRoleAccess,
     hasRouteAccess,
+    isAdmin,
   ]);
 
   /* ==============================

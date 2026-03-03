@@ -24,8 +24,8 @@ export type RoleAccessConfig = {
    ============================== */
 
 export const PUBLIC_ROUTES = [
-  "/auth/login",
-  "/auth/register",
+  // Auth pages are accessible to everyone (logged-in users may be redirected away by layout)
+  "/auth",
   "/access-denied",
 ];
 
@@ -36,13 +36,16 @@ export const PUBLIC_ROUTES = [
 export const roleAccessConfig: RoleAccessConfig = {
   admin: ["*"],
   pd: ["/products/all-products"],
-  seo: ["/content/blogs"],
-  hr: ["/jobs"], // Allows /jobs and all nested routes like /jobs/applications
-  marketing: ["/content/*"], // Allows all /content/* routes
+  // /jobs and all nested routes like /jobs/applications
+  hr: ["/jobs/applications"],
+  // /content and all nested routes
+  seo: ["/content"],
+  marketing: ["/content"],
+  // /inquiries and all nested routes
+  csr: ["/inquiries"],
   warehouse: [],
   staff: [],
   inventory: [],
-  csr: [],
   ecomm: [],
 };
 
@@ -113,10 +116,13 @@ export function canAccessRoute(
   return allowedRoutes.some((route) => {
     const normalizedRoute = route.replace(/\/$/, "");
 
-    return (
-      normalizedPath === normalizedRoute ||
-      normalizedPath.startsWith(normalizedRoute + "/")
-    );
+    // Support simple wildcard suffix: /content/* matches /content and any nested route
+    if (normalizedRoute.endsWith("/*")) {
+      const prefix = normalizedRoute.slice(0, -2);
+      return normalizedPath === prefix || normalizedPath.startsWith(prefix + "/");
+    }
+
+    return normalizedPath === normalizedRoute || normalizedPath.startsWith(normalizedRoute + "/");
   });
 }
 
@@ -131,13 +137,13 @@ export function getPrimaryRouteForRole(role: string): string {
   const primaryRoutes: Record<UserRole, string> = {
     admin: "/products/all-products",
     pd: "/products/all-products",
+    hr: "/jobs/applications",
     seo: "/content/blogs",
-    hr: "/jobs",
-    marketing: "/content/blogs", // Primary route for marketing role
+    marketing: "/content/projects",
+    csr: "/inquiries/customer-inquiries",
     warehouse: "/access-denied",
     staff: "/access-denied",
     inventory: "/access-denied",
-    csr: "/access-denied",
     ecomm: "/access-denied",
   };
 
