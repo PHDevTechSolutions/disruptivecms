@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refreshSession, getSession } from "@/lib/session";
+import { getSession, setSessionCookieOnResponse } from "@/lib/session";
 
 /**
  * POST /api/auth/refresh
@@ -8,16 +8,6 @@ import { refreshSession, getSession } from "@/lib/session";
  */
 export async function POST(request: NextRequest) {
   try {
-    const refreshed = await refreshSession();
-
-    if (!refreshed) {
-      return NextResponse.json(
-        { error: "Failed to refresh session" },
-        { status: 401 }
-      );
-    }
-
-    // Get updated user data
     const session = await getSession();
 
     if (!session) {
@@ -27,11 +17,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       user: session,
       message: "Session refreshed",
     });
+
+    // Re-set cookie on response to extend expiry reliably in production
+    setSessionCookieOnResponse(res, session);
+
+    return res;
   } catch (error) {
     console.error("[API] Refresh session error:", error);
     return NextResponse.json(

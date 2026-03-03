@@ -26,19 +26,21 @@ export async function POST(request: NextRequest) {
       accessLevel: accessLevel || "staff",
     };
 
-    const session = await writeSessionCookie(userData);
+    const res = NextResponse.json({
+      success: true,
+      user: userData,
+    });
+
+    const session = await writeSessionCookie(userData, res);
 
     if (!session) {
       return NextResponse.json(
         { error: "Failed to create session" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      user: session,
-    });
+    return res;
   } catch (error) {
     console.error("[API] Login error:", error);
     return NextResponse.json(

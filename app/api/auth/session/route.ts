@@ -1,42 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeSessionCookie } from "@/lib/session";
+import { SessionUser, writeSessionCookie } from "@/lib/session";
 
 /**
  * POST /api/auth/session
- * Create a session cookie after user authentication
- * Expects Firebase ID token in request body
+ * Legacy alias for /api/auth/login
+ * Creates a session cookie with user data after successful Firebase authentication.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { idToken } = await request.json();
+    const body = await request.json();
+    const { uid, email, name, role, accessLevel } = body;
 
-    if (!idToken) {
+    if (!uid || !email || !role) {
       return NextResponse.json(
-        { error: "Missing idToken" },
-        { status: 400 }
+        { error: "Missing required fields" },
+        { status: 400 },
       );
     }
 
-    // Write the session cookie
-    const user = await writeSessionCookie(idToken);
+    const userData: SessionUser = {
+      uid,
+      email,
+      name: name || "User",
+      role: String(role).toLowerCase().trim(),
+      accessLevel: accessLevel || "staff",
+    };
 
-    if (!user) {
+    const res = NextResponse.json({ success: true, user: userData });
+    const session = await writeSessionCookie(userData, res);
+
+    if (!session) {
       return NextResponse.json(
         { error: "Failed to create session" },
-        { status: 401 }
+        { status: 500 },
       );
     }
 
-    // Return user data
-    return NextResponse.json({
-      success: true,
-      user,
-    });
+    return res;
   } catch (error) {
     console.error("[API] Session creation error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

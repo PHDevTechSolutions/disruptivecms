@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import type { NextResponse } from "next/server";
 
 export interface SessionUser {
   uid: string;
@@ -8,27 +9,50 @@ export interface SessionUser {
   accessLevel: string;
 }
 
-const SESSION_COOKIE_NAME = "admin_session_token";
+export const SESSION_COOKIE_NAME = "admin_session_token";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+
+export function getSessionCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict" as const,
+    maxAge: SESSION_MAX_AGE / 1000, // seconds
+    path: "/",
+  };
+}
+
+export function setSessionCookieOnResponse(
+  res: NextResponse,
+  userData: SessionUser,
+) {
+  res.cookies.set(SESSION_COOKIE_NAME, JSON.stringify(userData), getSessionCookieOptions());
+}
+
+export function clearSessionCookieOnResponse(res: NextResponse) {
+  res.cookies.delete(SESSION_COOKIE_NAME);
+}
 
 /**
  * Write a session by storing user data (no Firebase Admin SDK required)
  * @param userData - User data object
+ * @param res - Optional NextResponse (recommended in Route Handlers / production)
  * @returns SessionUser if successful, null otherwise
  */
 export async function writeSessionCookie(
-  userData: SessionUser
+  userData: SessionUser,
+  res?: NextResponse,
 ): Promise<SessionUser | null> {
   try {
-    // Store the user data in a secure HTTP-only cookie
+    // In Route Handlers, prefer writing cookies onto the response so Set-Cookie is guaranteed
+    if (res) {
+      setSessionCookieOnResponse(res, userData);
+      return userData;
+    }
+
+    // Fallback: mutate cookies() store (works in Server Actions / some runtimes)
     const cookieStore = await cookies();
-    cookieStore.set(SESSION_COOKIE_NAME, JSON.stringify(userData), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: SESSION_MAX_AGE / 1000, // in seconds
-      path: "/",
-    });
+    cookieStore.set(SESSION_COOKIE_NAME, JSON.stringify(userData), getSessionCookieOptions());
 
     return userData;
   } catch (error) {
@@ -107,13 +131,7 @@ export async function refreshSession(): Promise<boolean> {
     }
 
     // Update cookie expiration
-    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: SESSION_MAX_AGE / 1000,
-      path: "/",
-    });
+    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, getSessionCookieOptions());
 
     return true;
   } catch (error) {
@@ -125,8 +143,12 @@ export async function refreshSession(): Promise<boolean> {
 /**
  * Clear the session cookie (logout)
  */
-export async function clearSession(): Promise<void> {
+export async function clearSession(res?: NextResponse): Promise<void> {
   try {
+    if (res) {
+      clearSessionCookieOnResponse(res);
+      return;
+    }
     const cookieStore = await cookies();
     cookieStore.delete(SESSION_COOKIE_NAME);
   } catch (error) {

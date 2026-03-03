@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ========================= */
   async function verifySession() {
     try {
-      const response = await fetch("/api/auth/user");
+      const response = await fetch("/api/auth/user", { cache: "no-store" });
 
       if (response.ok) {
         const data = await response.json();
