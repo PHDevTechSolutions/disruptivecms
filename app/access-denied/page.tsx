@@ -35,7 +35,7 @@ function AccessDeniedContent() {
         <CardContent className="space-y-6">
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>
-              Your account role doesn't have permission to access {attemptedPath}.
+              Your role doesn't have permission to access {attemptedPath}.
             </p>
             {user && (
               <p className="text-xs">
