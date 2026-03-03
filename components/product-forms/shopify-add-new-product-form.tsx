@@ -296,14 +296,33 @@ export default function ShopifyAddNewProduct({
     const fetchCategorySpecs = async () => {
       try {
         const specIdsFromCategories = new Set<string>();
+        const allowedLabelsByGroup = new Map<string, Set<string>>();
 
         for (const catId of selectedCats) {
           const catDoc = await getDoc(doc(db, "productfamilies", catId));
           if (catDoc.exists()) {
-            const catData = catDoc.data();
-            if (
-              catData.specifications &&
-              Array.isArray(catData.specifications)
+            const catData = catDoc.data() as any;
+            const familySpecs: { specGroupId: string; specItems?: { id: string; name: string }[] }[] =
+              Array.isArray(catData.specs) ? catData.specs : [];
+
+            if (familySpecs.length > 0) {
+              familySpecs.forEach((g) => {
+                if (!g.specGroupId) return;
+                specIdsFromCategories.add(g.specGroupId);
+                if (!Array.isArray(g.specItems)) return;
+                const set =
+                  allowedLabelsByGroup.get(g.specGroupId) ?? new Set<string>();
+                g.specItems.forEach((it) => {
+                  if (it?.name)
+                    set.add(String(it.name).toUpperCase().trim());
+                });
+                if (set.size > 0) {
+                  allowedLabelsByGroup.set(g.specGroupId, set);
+                }
+              });
+            } else if (
+              Array.isArray(catData.specifications) &&
+              catData.specifications.length > 0
             ) {
               catData.specifications.forEach((specId: string) => {
                 specIdsFromCategories.add(specId);
@@ -327,17 +346,21 @@ export default function ShopifyAddNewProduct({
               const data = doc.data();
               const specGroupName = data.name || "Unnamed Group";
               const specGroupId = doc.id;
+              const allowedForGroup = allowedLabelsByGroup.get(specGroupId);
 
               if (data.items && Array.isArray(data.items)) {
                 data.items.forEach((item: any) => {
-                  if (item.label) {
-                    allSpecItems.push({
-                      id: `${specGroupId}-${item.label}`,
-                      label: item.label,
-                      specGroup: specGroupName,
-                      specGroupId: specGroupId,
-                    });
-                  }
+                  const rawLabel = item.label;
+                  if (!rawLabel) return;
+                  const labelUpper = String(rawLabel).toUpperCase().trim();
+                  if (allowedForGroup && !allowedForGroup.has(labelUpper))
+                    return;
+                  allSpecItems.push({
+                    id: `${specGroupId}-${labelUpper}`,
+                    label: labelUpper,
+                    specGroup: specGroupName,
+                    specGroupId,
+                  });
                 });
               }
             });

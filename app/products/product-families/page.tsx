@@ -1,44 +1,59 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { db } from "@/lib/firebase";
 import {
-  collection,
-  onSnapshot,
   addDoc,
-  updateDoc,
+  collection,
   deleteDoc,
   doc,
-  serverTimestamp,
-  query,
+  onSnapshot,
   orderBy,
-  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
 import {
-  Pencil,
-  Trash2,
-  Image as ImageIcon,
-  Loader2,
   Check,
-  X,
-  RotateCcw,
-  Layers,
-  FolderPlus,
-  Upload,
-  FileText,
-  CheckCircle2,
-  XCircle,
-  Clock,
   ChevronDown,
-  ChevronRight,
+  FolderPlus,
+  Image as ImageIcon,
+  Layers,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  X,
 } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+
+import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { Textarea } from "@/components/ui/textarea";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,21 +65,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { Separator } from "@/components/ui/separator";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Command,
   CommandEmpty,
@@ -73,397 +74,170 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
-import { autoMatchImages } from "@/lib/imageMapping";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+type SpecItemRef = { id: string; name: string };
+type ProductFamilySpecs = { specGroupId: string; specItems: SpecItemRef[] };
 
-const WEBSITE_OPTIONS = [
-  "Disruptive Solutions Inc",
-  "Ecoshift Corporation",
-  "Value Acquisitions Holdings",
-  "Taskflow",
-  "Shopify",
-];
-
-/**
- * These labels appear in the TDS PDF but are image placeholder slots, NOT
- * specification fields. They must be excluded from SpecGroup creation.
- */
-const NON_SPEC_FIELDS = new Set([
-  "DIMENSIONAL DRAWING",
-  "RECOMMENDED MOUNTING HEIGHT",
-  "DRIVER COMPATIBILITY",
-  "BASE",
-  "ILLUMINANCE LEVEL",
-  "WIRING DIAGRAM",
-  "INSTALLATION",
-  "WIRING LAYOUT",
-  "TERMINAL LAYOUT",
-  "ACCESSORIES",
-  "ACCESORIOS", // common typo variant
-  // Metadata rows — not specs
-  "BRAND",
-  "ITEM CODE",
-]);
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ParsedGroup {
+type SpecGroupDoc = {
+  id: string;
   name: string;
-  items: string[];
+  items?: { label: string }[];
+  isActive?: boolean;
+};
+
+type ProductFamilyDoc = {
+  id: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  imageUrl?: string;
+  specs?: ProductFamilySpecs[];
+  specifications?: string[];
+  isActive?: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
+function buildSpecItemId(specGroupId: string, label: string) {
+  return `${specGroupId}:${label.toUpperCase().trim()}`;
 }
-
-interface ParsedPdfResult {
-  title: string;
-  groups: ParsedGroup[];
-}
-
-type LogLevel = "info" | "success" | "warn" | "error";
-
-interface LogEntry {
-  level: LogLevel;
-  msg: string;
-}
-
-type FileStep = "idle" | "uploading" | "parsing" | "saving" | "done" | "error";
-
-interface FileStatus {
-  file: File;
-  step: FileStep;
-  title: string;
-  logs: LogEntry[];
-  pdfUrl?: string;
-  imageFiles: File[];
-  imageUrls: Record<string, string>;
-  expanded: boolean;
-}
-
-async function parseTdsPdf(file: File): Promise<ParsedPdfResult> {
-  // Dynamic import keeps the pdfjs bundle out of the initial chunk
-  const pdfjsLib = await import("pdfjs-dist");
-
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) })
-    .promise;
-
-  // ── Derive title from filename only ───────────────────────────────────────
-  // We intentionally do NOT read PDF metadata — the embedded Title field often
-  // contains generic text like "LIT TECHNICAL DATA SHEET" which is useless as
-  // a ProductFamily name. The filename is always the authoritative source.
-  const title = file.name
-    .replace(/\.pdf$/i, "")
-    .replace(/[_\-]+/g, " ")
-    .trim()
-    .toUpperCase();
-
-  // ── Extract text from page 1 only ─────────────────────────────────────────
-  const page = await pdf.getPage(1);
-  const viewport = page.getViewport({ scale: 1 });
-  const pageWidth = viewport.width;
-  // Only consider text in the LEFT half of the page (label column)
-  const LEFT_CUTOFF = pageWidth * 0.5;
-
-  const textContent = await page.getTextContent();
-
-  // Collect positioned text items from the label column
-  const rawItems: { text: string; y: number; x: number }[] = [];
-  for (const item of textContent.items) {
-    if (!("str" in item)) continue;
-    const str = (item as any).str.trim();
-    if (!str || str === ":") continue;
-
-    const x: number = (item as any).transform[4];
-    const y: number = (item as any).transform[5];
-
-    // Skip right-column items (values, colons, brand text)
-    if (x > LEFT_CUTOFF) continue;
-
-    rawItems.push({ text: str, y, x });
-  }
-
-  // Sort top-to-bottom (PDF Y is bottom-up, so descending = document order)
-  rawItems.sort((a, b) => b.y - a.y);
-
-  // Merge items on the same line (Y within 3pt)
-  const Y_THRESHOLD = 3;
-  const lines: string[] = [];
-  let lineBuffer: { text: string; x: number }[] = [];
-  let lineY = NaN;
-
-  const flushLine = () => {
-    if (lineBuffer.length === 0) return;
-    lineBuffer.sort((a, b) => a.x - b.x);
-    const merged = lineBuffer
-      .map((l) => l.text)
-      .join(" ")
-      .trim();
-    if (merged) lines.push(merged);
-    lineBuffer = [];
-  };
-
-  for (const item of rawItems) {
-    if (isNaN(lineY) || Math.abs(item.y - lineY) > Y_THRESHOLD) {
-      flushLine();
-      lineY = item.y;
-    }
-    lineBuffer.push({ text: item.text, x: item.x });
-  }
-  flushLine();
-
-  // ── Classify lines → groups ───────────────────────────────────────────────
-  const groups: ParsedGroup[] = [];
-  let currentGroup: ParsedGroup | null = null;
-
-  for (const line of lines) {
-    const clean = line.trim();
-    if (!clean) continue;
-
-    // Detect section header: ALL letters are uppercase (Title Case items fail this)
-    const letters = clean.replace(/[^a-zA-Z]/g, "");
-    const isHeader =
-      letters.length > 0 &&
-      letters === letters.toUpperCase() &&
-      !NON_SPEC_FIELDS.has(clean.toUpperCase());
-
-    if (isHeader) {
-      // Save previous group before starting a new one
-      if (currentGroup && currentGroup.items.length > 0) {
-        groups.push(currentGroup);
-      }
-      currentGroup = { name: clean.toUpperCase().trim(), items: [] };
-    } else {
-      // Field label — add to current group if not excluded
-      if (!currentGroup) continue;
-      const labelKey = clean.toUpperCase().trim();
-      if (!labelKey || NON_SPEC_FIELDS.has(labelKey)) continue;
-      if (!currentGroup.items.includes(labelKey)) {
-        currentGroup.items.push(labelKey);
-      }
-    }
-  }
-
-  // Flush the last group
-  if (currentGroup && currentGroup.items.length > 0) {
-    groups.push(currentGroup);
-  }
-
-  return { title, groups };
-}
-
-// ─── Helper sub-components ────────────────────────────────────────────────────
-
-function StepIcon({ step }: { step: FileStep }) {
-  if (step === "done")
-    return (
-      <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
-    );
-  if (step === "error")
-    return <XCircle size={14} className="text-destructive flex-shrink-0" />;
-  if (step === "idle")
-    return (
-      <Clock size={14} className="text-muted-foreground/40 flex-shrink-0" />
-    );
-  return (
-    <Loader2 size={14} className="animate-spin text-primary flex-shrink-0" />
-  );
-}
-
-function stepLabel(step: FileStep): string {
-  return (
-    {
-      idle: "Queued",
-      uploading: "Uploading PDF…",
-      parsing: "Parsing AcroForm…",
-      saving: "Saving to Firestore…",
-      done: "Complete",
-      error: "Failed",
-    }[step] ?? step
-  );
-}
-
-function logColor(level: LogLevel): string {
-  return (
-    {
-      info: "text-muted-foreground",
-      success: "text-emerald-600 dark:text-emerald-400",
-      warn: "text-amber-500",
-      error: "text-destructive",
-    }[level] ?? "text-muted-foreground"
-  );
-}
-
-function logPrefix(level: LogLevel): string {
-  return { info: "·", success: "✓", warn: "~", error: "✕" }[level] ?? "·";
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ProductFamiliesPage() {
   const CLOUDINARY_UPLOAD_PRESET = "taskflow_preset";
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
 
-  // ── Shared data ─────────────────────────────────────────────────────────
-  const [categories, setCategories] = useState<any[]>([]);
-  const [specifications, setSpecifications] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [families, setFamilies] = useState<ProductFamilyDoc[]>([]);
+  const [specGroups, setSpecGroups] = useState<SpecGroupDoc[]>([]);
+  const [loadingFamilies, setLoadingFamilies] = useState(true);
 
-  // ── Manual form ──────────────────────────────────────────────────────────
-  const [isSubmitLoading, setIsSubmitLoading] = useState(false);
-  const [openSpecs, setOpenSpecs] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [selectedWebsites, setSelectedWebsites] = useState<string[]>([]);
-  const [selectedSpecs, setSelectedSpecs] = useState<string[]>([]);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
-
-  // ── Tab ──────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<"manual" | "bulk">("manual");
-
-  // ── Bulk upload ──────────────────────────────────────────────────────────
-  const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
-  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
-
-  // ── Search, filter & bulk operations ──────────────────────────────────────
+  // ── List search/filter/selection ──────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatus, setFilterStatus] = useState<
-    "all" | "active" | "inactive"
-  >("all");
-  const [filterTds, setFilterTds] = useState<"all" | "with" | "without">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">(
+    "all",
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  // ── Firestore listeners ──────────────────────────────────────────────────
+  // ── Form state ────────────────────────────────────────────────────────────
+  const [editId, setEditId] = useState<string | null>(null);
+  const [isSubmitLoading, setIsSubmitLoading] = useState(false);
+
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  const [openSpecGroups, setOpenSpecGroups] = useState(false);
+  const [selectedSpecGroupIds, setSelectedSpecGroupIds] = useState<string[]>([]);
+  const [specItemSelections, setSpecItemSelections] = useState<
+    Record<string, string[]>
+  >({});
+  const [specItemSearch, setSpecItemSearch] = useState<Record<string, string>>(
+    {},
+  );
+
+  // ── Firestore listeners ───────────────────────────────────────────────────
   useEffect(() => {
     const q = query(
       collection(db, "productfamilies"),
       orderBy("createdAt", "desc"),
     );
     return onSnapshot(q, (snap) => {
-      setCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
+      setFamilies(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      setLoadingFamilies(false);
     });
   }, []);
 
   useEffect(() => {
     const q = query(collection(db, "specs"), orderBy("createdAt", "desc"));
     return onSnapshot(q, (snap) => {
-      setSpecifications(
-        snap.docs.map((d) => ({ id: d.id, name: d.data().name })),
+      setSpecGroups(
+        snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        })),
       );
     });
   }, []);
 
-  // ── Image dropzone (manual form) ─────────────────────────────────────────
+  // ── Image dropzone ─────────────────────────────────────────────────────────
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { "image/*": [] },
     multiple: false,
     onDrop: (files) => {
       const f = files[0];
+      if (!f) return;
       setImageFile(f);
       setPreviewUrl(URL.createObjectURL(f));
     },
   });
 
-  // ── PDF dropzone (bulk upload) ────────────────────────────────────────────
-  const {
-    getRootProps: pdfRoot,
-    getInputProps: pdfInput,
-    isDragActive: isPdfDragActive,
-  } = useDropzone({
-    accept: {
-      "application/pdf": [".pdf"],
-      "image/*": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
-    },
-    multiple: true,
-    onDrop: (accepted, rejected) => {
-      if (rejected.length > 0) {
-        toast.error(
-          `${rejected.length} file(s) rejected — PDF and images only`,
-        );
-      }
-      if (accepted.length === 0) return;
+  const specGroupById = useMemo(() => {
+    const m = new Map<string, SpecGroupDoc>();
+    for (const g of specGroups) m.set(g.id, g);
+    return m;
+  }, [specGroups]);
 
-      // Separate PDFs from images
-      const pdfFiles = accepted.filter((f) => f.type === "application/pdf");
-      const imageFiles = accepted.filter((f) => f.type.startsWith("image/"));
+  const selectedSpecsForSave: ProductFamilySpecs[] = useMemo(() => {
+    return selectedSpecGroupIds
+      .map((specGroupId) => {
+        const group = specGroupById.get(specGroupId);
+        const labels = (group?.items ?? [])
+          .map((i) => i.label)
+          .filter(Boolean)
+          .map((l) => l.toUpperCase().trim());
 
-      // Create entries for PDFs, initialize with empty image arrays
-      const newEntries: FileStatus[] = pdfFiles.map((f) => ({
-        file: f,
-        step: "idle",
-        // Title comes from filename only — strip extension, normalise separators
-        title: f.name
-          .replace(/\.pdf$/i, "")
-          .replace(/[_\-]+/g, " ")
-          .trim()
-          .toUpperCase(),
-        logs: [],
-        imageFiles: [],
-        imageUrls: {},
-        expanded: false,
-      }));
+        const chosenItemIds = new Set(specItemSelections[specGroupId] ?? []);
+        const chosenItems: SpecItemRef[] = labels
+          .map((label) => ({
+            id: buildSpecItemId(specGroupId, label),
+            name: label,
+          }))
+          .filter((item) => chosenItemIds.has(item.id));
 
-      // Add images to the first PDF entry (or warn if no PDFs)
-      if (newEntries.length > 0 && imageFiles.length > 0) {
-        newEntries[0].imageFiles = imageFiles;
-      } else if (imageFiles.length > 0 && newEntries.length === 0) {
-        toast.error("Upload at least one PDF along with images");
-        return;
-      }
+        return { specGroupId, specItems: chosenItems };
+      })
+      .filter((g) => g.specItems.length > 0);
+  }, [selectedSpecGroupIds, specItemSelections, specGroupById]);
 
-      setFileStatuses((prev) => [...prev, ...newEntries]);
-    },
-  });
-
-  // ── Manual form helpers ───────────────────────────────────────────────────
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setEditId(null);
     setTitle("");
     setDescription("");
-    setSelectedWebsites([]);
-    setSelectedSpecs([]);
     setImageFile(null);
     setPreviewUrl("");
+    setSelectedSpecGroupIds([]);
+    setSpecItemSelections({});
+    setSpecItemSearch({});
+  }, []);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  // ── Filter & search logic ────────────────────────────────────────────────
-  const filteredCategories = categories.filter((cat) => {
-    if (
-      searchTerm &&
-      !cat.title.toLowerCase().includes(searchTerm.toLowerCase())
-    ) {
-      return false;
-    }
-    if (filterStatus === "active" && !cat.isActive) return false;
-    if (filterStatus === "inactive" && cat.isActive) return false;
-    if (filterTds === "with" && !cat.tdsTemplate) return false;
-    if (filterTds === "without" && cat.tdsTemplate) return false;
-    return true;
-  });
+  const filteredFamilies = useMemo(() => {
+    return families.filter((f) => {
+      const name = (f.title ?? "").toLowerCase();
+      if (searchTerm && !name.includes(searchTerm.toLowerCase())) return false;
+      if (filterStatus === "active" && !f.isActive) return false;
+      if (filterStatus === "inactive" && f.isActive) return false;
+      return true;
+    });
+  }, [families, searchTerm, filterStatus]);
 
-  // ── Bulk delete handler ──────────────────────────────────────────────────
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     setIsBulkDeleting(true);
     try {
       await Promise.all(
-        Array.from(selectedIds).map((id) =>
-          deleteDoc(doc(db, "productfamilies", id)),
-        ),
+        Array.from(selectedIds).map((id) => deleteDoc(doc(db, "productfamilies", id))),
       );
       toast.success(`Deleted ${selectedIds.size} product families`);
       setSelectedIds(new Set());
@@ -474,29 +248,64 @@ export default function ProductFamiliesPage() {
     }
   };
 
-  // ── Toggle selection ────────────────────────────────────────────────────
-  const toggleSelect = (id: string) => {
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
-    setSelectedIds(newSet);
+  const handleToggleSpecGroup = (specGroupId: string) => {
+    setSelectedSpecGroupIds((prev) => {
+      if (prev.includes(specGroupId)) {
+        const next = prev.filter((id) => id !== specGroupId);
+        setSpecItemSelections((sel) => {
+          const copy = { ...sel };
+          delete copy[specGroupId];
+          return copy;
+        });
+        return next;
+      }
+      return [...prev, specGroupId];
+    });
   };
 
-  const selectAll = () => {
-    if (selectedIds.size === filteredCategories.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredCategories.map((c) => c.id)));
-    }
+  const toggleSpecItem = (specGroupId: string, itemId: string) => {
+    setSpecItemSelections((prev) => {
+      const cur = new Set(prev[specGroupId] ?? []);
+      if (cur.has(itemId)) cur.delete(itemId);
+      else cur.add(itemId);
+      return { ...prev, [specGroupId]: Array.from(cur) };
+    });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title || selectedWebsites.length === 0)
-      return toast.error("Required fields missing");
+  const setAllItemsInGroup = (specGroupId: string, on: boolean) => {
+    const group = specGroupById.get(specGroupId);
+    const labels = (group?.items ?? [])
+      .map((i) => i.label)
+      .filter(Boolean)
+      .map((l) => l.toUpperCase().trim());
+    const ids = labels.map((label) => buildSpecItemId(specGroupId, label));
+    setSpecItemSelections((prev) => ({
+      ...prev,
+      [specGroupId]: on ? ids : [],
+    }));
+  };
+
+  const validate = (): { ok: boolean; message?: string } => {
+    if (!title.trim()) return { ok: false, message: "Title is required" };
+    if (selectedSpecGroupIds.length === 0)
+      return { ok: false, message: "Select at least one spec group" };
+    for (const gid of selectedSpecGroupIds) {
+      const chosen = specItemSelections[gid] ?? [];
+      if (chosen.length === 0) {
+        const name = specGroupById.get(gid)?.name ?? "Spec Group";
+        return {
+          ok: false,
+          message: `Select at least one spec item for "${name}"`,
+        };
+      }
+    }
+    return { ok: true };
+  };
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const v = validate();
+    if (!v.ok) return toast.error(v.message);
 
     setIsSubmitLoading(true);
     try {
@@ -509,28 +318,29 @@ export default function ProductFamiliesPage() {
           `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
           { method: "POST", body: fd },
         );
-        finalImageUrl = (await res.json()).secure_url;
+        const json = await res.json();
+        finalImageUrl = json?.secure_url ?? "";
       }
 
-      const payload = {
-        title: title.toUpperCase(),
-        description,
-        websites: selectedWebsites,
-        specifications: selectedSpecs,
-        imageUrl: finalImageUrl,
+      const payload: any = {
+        title: title.trim(),
+        specs: selectedSpecsForSave,
         updatedAt: serverTimestamp(),
       };
+      const desc = description.trim();
+      if (desc) payload.description = desc;
+      if (finalImageUrl) payload.image = finalImageUrl;
 
       if (editId) {
         await updateDoc(doc(db, "productfamilies", editId), payload);
-        toast.success("Updated Successfully");
+        toast.success("Product family updated");
       } else {
         await addDoc(collection(db, "productfamilies"), {
           ...payload,
           isActive: true,
           createdAt: serverTimestamp(),
         });
-        toast.success("Category Created");
+        toast.success("Product family created");
       }
       resetForm();
     } catch {
@@ -540,259 +350,26 @@ export default function ProductFamiliesPage() {
     }
   };
 
-  const handleBulkUpdateWebsites = async () => {
-    if (selectedWebsites.length === 0)
-      return toast.error("Select at least one website first.");
-    setIsBulkUpdating(true);
-    try {
-      await Promise.all(
-        categories.map((cat) =>
-          updateDoc(doc(db, "productfamilies", cat.id), {
-            websites: selectedWebsites,
-            updatedAt: serverTimestamp(),
-          }),
-        ),
-      );
-      toast.success(`Updated ${categories.length} categories`);
-    } catch {
-      toast.error("Bulk update failed");
-    } finally {
-      setIsBulkUpdating(false);
-    }
-  };
+  const selectedSummary = useMemo(() => {
+    return selectedSpecsForSave
+      .map((g) => {
+        const group = specGroupById.get(g.specGroupId);
+        return {
+          specGroupId: g.specGroupId,
+          groupName: group?.name ?? g.specGroupId,
+          specItems: g.specItems,
+        };
+      })
+      .filter((g) => g.specItems.length > 0);
+  }, [selectedSpecsForSave, specGroupById]);
 
-  // ── Bulk upload helpers ───────────────────────────────────────────────────
-
-  const uploadRawToCloudinary = async (file: File): Promise<string> => {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-    const res = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`,
-      { method: "POST", body: fd },
-    );
-    const json = await res.json();
-    if (!json?.secure_url)
-      throw new Error(json?.error?.message ?? "Cloudinary raw upload failed");
-    return json.secure_url as string;
-  };
-
-  const uploadImageToCloudinary = async (file: File): Promise<string> => {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-    const res = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-      { method: "POST", body: fd },
-    );
-    const json = await res.json();
-    if (!json?.secure_url)
-      throw new Error(json?.error?.message ?? "Cloudinary image upload failed");
-    return json.secure_url as string;
-  };
-
-  const patchFile = useCallback((idx: number, patch: Partial<FileStatus>) => {
-    setFileStatuses((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], ...patch };
-      return next;
-    });
-  }, []);
-
-  const appendLog = useCallback((idx: number, level: LogLevel, msg: string) => {
-    setFileStatuses((prev) => {
-      const next = [...prev];
-      next[idx] = {
-        ...next[idx],
-        logs: [...next[idx].logs, { level, msg }],
-        expanded: next[idx].expanded || level !== "info",
-      };
-      return next;
-    });
-  }, []);
-
-  /**
-   * Main bulk processing loop.
-   *
-   * For each queued PDF:
-   *  1. Upload PDF → Cloudinary (raw) → tdsTemplate URL
-   *  2. Parse AcroForm fields → groups
-   *  3. Upsert each SpecGroup (create or extend, no duplicates)
-   *  4. Create ProductFamily using the filename as title (NOT PDF metadata)
-   */
-  const processBulkPdfs = async () => {
-    const pending = fileStatuses.filter((f) => f.step === "idle");
-    if (pending.length === 0) return;
-    setIsBulkProcessing(true);
-
-    const specsSnap = await getDocs(collection(db, "specs"));
-    const groupCache = new Map<string, { id: string; labels: Set<string> }>();
-    specsSnap.forEach((d) => {
-      const data = d.data();
-      const name = (data.name as string).toUpperCase().trim();
-      const labels = new Set<string>(
-        ((data.items as { label: string }[]) || []).map((i) =>
-          i.label.toUpperCase().trim(),
-        ),
-      );
-      groupCache.set(name, { id: d.id, labels });
-    });
-
-    for (let idx = 0; idx < fileStatuses.length; idx++) {
-      const fs = fileStatuses[idx];
-      if (fs.step !== "idle") continue;
-
-      try {
-        // ── Step 1: Upload PDF to Cloudinary ──────────────────────────────
-        patchFile(idx, { step: "uploading" });
-        appendLog(idx, "info", `Uploading "${fs.file.name}"…`);
-
-        const pdfUrl = await uploadRawToCloudinary(fs.file);
-        appendLog(idx, "success", `PDF stored on Cloudinary`);
-
-        // ── Step 2: Parse AcroForm ────────────────────────────────────────
-        patchFile(idx, { step: "parsing" });
-        appendLog(idx, "info", "Extracting AcroForm structure…");
-
-        const parsed = await parseTdsPdf(fs.file);
-
-        // Title is always the filename — confirm it in the log
-        appendLog(idx, "info", `Title → "${parsed.title}" (from filename)`);
-        appendLog(
-          idx,
-          "info",
-          `Found ${parsed.groups.length} spec group(s): ${parsed.groups.map((g) => g.name).join(", ")}`,
-        );
-
-        if (parsed.groups.length === 0) {
-          appendLog(
-            idx,
-            "warn",
-            "No spec groups found — only ProductFamily will be created",
-          );
-        }
-
-        // ── Step 3: Upsert SpecGroups ─────────────────────────────────────
-        patchFile(idx, { step: "saving" });
-        const specGroupIds: string[] = [];
-
-        for (const group of parsed.groups) {
-          const groupKey = group.name.toUpperCase().trim();
-          const cached = groupCache.get(groupKey);
-
-          if (cached) {
-            const newLabels = group.items.filter(
-              (item) => !cached.labels.has(item.toUpperCase().trim()),
-            );
-
-            if (newLabels.length > 0) {
-              const merged = [
-                ...Array.from(cached.labels).map((l) => ({ label: l })),
-                ...newLabels.map((l) => ({ label: l.toUpperCase() })),
-              ];
-              await updateDoc(doc(db, "specs", cached.id), {
-                items: merged,
-                updatedAt: serverTimestamp(),
-              });
-              newLabels.forEach((l) => {
-                cached.labels.add(l.toUpperCase().trim());
-                appendLog(
-                  idx,
-                  "success",
-                  `  + Spec "${l}" added to existing group "${group.name}"`,
-                );
-              });
-            } else {
-              appendLog(
-                idx,
-                "warn",
-                `  Group "${group.name}" already up-to-date (${group.items.length} specs skipped)`,
-              );
-            }
-
-            specGroupIds.push(cached.id);
-          } else {
-            const newRef = await addDoc(collection(db, "specs"), {
-              name: groupKey,
-              items: group.items.map((l) => ({ label: l.toUpperCase() })),
-              isActive: true,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-
-            groupCache.set(groupKey, {
-              id: newRef.id,
-              labels: new Set(group.items.map((l) => l.toUpperCase().trim())),
-            });
-            specGroupIds.push(newRef.id);
-            appendLog(
-              idx,
-              "success",
-              `  ✦ Created group "${group.name}" with ${group.items.length} spec(s)`,
-            );
-          }
-        }
-
-        // ── Step 4: Build TDS Spec Mapping ────────────────────────────────
-        let tdsSpecMapping: Record<string, string[]> = {};
-        try {
-          const { buildTdsSpecMapping } = await import("@/lib/fillTdsPdf");
-          const specGroupsForMapping = parsed.groups.map((g) => ({
-            id: groupCache.get(g.name.toUpperCase().trim())?.id || "",
-            name: g.name,
-            items: g.items.map((label) => ({ label })),
-          }));
-          tdsSpecMapping = await buildTdsSpecMapping(
-            pdfUrl,
-            specGroupsForMapping,
-          );
-          appendLog(idx, "info", "TDS spec mapping computed");
-        } catch (e) {
-          appendLog(
-            idx,
-            "warn",
-            "Could not compute TDS spec mapping (will use all specs)",
-          );
-        }
-
-        // ── Step 5: Create ProductFamily ──────────────────────────────────
-        // Always use parsed.title which is derived exclusively from the filename
-        await addDoc(collection(db, "productfamilies"), {
-          title: parsed.title,
-          description: "",
-          websites: [],
-          specifications: specGroupIds,
-          imageUrl: "",
-          tdsTemplate: pdfUrl,
-          tdsSpecMapping,
-          isActive: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        appendLog(idx, "success", `ProductFamily "${parsed.title}" created`);
-        patchFile(idx, { step: "done", pdfUrl });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        appendLog(idx, "error", msg);
-        patchFile(idx, { step: "error" });
-      }
-    }
-
-    setIsBulkProcessing(false);
-    toast.success(`Bulk processing complete — check logs for details`);
-  };
-
-  // ── JSX ──────────────────────────────────────────────────────────────────
-
-  const pendingCount = fileStatuses.filter((f) => f.step === "idle").length;
+  const canPickSpecs = title.trim().length > 0;
 
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          {/* ── Top bar ── */}
           <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
@@ -815,7 +392,7 @@ export default function ProductFamiliesPage() {
                 Product Families
               </h1>
               <p className="text-sm text-muted-foreground">
-                Manage product families and specifications.
+                Create and manage product families and their specs.
               </p>
             </div>
 
@@ -823,73 +400,51 @@ export default function ProductFamiliesPage() {
               {/* ══════════════ FORM COLUMN ══════════════ */}
               <div className="lg:col-span-4 sticky top-6 z-10">
                 <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
-                  {/* ── Card Header with tabs ── */}
-                  <CardHeader className="border-b py-0 sticky top-0 bg-background z-10">
-                    <div className="flex">
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("manual")}
-                        className={cn(
-                          "flex-1 py-3.5 text-[9px] font-black uppercase tracking-widest transition-colors border-b-2",
-                          activeTab === "manual"
-                            ? "border-foreground text-foreground"
-                            : "border-transparent text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {editId ? "Edit Category" : "Add Category"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("bulk")}
-                        className={cn(
-                          "flex-1 py-3.5 text-[9px] font-black uppercase tracking-widest transition-colors border-b-2 flex items-center justify-center gap-1.5",
-                          activeTab === "bulk"
-                            ? "border-foreground text-foreground"
-                            : "border-transparent text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        <Upload size={10} />
-                        PDF Bulk Upload
-                        {fileStatuses.length > 0 && (
-                          <span className="bg-primary text-primary-foreground text-[7px] font-black rounded-full px-1 py-px min-w-[14px] text-center leading-tight">
-                            {fileStatuses.length}
-                          </span>
-                        )}
-                      </button>
+                  <CardHeader className="border-b">
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="text-xs font-black uppercase tracking-widest">
+                        {editId ? "Edit Product Family" : "Add Product Family"}
+                      </CardTitle>
+                      {editId && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={resetForm}
+                          className="h-7 rounded-none text-[9px] uppercase font-bold text-muted-foreground"
+                        >
+                          <RotateCcw className="mr-1 h-3 w-3" /> Cancel Edit
+                        </Button>
+                      )}
                     </div>
                   </CardHeader>
 
-                  {/* ══ TAB: Manual Add / Edit ══ */}
-                  {activeTab === "manual" && (
-                    <CardContent className="pt-5 space-y-5">
-                      {editId && (
-                        <div className="flex justify-end -mt-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={resetForm}
-                            className="h-7 rounded-none text-[9px] uppercase font-bold text-muted-foreground"
-                          >
-                            <RotateCcw className="mr-1 h-3 w-3" /> Cancel Edit
-                          </Button>
-                        </div>
-                      )}
-
+                  <CardContent className="pt-5 space-y-5">
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                      {/* Title */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Category Title
+                          Title <span className="text-destructive">*</span>
                         </label>
                         <Input
                           value={title}
                           onChange={(e) => setTitle(e.target.value)}
                           placeholder="E.G. RECESSED LIGHTS"
-                          className="rounded-none h-10 text-xs"
+                          className={cn(
+                            "rounded-none h-10 text-xs",
+                            !title.trim() && "border-destructive/40",
+                          )}
                         />
+                        {!title.trim() && (
+                          <p className="text-[10px] text-destructive font-bold uppercase">
+                            Title is required
+                          </p>
+                        )}
                       </div>
 
+                      {/* Description (optional) */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Description
+                          Description <span className="opacity-60">(optional)</span>
                         </label>
                         <Textarea
                           value={description}
@@ -899,100 +454,10 @@ export default function ProductFamiliesPage() {
                         />
                       </div>
 
+                      {/* Image (optional) */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Websites
-                        </label>
-                        <div className="grid grid-cols-2 gap-1">
-                          {WEBSITE_OPTIONS.map((site) => (
-                            <Button
-                              key={site}
-                              type="button"
-                              variant={
-                                selectedWebsites.includes(site)
-                                  ? "default"
-                                  : "outline"
-                              }
-                              className="rounded-none h-8 text-[9px] uppercase font-bold px-2"
-                              onClick={() =>
-                                setSelectedWebsites((prev) =>
-                                  prev.includes(site)
-                                    ? prev.filter((s) => s !== site)
-                                    : [...prev, site],
-                                )
-                              }
-                            >
-                              {site.split(" ")[0]}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold uppercase opacity-60">
-                          Specifications
-                        </label>
-                        <Popover open={openSpecs} onOpenChange={setOpenSpecs}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
-                            >
-                              {selectedSpecs.length > 0
-                                ? `${selectedSpecs.length} Spec${selectedSpecs.length > 1 ? "s" : ""} Attached`
-                                : "Select Specifications…"}
-                              <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
-                            align="start"
-                          >
-                            <Command>
-                              <CommandInput
-                                placeholder="Search spec name…"
-                                className="h-9 text-xs"
-                              />
-                              <CommandList>
-                                <CommandEmpty>
-                                  No specifications found.
-                                </CommandEmpty>
-                                <CommandGroup>
-                                  {specifications.map((spec) => (
-                                    <CommandItem
-                                      key={spec.id}
-                                      onSelect={() =>
-                                        setSelectedSpecs((prev) =>
-                                          prev.includes(spec.id)
-                                            ? prev.filter(
-                                                (id) => id !== spec.id,
-                                              )
-                                            : [...prev, spec.id],
-                                        )
-                                      }
-                                      className="text-[10px] uppercase font-bold"
-                                    >
-                                      <Check
-                                        className={cn(
-                                          "mr-2 h-3 w-3",
-                                          selectedSpecs.includes(spec.id)
-                                            ? "opacity-100"
-                                            : "opacity-0",
-                                        )}
-                                      />
-                                      {spec.name}
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold uppercase opacity-60">
-                          Category Cover
+                          Image <span className="opacity-60">(optional)</span>
                         </label>
                         <div
                           {...getRootProps()}
@@ -1007,14 +472,15 @@ export default function ProductFamiliesPage() {
                               <img
                                 src={previewUrl}
                                 className="h-full w-full object-cover"
+                                alt="Preview"
                               />
                               <Button
                                 type="button"
                                 variant="destructive"
                                 size="icon"
                                 className="absolute top-1 right-1 h-6 w-6 rounded-none"
-                                onClick={(e) => {
-                                  e.stopPropagation();
+                                onClick={(evt) => {
+                                  evt.stopPropagation();
                                   setPreviewUrl("");
                                   setImageFile(null);
                                 }}
@@ -1036,8 +502,262 @@ export default function ProductFamiliesPage() {
                         </div>
                       </div>
 
+                      {/* Spec groups selection */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60">
+                          Spec Groups <span className="text-destructive">*</span>
+                        </label>
+                        <Popover
+                          open={openSpecGroups}
+                          onOpenChange={setOpenSpecGroups}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={!canPickSpecs}
+                              className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
+                            >
+                              {selectedSpecGroupIds.length > 0
+                                ? `${selectedSpecGroupIds.length} group${selectedSpecGroupIds.length !== 1 ? "s" : ""} selected`
+                                : canPickSpecs
+                                  ? "Select Spec Groups…"
+                                  : "Enter a title first"}
+                              <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-(--radix-popover-trigger-width) p-0 rounded-none"
+                            align="start"
+                          >
+                            <Command>
+                              <CommandInput
+                                placeholder="Search spec groups…"
+                                className="h-9 text-xs"
+                              />
+                              <CommandList>
+                                <CommandEmpty>No spec groups found.</CommandEmpty>
+                                <CommandGroup>
+                                  {specGroups.map((g) => {
+                                    const active = selectedSpecGroupIds.includes(
+                                      g.id,
+                                    );
+                                    return (
+                                      <CommandItem
+                                        key={g.id}
+                                        onSelect={() => handleToggleSpecGroup(g.id)}
+                                        className="text-[10px] uppercase font-bold"
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-3 w-3",
+                                            active ? "opacity-100" : "opacity-0",
+                                          )}
+                                        />
+                                        {g.name}
+                                        {g.isActive === false && (
+                                          <span className="ml-auto text-[8px] text-muted-foreground uppercase">
+                                            Disabled
+                                          </span>
+                                        )}
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                        {!canPickSpecs && (
+                          <p className="text-[10px] text-muted-foreground font-bold uppercase">
+                            Spec selection unlocks after title is set
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Spec items per group */}
+                      {selectedSpecGroupIds.length > 0 && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold uppercase opacity-60">
+                              Spec Items <span className="text-destructive">*</span>
+                            </label>
+                            <Badge
+                              variant="outline"
+                              className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                            >
+                              {selectedSummary.reduce(
+                                (sum, g) => sum + g.specItems.length,
+                                0,
+                              )}{" "}
+                              selected
+                            </Badge>
+                          </div>
+
+                          <div className="space-y-2">
+                            {selectedSpecGroupIds.map((gid) => {
+                              const group = specGroupById.get(gid);
+                              const groupName = group?.name ?? gid;
+                              const labels = (group?.items ?? [])
+                                .map((i) => i.label)
+                                .filter(Boolean)
+                                .map((l) => l.toUpperCase().trim());
+
+                              const search = (specItemSearch[gid] ?? "").toUpperCase();
+                              const filtered = search
+                                ? labels.filter((l) => l.includes(search))
+                                : labels;
+
+                              const selectedSet = new Set(
+                                specItemSelections[gid] ?? [],
+                              );
+
+                              return (
+                                <div
+                                  key={gid}
+                                  className="border border-foreground/10 rounded-none"
+                                >
+                                  <div className="flex items-center justify-between gap-2 p-2.5 border-b bg-muted/20">
+                                    <div className="min-w-0">
+                                      <p className="text-[10px] font-black uppercase truncate leading-tight">
+                                        {groupName}
+                                      </p>
+                                      <p className="text-[9px] text-muted-foreground uppercase">
+                                        {selectedSet.size} selected · {labels.length}{" "}
+                                        available
+                                      </p>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-none h-7 text-[9px] uppercase font-bold"
+                                        onClick={() => setAllItemsInGroup(gid, true)}
+                                        disabled={labels.length === 0}
+                                      >
+                                        Select all
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-none h-7 text-[9px] uppercase font-bold"
+                                        onClick={() => setAllItemsInGroup(gid, false)}
+                                      >
+                                        Clear
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  <div className="p-2.5 space-y-2">
+                                    <Input
+                                      value={specItemSearch[gid] ?? ""}
+                                      onChange={(evt) =>
+                                        setSpecItemSearch((prev) => ({
+                                          ...prev,
+                                          [gid]: evt.target.value,
+                                        }))
+                                      }
+                                      placeholder="Filter items…"
+                                      className="rounded-none h-9 text-xs"
+                                    />
+
+                                    {filtered.length === 0 ? (
+                                      <p className="text-[10px] text-muted-foreground uppercase font-bold border border-dashed border-foreground/10 p-3 bg-muted/30 text-center">
+                                        No items found
+                                      </p>
+                                    ) : (
+                                      <div className="grid grid-cols-1 gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+                                        {filtered.map((label) => {
+                                          const itemId = buildSpecItemId(gid, label);
+                                          const checked = selectedSet.has(itemId);
+                                          return (
+                                            <button
+                                              type="button"
+                                              key={itemId}
+                                              onClick={() => toggleSpecItem(gid, itemId)}
+                                              className={cn(
+                                                "flex items-center gap-2 border border-foreground/10 bg-background hover:bg-accent/40 transition-colors px-2.5 py-2 rounded-none text-left",
+                                                checked && "border-primary/40 bg-primary/5",
+                                              )}
+                                            >
+                                              <span
+                                                className={cn(
+                                                  "h-4 w-4 border border-foreground/20 flex items-center justify-center",
+                                                  checked
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "bg-background",
+                                                )}
+                                              >
+                                                {checked && <Check size={12} />}
+                                              </span>
+                                              <span className="text-[10px] font-black uppercase text-muted-foreground">
+                                                {label}
+                                              </span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {(specItemSelections[gid] ?? []).length === 0 && (
+                                      <p className="text-[10px] text-destructive uppercase font-bold">
+                                        Select at least one item for this group
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Summary */}
+                      {selectedSummary.length > 0 && (
+                        <div className="space-y-2 border border-foreground/10 p-3 bg-muted/20 rounded-none">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                              Selection Summary
+                            </p>
+                            <Badge
+                              variant="secondary"
+                              className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                            >
+                              {selectedSummary.length} group
+                              {selectedSummary.length !== 1 ? "s" : ""}
+                            </Badge>
+                          </div>
+                          <div className="space-y-2">
+                            {selectedSummary.map((g) => (
+                              <div
+                                key={g.specGroupId}
+                                className="border border-foreground/10 bg-background p-2 rounded-none"
+                              >
+                                <p className="text-[10px] font-black uppercase mb-1">
+                                  {g.groupName}
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {g.specItems.map((it) => (
+                                    <Badge
+                                      key={it.id}
+                                      variant="outline"
+                                      className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                                    >
+                                      {it.name}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <Button
-                        onClick={handleSubmit}
+                        type="submit"
                         disabled={isSubmitLoading}
                         className="w-full rounded-none uppercase font-bold text-[10px] h-11 tracking-widest"
                       >
@@ -1046,233 +766,24 @@ export default function ProductFamiliesPage() {
                         ) : editId ? (
                           "Push Update"
                         ) : (
-                          "Save Category"
+                          "Create Product Family"
                         )}
                       </Button>
-                    </CardContent>
-                  )}
-
-                  {/* ══ TAB: PDF Bulk Upload ══ */}
-                  {activeTab === "bulk" && (
-                    <CardContent className="pt-5 space-y-5">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold leading-relaxed border border-dashed border-foreground/10 p-3 bg-muted/30">
-                        Drop AcroForm TDS PDFs below. Each file becomes a new
-                        ProductFamily named after its filename. SpecGroups &
-                        Specs are extracted and synced automatically —
-                        duplicates are skipped.
-                      </p>
-
-                      {/* PDF Dropzone */}
-                      <div
-                        {...pdfRoot()}
-                        className={cn(
-                          "flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-none cursor-pointer hover:bg-accent transition-colors",
-                          isPdfDragActive && "border-primary bg-primary/5",
-                        )}
-                      >
-                        <input {...pdfInput()} />
-                        <Upload
-                          size={22}
-                          className={cn(
-                            "mb-2 transition-colors",
-                            isPdfDragActive
-                              ? "text-primary"
-                              : "text-muted-foreground opacity-40",
-                          )}
-                        />
-                        <p className="text-[10px] font-bold uppercase tracking-tight">
-                          {isPdfDragActive
-                            ? "Release to add"
-                            : "Drop PDF Files Here"}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground/60 mt-1">
-                          .pdf only · Multiple files supported
-                        </p>
-                      </div>
-
-                      {/* File queue */}
-                      {fileStatuses.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-bold uppercase opacity-60">
-                              Queue — {fileStatuses.length} file
-                              {fileStatuses.length !== 1 ? "s" : ""}
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!isBulkProcessing)
-                                  setFileStatuses((p) =>
-                                    p.filter((f) => f.step !== "idle"),
-                                  );
-                              }}
-                              className="text-[8px] uppercase font-black text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              Clear idle
-                            </button>
-                          </div>
-
-                          <div className="space-y-1.5 max-h-[360px] overflow-y-auto pr-0.5">
-                            {fileStatuses.map((fs, idx) => (
-                              <div
-                                key={idx}
-                                className={cn(
-                                  "border border-foreground/10 rounded-none overflow-hidden",
-                                  fs.step === "done" &&
-                                    "border-emerald-500/30 bg-emerald-50/20 dark:bg-emerald-950/10",
-                                  fs.step === "error" &&
-                                    "border-destructive/30 bg-destructive/5",
-                                )}
-                              >
-                                {/* File row */}
-                                <div className="flex items-center gap-2 p-2.5">
-                                  <StepIcon step={fs.step} />
-
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-[10px] font-black uppercase truncate leading-tight">
-                                      {fs.title ||
-                                        fs.file.name.replace(/\.pdf$/i, "")}
-                                    </p>
-                                    <p className="text-[8px] text-muted-foreground uppercase">
-                                      {stepLabel(fs.step)}
-                                    </p>
-                                  </div>
-
-                                  <div className="flex items-center gap-1 flex-shrink-0">
-                                    {fs.logs.length > 0 && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          patchFile(idx, {
-                                            expanded: !fs.expanded,
-                                          })
-                                        }
-                                        className="text-muted-foreground hover:text-foreground transition-colors"
-                                      >
-                                        {fs.expanded ? (
-                                          <ChevronDown size={12} />
-                                        ) : (
-                                          <ChevronRight size={12} />
-                                        )}
-                                      </button>
-                                    )}
-                                    {fs.step === "idle" &&
-                                      !isBulkProcessing && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setFileStatuses((p) =>
-                                              p.filter((_, i) => i !== idx),
-                                            )
-                                          }
-                                          className="text-muted-foreground hover:text-destructive transition-colors"
-                                        >
-                                          <X size={11} />
-                                        </button>
-                                      )}
-                                  </div>
-                                </div>
-
-                                {/* Expandable log panel */}
-                                {fs.expanded && fs.logs.length > 0 && (
-                                  <div className="border-t border-foreground/5 bg-background/60 px-3 py-2 space-y-0.5 max-h-[140px] overflow-y-auto">
-                                    {fs.logs.map((entry, li) => (
-                                      <p
-                                        key={li}
-                                        className={cn(
-                                          "text-[8px] font-mono leading-relaxed",
-                                          logColor(entry.level),
-                                        )}
-                                      >
-                                        <span className="mr-1 opacity-60">
-                                          {logPrefix(entry.level)}
-                                        </span>
-                                        {entry.msg}
-                                      </p>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Summary badges */}
-                      {fileStatuses.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {(["idle", "done", "error"] as FileStep[]).map(
-                            (step) => {
-                              const count = fileStatuses.filter(
-                                (f) => f.step === step,
-                              ).length;
-                              if (count === 0) return null;
-                              return (
-                                <Badge
-                                  key={step}
-                                  variant="outline"
-                                  className={cn(
-                                    "rounded-none text-[8px] font-black uppercase px-2 h-5",
-                                    step === "done" &&
-                                      "border-emerald-500 text-emerald-600",
-                                    step === "error" &&
-                                      "border-destructive text-destructive",
-                                    step === "idle" && "text-muted-foreground",
-                                  )}
-                                >
-                                  {count} {step}
-                                </Badge>
-                              );
-                            },
-                          )}
-                        </div>
-                      )}
-
-                      {/* Process button */}
-                      <Button
-                        onClick={processBulkPdfs}
-                        disabled={pendingCount === 0 || isBulkProcessing}
-                        className="w-full rounded-none uppercase font-bold text-[10px] h-11 tracking-widest"
-                      >
-                        {isBulkProcessing ? (
-                          <>
-                            <Loader2 className="animate-spin h-3.5 w-3.5 mr-2" />
-                            Processing…
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="h-3.5 w-3.5 mr-2" />
-                            {pendingCount > 0
-                              ? `Process ${pendingCount} PDF${pendingCount !== 1 ? "s" : ""}`
-                              : "No PDFs Queued"}
-                          </>
-                        )}
-                      </Button>
-
-                      <p className="text-[8px] text-muted-foreground uppercase font-bold text-center opacity-60">
-                        Each PDF is uploaded to Cloudinary and saved as{" "}
-                        <span className="font-mono">tdsTemplate</span> on the
-                        ProductFamily document. The family title is taken from
-                        the filename, not the PDF contents.
-                      </p>
-                    </CardContent>
-                  )}
+                    </form>
+                  </CardContent>
                 </Card>
               </div>
 
               {/* ══════════════ LIST VIEW ══════════════ */}
               <div className="lg:col-span-8">
-                {/* Search & Filters */}
-                {!loading && categories.length > 0 && (
+                {!loadingFamilies && families.length > 0 && (
                   <div className="space-y-3 mb-6">
-                    <div>
-                      <Input
-                        placeholder="Search product families..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="rounded-none text-sm h-10"
-                      />
-                    </div>
+                    <Input
+                      placeholder="Search product families..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="rounded-none text-sm h-10"
+                    />
 
                     <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
                       <div className="flex gap-1 flex-wrap">
@@ -1289,35 +800,6 @@ export default function ProductFamiliesPage() {
                               : s.charAt(0).toUpperCase() + s.slice(1)}
                           </Button>
                         ))}
-                      </div>
-
-                      <div className="flex gap-1 flex-wrap">
-                        <Button
-                          variant={filterTds === "all" ? "default" : "outline"}
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterTds("all")}
-                        >
-                          All
-                        </Button>
-                        <Button
-                          variant={filterTds === "with" ? "default" : "outline"}
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterTds("with")}
-                        >
-                          With TDS
-                        </Button>
-                        <Button
-                          variant={
-                            filterTds === "without" ? "default" : "outline"
-                          }
-                          size="sm"
-                          className="rounded-none text-xs h-8"
-                          onClick={() => setFilterTds("without")}
-                        >
-                          Without TDS
-                        </Button>
                       </div>
 
                       <div className="flex gap-1 ml-auto">
@@ -1377,174 +859,179 @@ export default function ProductFamiliesPage() {
                             </Button>
                           </>
                         )}
-                        {!selectedIds.size && filteredCategories.length > 0 && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="rounded-none text-xs h-8"
-                            onClick={selectAll}
-                          >
-                            Select All ({filteredCategories.length})
-                          </Button>
-                        )}
                       </div>
                     </div>
 
                     <div className="text-xs text-muted-foreground">
-                      Showing {filteredCategories.length} of {categories.length}{" "}
-                      product families
+                      Showing {filteredFamilies.length} of {families.length} product
+                      families
                     </div>
                   </div>
                 )}
 
-                {loading ? (
+                {loadingFamilies ? (
                   <div className="flex justify-center py-20">
                     <Loader2 className="animate-spin text-primary" />
                   </div>
-                ) : filteredCategories.length === 0 ? (
+                ) : filteredFamilies.length === 0 ? (
                   <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
                     <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm">
                       <FolderPlus className="h-8 w-8 text-muted-foreground/40" />
                     </div>
                     <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
-                      {categories.length === 0
-                        ? "No Product Families"
-                        : "No Results"}
+                      {families.length === 0 ? "No Product Families" : "No Results"}
                     </h3>
                     <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
-                      {categories.length === 0
-                        ? "Your database is currently empty. Define a new category using the panel on the left or bulk-upload TDS PDFs."
+                      {families.length === 0
+                        ? "Your database is currently empty. Create a new product family using the panel on the left."
                         : "No product families match your search or filter criteria."}
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {filteredCategories.map((cat) => (
-                      <Card
-                        key={cat.id}
-                        className={cn(
-                          "rounded-none shadow-none group relative overflow-hidden border-foreground/10 transition-all",
-                          selectedIds.has(cat.id) &&
-                            "ring-2 ring-primary border-primary/50",
-                        )}
-                      >
-                        <div className="aspect-[4/3] relative bg-muted border-b overflow-hidden">
-                          <img
-                            src={cat.imageUrl || "/placeholder.png"}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                          />
-                          <div
-                            className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors"
-                            onClick={() => toggleSelect(cat.id)}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(cat.id)}
-                              onChange={() => {}}
-                              className="h-4 w-4 cursor-pointer"
+                    {filteredFamilies.map((f) => {
+                      const img = f.image || f.imageUrl || "/placeholder.png";
+                      const groupCount = Array.isArray(f.specs)
+                        ? f.specs.length
+                        : Array.isArray(f.specifications)
+                          ? f.specifications.length
+                          : 0;
+                      const itemCount = Array.isArray(f.specs)
+                        ? f.specs.reduce(
+                            (sum, g) => sum + (g.specItems?.length ?? 0),
+                            0,
+                          )
+                        : 0;
+
+                      return (
+                        <Card
+                          key={f.id}
+                          className={cn(
+                            "rounded-none shadow-none group relative overflow-hidden border-foreground/10 transition-all",
+                            selectedIds.has(f.id) && "ring-2 ring-primary border-primary/50",
+                          )}
+                        >
+                          <div className="aspect-4/3 relative bg-muted border-b overflow-hidden">
+                            <img
+                              src={img}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              alt={f.title ?? "Product family"}
                             />
-                          </div>
-
-                          <div className="absolute top-2 right-2 flex gap-1">
-                            <Button
-                              size="icon"
-                              variant="secondary"
-                              className="h-7 w-7 rounded-none shadow-sm"
-                              onClick={() => {
-                                setActiveTab("manual");
-                                setEditId(cat.id);
-                                setTitle(cat.title);
-                                setDescription(cat.description || "");
-                                setSelectedWebsites(cat.websites || []);
-                                setSelectedSpecs(cat.specifications || []);
-                                setPreviewUrl(cat.imageUrl);
-                                window.scrollTo({ top: 0, behavior: "smooth" });
-                              }}
+                            <div
+                              className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors"
+                              onClick={() => toggleSelect(f.id)}
                             >
-                              <Pencil size={12} />
-                            </Button>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(f.id)}
+                                onChange={() => {}}
+                                className="h-4 w-4 cursor-pointer"
+                              />
+                            </div>
 
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  size="icon"
-                                  variant="destructive"
-                                  className="h-7 w-7 rounded-none shadow-sm"
-                                >
-                                  <Trash2 size={12} />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent className="rounded-none">
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle className="text-sm font-bold uppercase">
-                                    Confirm Removal
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription className="text-xs">
-                                    Delete "{cat.title}"? This cannot be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel className="rounded-none text-xs">
-                                    Cancel
-                                  </AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="rounded-none bg-destructive text-xs"
-                                    onClick={() =>
-                                      deleteDoc(
-                                        doc(db, "productfamilies", cat.id),
-                                      )
+                            <div className="absolute top-2 right-2 flex gap-1">
+                              <Button
+                                size="icon"
+                                variant="secondary"
+                                className="h-7 w-7 rounded-none shadow-sm"
+                                onClick={() => {
+                                  setEditId(f.id);
+                                  setTitle(f.title ?? "");
+                                  setDescription(f.description ?? "");
+                                  setPreviewUrl(f.image ?? f.imageUrl ?? "");
+                                  setImageFile(null);
+
+                                  if (Array.isArray(f.specs) && f.specs.length > 0) {
+                                    const gids = f.specs.map((s) => s.specGroupId);
+                                    setSelectedSpecGroupIds(gids);
+                                    const nextSel: Record<string, string[]> = {};
+                                    for (const s of f.specs) {
+                                      nextSel[s.specGroupId] = (s.specItems ?? []).map(
+                                        (it) => it.id,
+                                      );
                                     }
+                                    setSpecItemSelections(nextSel);
+                                  } else if (
+                                    Array.isArray(f.specifications) &&
+                                    f.specifications.length > 0
+                                  ) {
+                                    setSelectedSpecGroupIds(f.specifications);
+                                    setSpecItemSelections({});
+                                  } else {
+                                    setSelectedSpecGroupIds([]);
+                                    setSpecItemSelections({});
+                                  }
+
+                                  window.scrollTo({ top: 0, behavior: "smooth" });
+                                }}
+                              >
+                                <Pencil size={12} />
+                              </Button>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="destructive"
+                                    className="h-7 w-7 rounded-none shadow-sm"
                                   >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                                    <Trash2 size={12} />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="rounded-none">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle className="text-sm font-bold uppercase">
+                                      Confirm Removal
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription className="text-xs">
+                                      Delete "{f.title}"? This cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="rounded-none text-xs">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="rounded-none bg-destructive text-xs"
+                                      onClick={() =>
+                                        deleteDoc(doc(db, "productfamilies", f.id))
+                                      }
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
                           </div>
 
-                          {cat.tdsTemplate && (
-                            <a
-                              href={cat.tdsTemplate}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute bottom-2 left-2"
-                            >
-                              <Badge className="rounded-none text-[7px] px-1.5 h-4 uppercase bg-amber-500 hover:bg-amber-600 text-white gap-1 cursor-pointer">
-                                <FileText size={8} />
-                                TDS
+                          <div className="p-3 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className="text-[11px] font-black uppercase truncate">
+                                {f.title || "Untitled"}
+                              </h3>
+                              <Badge
+                                variant={f.isActive ? "default" : "outline"}
+                                className="rounded-none text-[7px] px-1 h-4 uppercase"
+                              >
+                                {f.isActive ? "Live" : "Hidden"}
                               </Badge>
-                            </a>
-                          )}
-                        </div>
-
-                        <div className="p-3 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-[11px] font-black uppercase truncate">
-                              {cat.title}
-                            </h3>
-                            <Badge
-                              variant={cat.isActive ? "default" : "outline"}
-                              className="rounded-none text-[7px] px-1 h-4 uppercase"
-                            >
-                              {cat.isActive ? "Live" : "Hidden"}
-                            </Badge>
-                          </div>
-                          {cat.description && (
-                            <p className="text-[9px] text-muted-foreground uppercase line-clamp-1 italic">
-                              {cat.description}
-                            </p>
-                          )}
-                          {Array.isArray(cat.specifications) &&
-                            cat.specifications.length > 0 && (
-                              <p className="text-[8px] text-muted-foreground/60 uppercase font-bold">
-                                {cat.specifications.length} spec group
-                                {cat.specifications.length !== 1 ? "s" : ""}
+                            </div>
+                            {f.description && (
+                              <p className="text-[9px] text-muted-foreground uppercase line-clamp-1 italic">
+                                {f.description}
                               </p>
                             )}
-                        </div>
-                      </Card>
-                    ))}
+                            {groupCount > 0 && (
+                              <p className="text-[8px] text-muted-foreground/60 uppercase font-bold">
+                                {groupCount} spec group{groupCount !== 1 ? "s" : ""}
+                                {itemCount > 0 ? ` · ${itemCount} item${itemCount !== 1 ? "s" : ""}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1555,3 +1042,4 @@ export default function ProductFamiliesPage() {
     </TooltipProvider>
   );
 }
+

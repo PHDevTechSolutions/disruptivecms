@@ -560,9 +560,16 @@ async function upsertSpecGroup(
   return ref.id;
 }
 
+type FamilySpecItemsByGroupId = Record<string, Set<string>>;
+
+function buildSpecItemId(specGroupId: string, label: string) {
+  return `${specGroupId}:${label.toUpperCase().trim()}`;
+}
+
 async function upsertProductFamily(
   title: string,
   specGroupIds: string[],
+  specItemsByGroupId: FamilySpecItemsByGroupId = {},
 ): Promise<string> {
   const existingId = await findDoc("productfamilies", "title", title);
   if (existingId) {
@@ -570,20 +577,88 @@ async function upsertProductFamily(
       query(collection(db, "productfamilies"), where("title", "==", title)),
     );
     const existing = snap.docs[0];
-    const existingSpecs: string[] = existing.data().specifications ?? [];
-    const merged = Array.from(new Set([...existingSpecs, ...specGroupIds]));
+    const data = existing.data() as any;
+    const existingSpecs: string[] = data.specifications ?? [];
+    const mergedGroupIds = Array.from(
+      new Set<string>([...existingSpecs, ...specGroupIds]),
+    );
+
+    const existingSpecsArray: {
+      specGroupId: string;
+      specItems?: { id: string; name: string }[];
+    }[] = Array.isArray(data.specs) ? data.specs : [];
+
+    const specsMap = new Map<
+      string,
+      { specGroupId: string; specItems: { id: string; name: string }[] }
+    >();
+    for (const g of existingSpecsArray) {
+      specsMap.set(g.specGroupId, {
+        specGroupId: g.specGroupId,
+        specItems: Array.isArray(g.specItems) ? g.specItems : [],
+      });
+    }
+
+    for (const groupId of specGroupIds) {
+      const labelsSet = specItemsByGroupId[groupId];
+      if (!labelsSet || labelsSet.size === 0) continue;
+
+      const existingGroup = specsMap.get(groupId) ?? {
+        specGroupId: groupId,
+        specItems: [],
+      };
+      const existingItemIds = new Set(
+        existingGroup.specItems.map((it) => it.id),
+      );
+
+      for (const rawLabel of labelsSet) {
+        const label = rawLabel.toUpperCase().trim();
+        if (!label) continue;
+        const id = buildSpecItemId(groupId, label);
+        if (existingItemIds.has(id)) continue;
+        existingGroup.specItems.push({ id, name: label });
+        existingItemIds.add(id);
+      }
+
+      specsMap.set(groupId, existingGroup);
+    }
+
+    const nextSpecs = Array.from(specsMap.values());
+
     await updateDoc(doc(db, "productfamilies", existingId), {
-      specifications: merged,
+      specifications: mergedGroupIds,
+      specs: nextSpecs,
       updatedAt: serverTimestamp(),
     });
     return existingId;
   }
+
+  const specsArray: {
+    specGroupId: string;
+    specItems: { id: string; name: string }[];
+  }[] = [];
+  for (const groupId of specGroupIds) {
+    const labelsSet = specItemsByGroupId[groupId];
+    if (!labelsSet || labelsSet.size === 0) continue;
+    const items: { id: string; name: string }[] = [];
+    for (const rawLabel of labelsSet) {
+      const label = rawLabel.toUpperCase().trim();
+      if (!label) continue;
+      items.push({ id: buildSpecItemId(groupId, label), name: label });
+    }
+    if (items.length > 0) {
+      specsArray.push({ specGroupId: groupId, specItems: items });
+    }
+  }
+
   const ref = await addDoc(collection(db, "productfamilies"), {
     title,
     description: "",
+    image: "",
     imageUrl: "",
     isActive: true,
     specifications: specGroupIds,
+    specs: specsArray,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -602,6 +677,8 @@ async function upsertStandaloneSpecItem(label: string): Promise<void> {
 async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
   technicalSpecs: TechnicalSpec[];
   specGroupIds: string[];
+  specGroupIdByName: Record<string, string>;
+  familySpecItemsByGroupId: FamilySpecItemsByGroupId;
 }> {
   const grouped = new Map<string, { name: string; value: string }[]>();
   const ungrouped: { name: string; value: string }[] = [];
@@ -617,12 +694,21 @@ async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
   }
   const specGroupIds: string[] = [];
   const technicalSpecs: TechnicalSpec[] = [];
+  const specGroupIdByName: Record<string, string> = {};
+  const familySpecItemsByGroupId: FamilySpecItemsByGroupId = {};
   for (const [groupName, entries] of grouped.entries()) {
     const id = await upsertSpecGroup(
       groupName,
       entries.map((e) => e.name),
     );
     specGroupIds.push(id);
+    specGroupIdByName[groupName] = id;
+    if (!familySpecItemsByGroupId[id]) {
+      familySpecItemsByGroupId[id] = new Set();
+    }
+    entries.forEach((e) =>
+      familySpecItemsByGroupId[id].add(e.name.toUpperCase().trim()),
+    );
     technicalSpecs.push({ specGroup: groupName, specs: entries });
   }
   if (ungrouped.length > 0) {
@@ -633,9 +719,16 @@ async function resolveShopifySpecs(rawSpecs: RawSpec[]): Promise<{
       ungrouped.map((s) => s.name),
     );
     specGroupIds.push(id);
+    specGroupIdByName[UNGROUPED] = id;
+    if (!familySpecItemsByGroupId[id]) {
+      familySpecItemsByGroupId[id] = new Set();
+    }
+    ungrouped.forEach((s) =>
+      familySpecItemsByGroupId[id].add(s.name.toUpperCase().trim()),
+    );
     technicalSpecs.push({ specGroup: UNGROUPED, specs: ungrouped });
   }
-  return { technicalSpecs, specGroupIds };
+  return { technicalSpecs, specGroupIds, specGroupIdByName, familySpecItemsByGroupId };
 }
 
 async function normalizeShopifyProduct(
@@ -679,10 +772,14 @@ async function normalizeShopifyProduct(
   log(`  → Extracting specs...`);
   const rawSpecs = extractRawSpecs(product);
   log(`  → Resolving ${rawSpecs.length} spec(s)...`);
-  const { technicalSpecs, specGroupIds } = await resolveShopifySpecs(rawSpecs);
+  const {
+    technicalSpecs,
+    specGroupIds,
+    familySpecItemsByGroupId,
+  } = await resolveShopifySpecs(rawSpecs);
 
   log(`  → Upserting product family "${productFamily}"...`);
-  await upsertProductFamily(productFamily, specGroupIds);
+  await upsertProductFamily(productFamily, specGroupIds, familySpecItemsByGroupId);
 
   return {
     productClass: "" as const,
@@ -1220,14 +1317,16 @@ export default function BulkUploader({
     // ── Phase 1: Upsert spec groups ──────────────────────────────────────────
     const allSpecGroups: Record<string, Set<string>> = {};
     const familyToGroups: Record<string, Set<string>> = {};
+    const familySpecItems: Record<string, FamilySpecItemsByGroupId> = {};
 
     for (const p of allProducts) {
-      if (!familyToGroups[p.productFamily])
-        familyToGroups[p.productFamily] = new Set();
+      const familyTitle = p.productFamily;
+      if (!familyToGroups[familyTitle]) familyToGroups[familyTitle] = new Set();
+      if (!familySpecItems[familyTitle]) familySpecItems[familyTitle] = {};
       for (const [groupName, specEntries] of Object.entries(p.specs)) {
         if (!allSpecGroups[groupName]) allSpecGroups[groupName] = new Set();
         specEntries.forEach((e) => allSpecGroups[groupName].add(e.label));
-        familyToGroups[p.productFamily].add(groupName);
+        familyToGroups[familyTitle].add(groupName);
       }
     }
 
@@ -1255,8 +1354,21 @@ export default function BulkUploader({
       const specIds = Array.from(groupNames)
         .map((g) => specGroupIds[g])
         .filter(Boolean);
+      const byGroupId: FamilySpecItemsByGroupId = {};
+      const perFamily = familySpecItems[familyTitle] ?? {};
+      for (const groupName of groupNames) {
+        const gid = specGroupIds[groupName];
+        if (!gid) continue;
+        const labels = perFamily[groupName]
+          ? Array.from(perFamily[groupName])
+          : [];
+        if (!byGroupId[gid]) byGroupId[gid] = new Set();
+        labels.forEach((lbl) =>
+          byGroupId[gid].add(lbl.toUpperCase().trim()),
+        );
+      }
       try {
-        const id = await upsertProductFamily(familyTitle, specIds);
+        const id = await upsertProductFamily(familyTitle, specIds, byGroupId);
         addLog("info", `  ✓ Product family "${familyTitle}" → ${id}`);
       } catch (err: any) {
         addLog("err", `  ✗ Product family "${familyTitle}": ${err.message}`);

@@ -272,7 +272,7 @@ function TdsBadge({
   if (tdsStatus === "idle" && tdsTemplateUrl)
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-        <FileText className="h-3 w-3 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+        <FileText className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
         <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
           TDS template loaded
         </span>
@@ -281,7 +281,7 @@ function TdsBadge({
   if (tdsStatus === "loading-template")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-muted/50 border border-border">
-        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground flex-shrink-0" />
+        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
         <span className="text-[10px] font-medium text-muted-foreground">
           Loading TDS template…
         </span>
@@ -290,7 +290,7 @@ function TdsBadge({
   if (tdsStatus === "no-template")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-        <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
         <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
           No TDS template on this family
         </span>
@@ -299,7 +299,7 @@ function TdsBadge({
   if (tdsStatus === "generating")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-primary/5 border border-primary/20">
-        <Loader2 className="h-3 w-3 animate-spin text-primary flex-shrink-0" />
+        <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
         <span className="text-[10px] font-semibold text-primary">
           Filling TDS PDF…
         </span>
@@ -308,7 +308,7 @@ function TdsBadge({
   if (tdsStatus === "done")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
         <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
           TDS PDF generated
         </span>
@@ -317,7 +317,7 @@ function TdsBadge({
   if (tdsStatus === "error")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-destructive/10 border border-destructive/20">
-        <AlertCircle className="h-3 w-3 text-destructive flex-shrink-0" />
+        <AlertCircle className="h-3 w-3 text-destructive shrink-0" />
         <span className="text-[10px] font-medium text-destructive">
           TDS generation failed
         </span>
@@ -527,7 +527,7 @@ export default function AddNewProduct({
           doc(db, "productfamilies", selectedCatId),
         );
         if (cancelled) return;
-        const familyData = familySnap.exists() ? familySnap.data() : null;
+        const familyData = familySnap.exists() ? (familySnap.data() as any) : null;
         const templateUrl: string = familyData?.tdsTemplate ?? "";
         if (templateUrl) {
           setTdsTemplateUrl(templateUrl);
@@ -540,11 +540,17 @@ export default function AddNewProduct({
         // Store tdsSpecMapping for PDF generation — NOT used to filter the form
         setTdsSpecMapping(familyData?.tdsSpecMapping || {});
 
-        const specIds = new Set<string>(
-          Array.isArray(familyData?.specifications)
-            ? familyData!.specifications
-            : [],
-        );
+        const specIds = new Set<string>();
+        const familySpecs: { specGroupId: string; specItems?: { id: string; name: string }[] }[] =
+          Array.isArray(familyData?.specs) ? familyData.specs : [];
+
+        if (familySpecs.length > 0) {
+          familySpecs.forEach((g) => {
+            if (g.specGroupId) specIds.add(g.specGroupId);
+          });
+        } else if (Array.isArray(familyData?.specifications)) {
+          familyData.specifications.forEach((id: string) => specIds.add(id));
+        }
         if (specIds.size === 0) {
           if (!cancelled) {
             setAvailableSpecs([]);
@@ -553,22 +559,41 @@ export default function AddNewProduct({
           return;
         }
 
-        // Load ALL specs for this family — no filtering by tdsSpecMapping here.
-        // tdsSpecMapping is only applied during PDF generation in fillTdsPdf.
+        // Build per-group selected item names when the new specs array exists.
+        const allowedLabelsByGroup = new Map<string, Set<string>>();
+        familySpecs.forEach((g) => {
+          if (!g.specGroupId || !Array.isArray(g.specItems)) return;
+          const set = new Set<string>();
+          g.specItems.forEach((it) => {
+            if (it?.name) set.add(String(it.name).toUpperCase().trim());
+          });
+          if (set.size > 0) {
+            allowedLabelsByGroup.set(g.specGroupId, set);
+          }
+        });
+
+        // Load specs for this family. If specs array exists, restrict items to the
+        // selected specItems per group; otherwise fall back to all items.
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
             .forEach((d) => {
               const data = d.data();
+              const specGroupId = d.id;
+              const groupName = (data.name as string) || "Unnamed Group";
+              const allowedForGroup = allowedLabelsByGroup.get(specGroupId);
               (data.items || []).forEach((item: any) => {
-                if (item.label)
-                  items.push({
-                    id: `${d.id}-${item.label}`,
-                    label: item.label,
-                    specGroup: data.name || "Unnamed Group",
-                    specGroupId: d.id,
-                  });
+                const rawLabel = item.label;
+                if (!rawLabel) return;
+                const labelUpper = String(rawLabel).toUpperCase().trim();
+                if (allowedForGroup && !allowedForGroup.has(labelUpper)) return;
+                items.push({
+                  id: `${specGroupId}-${labelUpper}`,
+                  label: labelUpper,
+                  specGroup: groupName,
+                  specGroupId,
+                });
               });
             });
           if (!cancelled) {
@@ -1156,7 +1181,7 @@ export default function AddNewProduct({
           <Card className="border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20">
             <CardContent className="pt-6">
               <div className="flex items-start gap-3">
-                <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400 mt-0.5 flex-shrink-0" />
+                <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                     TDS PDF will be auto-generated on publish
@@ -1739,7 +1764,7 @@ export default function AddNewProduct({
             <CardContent>
               <div className="flex items-center justify-between gap-3 p-3 bg-white dark:bg-emerald-950/30 rounded-lg border border-emerald-200 dark:border-emerald-800">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex-shrink-0 w-8 h-8 bg-red-100 dark:bg-red-900/30 rounded-md flex items-center justify-center">
+                  <div className="shrink-0 w-8 h-8 bg-red-100 dark:bg-red-900/30 rounded-md flex items-center justify-center">
                     <FileText className="h-4 w-4 text-red-600 dark:text-red-400" />
                   </div>
                   <div className="min-w-0">
@@ -1758,7 +1783,7 @@ export default function AddNewProduct({
                   href={tdsUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex-shrink-0"
+                  className="shrink-0"
                 >
                   <Button
                     variant="outline"
@@ -1834,7 +1859,7 @@ export default function AddNewProduct({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  className="w-(--radix-popover-trigger-width) p-0"
                   align="start"
                 >
                   <Command>
@@ -1921,7 +1946,7 @@ export default function AddNewProduct({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  className="w-(--radix-popover-trigger-width) p-0"
                   align="start"
                 >
                   <Command>
@@ -1992,7 +2017,7 @@ export default function AddNewProduct({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  className="w-(--radix-popover-trigger-width) p-0"
                   align="start"
                 >
                   <Command>
@@ -2089,7 +2114,7 @@ export default function AddNewProduct({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                  className="w-(--radix-popover-trigger-width) p-0"
                   align="start"
                 >
                   <Command>
@@ -2293,7 +2318,7 @@ export default function AddNewProduct({
                         "Enter a meta description to see how it looks here."}
                     </p>
                   </div>
-                  <div className="w-[104px] h-[104px] flex-shrink-0 bg-muted/50 rounded-md overflow-hidden border">
+                  <div className="w-[104px] h-[104px] shrink-0 bg-muted/50 rounded-md overflow-hidden border">
                     {mainImage || existingMainImage ? (
                       <img
                         src={
