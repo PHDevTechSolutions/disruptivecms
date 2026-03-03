@@ -80,8 +80,8 @@ interface ParsedProduct {
   mainImageUrl: string;
   rawImageUrl: string;
   galleryImageUrls: string[];
-  dimensionDrawingUrl: string;
-  mountingHeightUrl: string;
+  dimensionalDrawingUrl: string;
+  recommendedMountingHeightUrl: string;
   driverCompatibilityUrl: string;
   baseImageUrl: string;
   illuminanceLevelUrl: string;
@@ -285,14 +285,20 @@ async function parseWorkbook(
     const ecoItemCode = g(3);
     const litItemCode = g(4);
 
-    // Validation: must have itemDescription AND at least one item code
+    // Validation: must have all three required fields
     if (!itemDescription) {
       warnings.push(`Row ${rowIdx + 3}: skipped — missing Item Description`);
       continue;
     }
-    if (!ecoItemCode && !litItemCode) {
+    if (!ecoItemCode) {
       warnings.push(
-        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing both ECO and LIT item codes`,
+        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing ECO Item Code`,
+      );
+      continue;
+    }
+    if (!litItemCode) {
+      warnings.push(
+        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing LIT Item Code`,
       );
       continue;
     }
@@ -319,8 +325,8 @@ async function parseWorkbook(
       mainImageUrl: g(7),
       rawImageUrl: g(6),
       galleryImageUrls: parseGalleryUrls(g(8)),
-      dimensionDrawingUrl: g(9),
-      mountingHeightUrl: g(10),
+      dimensionalDrawingUrl: g(9),
+      recommendedMountingHeightUrl: g(10),
       driverCompatibilityUrl: g(11),
       baseImageUrl: g(12),
       illuminanceLevelUrl: g(13),
@@ -654,8 +660,8 @@ async function normalizeShopifyProduct(
     rawImage,
     qrCodeImage: "",
     galleryImages,
-    dimensionDrawingImage: imageMatches.dimensionalDrawing || "",
-    mountingHeightImage: imageMatches.mountingHeight || "",
+    dimensionalDrawingImage: imageMatches.dimensionalDrawing || "",
+    recommendedMountingHeightImage: imageMatches.mountingHeight || "",
     driverCompatibilityImage: imageMatches.driverCompatibility || "",
     baseImage: imageMatches.base || "",
     illuminanceLevelImage: imageMatches.illuminanceLevel || "",
@@ -1234,7 +1240,7 @@ export default function BulkUploader({
       }
 
       const p = allProducts[i];
-      const displayCode = p.ecoItemCode || p.litItemCode;
+      const displayCode = `${p.ecoItemCode} / ${p.litItemCode}`;
       setCurrentItem(`${displayCode} — ${p.itemDescription}`);
 
       try {
@@ -1260,8 +1266,8 @@ export default function BulkUploader({
         const [
           mainImage,
           rawImage,
-          dimensionDrawingImage,
-          mountingHeightImage,
+          dimensionalDrawingImage,
+          recommendedMountingHeightImage,
           driverCompatibilityImage,
           baseImage,
           illuminanceLevelImage,
@@ -1275,8 +1281,8 @@ export default function BulkUploader({
           [
             p.mainImageUrl,
             p.rawImageUrl,
-            p.dimensionDrawingUrl,
-            p.mountingHeightUrl,
+            p.dimensionalDrawingUrl,
+            p.recommendedMountingHeightUrl,
             p.driverCompatibilityUrl,
             p.baseImageUrl,
             p.illuminanceLevelUrl,
@@ -1299,9 +1305,7 @@ export default function BulkUploader({
         );
 
         // ── Build slug ───────────────────────────────────────────────────────
-        const slug = (p.ecoItemCode || p.litItemCode)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-");
+        const slug = p.ecoItemCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
         // ── Save product document ────────────────────────────────────────────
         const docRef = await addDoc(collection(db, "products"), {
@@ -1318,8 +1322,8 @@ export default function BulkUploader({
           rawImage: rawImage || "",
           qrCodeImage: "",
           galleryImages: galleryUploaded.filter(Boolean),
-          dimensionDrawingImage: dimensionDrawingImage || "",
-          mountingHeightImage: mountingHeightImage || "",
+          dimensionalDrawingImage: dimensionalDrawingImage || "",
+          recommendedMountingHeightImage: recommendedMountingHeightImage || "",
           driverCompatibilityImage: driverCompatibilityImage || "",
           baseImage: baseImage || "",
           illuminanceLevelImage: illuminanceLevelImage || "",
@@ -1366,8 +1370,8 @@ export default function BulkUploader({
               brand: "",
               technicalSpecs,
               mainImageUrl: mainImage || undefined,
-              dimensionDrawingUrl: dimensionDrawingImage || undefined,
-              mountingHeightUrl: mountingHeightImage || undefined,
+              dimensionDrawingUrl: dimensionalDrawingImage || undefined,
+              mountingHeightUrl: recommendedMountingHeightImage || undefined,
               driverCompatibilityUrl: driverCompatibilityImage || undefined,
               baseImageUrl: baseImage || undefined,
               illuminanceLevelUrl: illuminanceLevelImage || undefined,
@@ -1822,9 +1826,9 @@ export default function BulkUploader({
                           "A — Product Usage (INDOOR/OUTDOOR/SOLAR)",
                           "B — Product Family",
                           "C — Product Class (spf/standard)",
-                          "D — ECO Item Code ✱",
-                          "E — LIT Item Code ✱",
-                          "F — Item Description ✱",
+                          "D — ECO Item Code ✱ (required)",
+                          "E — LIT Item Code ✱ (required)",
+                          "F — Item Description ✱ (required)",
                           "G — Raw Image URL",
                           "H — Main Image URL",
                           "I — Gallery URLs (comma-sep)",
@@ -1837,7 +1841,8 @@ export default function BulkUploader({
                           </div>
                         ))}
                         <p className="text-[10px] text-muted-foreground mt-1">
-                          ✱ Required: Item Description + at least one item code
+                          ✱ All three are required — rows missing any will be
+                          skipped with a warning
                         </p>
                       </div>
                       <div className="rounded-lg border p-3 space-y-1.5 bg-card">
@@ -1850,7 +1855,7 @@ export default function BulkUploader({
                           "Spec groups upserted from Row 2 headers",
                           "Product families created/updated",
                           "TDS PDF generated if family has template",
-                          "Duplicate check: ecoItemCode + litItemCode",
+                          "Duplicate check: ecoItemCode AND litItemCode",
                           "Missing fields gracefully ignored",
                         ].map((c) => (
                           <div key={c} className="flex items-start gap-1.5">
