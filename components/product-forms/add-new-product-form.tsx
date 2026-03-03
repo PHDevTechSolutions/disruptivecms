@@ -362,6 +362,7 @@ export default function AddNewProduct({
   );
 
   const [availableSpecs, setAvailableSpecs] = useState<SpecItem[]>([]);
+  const [allSpecs, setAllSpecs] = useState<SpecItem[]>([]); // Store all specs for matching when loading values
   const [specsLoading, setSpecsLoading] = useState(false);
   const [availableCats, setAvailableCats] = useState<MasterItem[]>([]);
   const [availableBrands, setAvailableBrands] = useState<MasterItem[]>([]);
@@ -554,13 +555,27 @@ export default function AddNewProduct({
         const tdsSpecMapping: Record<string, string[]> = familyData?.tdsSpecMapping || {};
 
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
-          const items: SpecItem[] = [];
+          const allItems: SpecItem[] = [];
+          const filteredItems: SpecItem[] = [];
+          
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
             .forEach((d) => {
               const data = d.data();
               const groupId = d.id;
-              // Filter items based on TDS spec mapping if it exists
+              
+              // Always add all items to allItems for matching saved values
+              (data.items || []).forEach((item: any) => {
+                if (item.label)
+                  allItems.push({
+                    id: `${d.id}-${item.label}`,
+                    label: item.label,
+                    specGroup: data.name || "Unnamed Group",
+                    specGroupId: d.id,
+                  });
+              });
+              
+              // Filter items based on TDS spec mapping for display
               const allowedLabels = tdsSpecMapping[groupId];
               const itemsToShow = allowedLabels
                 ? (data.items || []).filter((item: any) => allowedLabels.includes(item.label))
@@ -568,7 +583,7 @@ export default function AddNewProduct({
 
               (itemsToShow).forEach((item: any) => {
                 if (item.label)
-                  items.push({
+                  filteredItems.push({
                     id: `${d.id}-${item.label}`,
                     label: item.label,
                     specGroup: data.name || "Unnamed Group",
@@ -576,7 +591,9 @@ export default function AddNewProduct({
                   });
               });
             });
-          setAvailableSpecs(items);
+          
+          setAllSpecs(allItems);
+          setAvailableSpecs(filteredItems);
           setSpecsLoading(false);
         });
       } catch (e) {
@@ -634,20 +651,21 @@ export default function AddNewProduct({
   }, [editData]);
 
   useEffect(() => {
-    if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
+    if (!editData || !editData.technicalSpecs || allSpecs.length === 0)
       return;
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
-        let item = availableSpecs.find(
+        // Use allSpecs to match values, even if specs are filtered by TDS
+        let item = allSpecs.find(
           (s) => s.label === spec.name && s.specGroup === group.specGroup,
         );
-        if (!item) item = availableSpecs.find((s) => s.label === spec.name);
+        if (!item) item = allSpecs.find((s) => s.label === spec.name);
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
     setSpecValues(values);
-  }, [editData, availableSpecs]);
+  }, [editData, allSpecs]);
 
   useEffect(() => {
     if (editData && availableCats.length > 0 && !selectedCatId) {
