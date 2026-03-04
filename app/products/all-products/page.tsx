@@ -36,6 +36,8 @@ import {
   AlertCircle,
   CircleDashed,
   ShoppingBag,
+  Download,
+  ExternalLink,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -109,8 +111,15 @@ import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
-import { generateTdsPdf, type FamilyMeta } from "@/lib/fillTdsPdf";
-import { uploadToCloudinary } from "@/lib/cloudinary";
+
+// ─── Updated: use new unified tdsGenerator API (matches bulk-uploader) ────────
+import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
+
+// ─── Cloudinary constants (same as bulk-uploader) ────────────────────────────
+const CLOUDINARY_CLOUD_NAME =
+  process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
+const CLOUDINARY_UPLOAD_PRESET =
+  process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? "taskflow_preset";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -147,6 +156,22 @@ interface TdsJob {
   productName: string;
   status: TdsJobStatus;
   error?: string;
+}
+
+// ─── Download helper (fetch-blob — works cross-origin with Cloudinary) ────────
+
+async function downloadPdf(url: string, filename: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
 }
 
 // ─── Schema builder (shared by Taskflow & Shopify transforms) ─────────────────
@@ -216,7 +241,6 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Website values that trigger a schema transform on bulk-assign. */
 const SCHEMA_TRANSFORM_WEBSITES = new Set(["Taskflow", "Shopify"]);
 
 const WEBSITE_OPTIONS = [
@@ -337,9 +361,27 @@ function TdsPreviewDialog({
   onOpenChange: (v: boolean) => void;
   product: Product | null;
 }) {
+  const [downloading, setDownloading] = React.useState(false);
+
   if (!product) return null;
+
   const tdsUrl = product.tdsFileUrl;
   const productName = product.itemDescription || product.name || "Product";
+  const filename = `${productName}_TDS.pdf`;
+
+  const handleDownload = async () => {
+    if (!tdsUrl) return;
+    setDownloading(true);
+    try {
+      await downloadPdf(tdsUrl, filename);
+      toast.success(`${filename} downloaded.`);
+    } catch (err) {
+      console.error("TDS download failed:", err);
+      toast.error("Download failed — try the View button to open it directly.");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -351,31 +393,48 @@ function TdsPreviewDialog({
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-sm font-semibold truncate">
-                {productName}_TDS.pdf
+                {filename}
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5 truncate">
                 Technical Data Sheet · Auto-generated
               </DialogDescription>
             </div>
             {tdsUrl && (
-              <a
-                href={tdsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 text-xs shrink-0"
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={tdsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <FileText className="h-3.5 w-3.5" />
-                  Open in new tab
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-xs h-8"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </Button>
+                </a>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5 text-xs h-8"
+                  onClick={handleDownload}
+                  disabled={downloading}
+                >
+                  {downloading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  {downloading ? "Downloading…" : "Download PDF"}
                 </Button>
-              </a>
+              </div>
             )}
           </div>
         </DialogHeader>
+
         <div className="flex-1 overflow-hidden bg-muted/30">
           {tdsUrl ? (
             <iframe
@@ -391,8 +450,9 @@ function TdsPreviewDialog({
               <div className="text-center space-y-1">
                 <p className="text-sm font-semibold">No TDS file available</p>
                 <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-                  This product doesn't have a Technical Data Sheet yet. Save or
-                  update the product to auto-generate one.
+                  This product doesn't have a Technical Data Sheet yet. Use
+                  "Generate TDS" to create one, or save the product from the
+                  edit form.
                 </p>
               </div>
             </div>
@@ -493,7 +553,7 @@ function BulkGenerateTdsDialog({
               >
                 {job.productName}
               </span>
-              <span className="text-[10px] text-muted-foreground shrink-0 max-w-[140px] truncate text-right">
+              <span className="text-[10px] text-muted-foreground shrink-0 max-w-35 truncate text-right">
                 {job.status === "pending" && "Queued"}
                 {job.status === "generating" && "Generating…"}
                 {job.status === "done" && "Done"}
@@ -594,7 +654,6 @@ function AssignToWebsiteDialog({
     }
   };
 
-  // Which transform-tagged sites are currently selected
   const selectedTransformSites = selectedWebsites.filter((w) =>
     SCHEMA_TRANSFORM_WEBSITES.has(w),
   );
@@ -655,7 +714,6 @@ function AssignToWebsiteDialog({
           })}
         </div>
 
-        {/* Schema transform notice — shown when Taskflow and/or Shopify selected */}
         {selectedTransformSites.length > 0 && (
           <div className="space-y-2">
             {selectedTransformSites.includes("Taskflow") && (
@@ -1242,7 +1300,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk assign to website (includes optional schema transform) ───────────
+  // ── Bulk assign to website ────────────────────────────────────────────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
@@ -1269,7 +1327,6 @@ export default function AllProductsPage() {
             updatedAt: serverTimestamp(),
           });
 
-          // Apply schema transform for any transform-tagged websites
           if (transformSites.length > 0) {
             const transformedData = buildTransformedProduct(product, websites);
             batch.set(doc(db, "products", product.id), transformedData, {
@@ -1294,7 +1351,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk assign to Shopify (dedicated handler) ────────────────────────────
+  // ── Bulk assign to Shopify ────────────────────────────────────────────────
   const handleBulkAssignShopify = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
@@ -1318,7 +1375,6 @@ export default function AllProductsPage() {
             updatedAt: serverTimestamp(),
           });
 
-          // Apply same schema transform as Taskflow
           const transformedData = buildTransformedProduct(product, ["Shopify"]);
           batch.set(doc(db, "products", product.id), transformedData, {
             merge: true,
@@ -1416,18 +1472,20 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
+  // ── Updated: uses new generateTdsPdf + uploadTdsPdf API (matches bulk-uploader) ──
   const handleStartBulkTds = async () => {
     setIsTdsRunning(true);
+
     const productMap = new Map<string, Product>(
       table
         .getFilteredSelectedRowModel()
         .rows.map((r) => [r.original.id, r.original]),
     );
-    const templateCache = new Map<string, FamilyMeta>();
 
     for (let i = 0; i < tdsJobs.length; i++) {
       const job = tdsJobs[i];
       const product = productMap.get(job.productId);
+
       setTdsJobs((prev) =>
         prev.map((j) =>
           j.productId === job.productId ? { ...j, status: "generating" } : j,
@@ -1436,32 +1494,47 @@ export default function AllProductsPage() {
 
       try {
         if (!product) throw new Error("Product not found in selection");
-        const brand = Array.isArray(product.brands)
-          ? (product.brands[0] ?? "")
-          : Array.isArray(product.brand)
-            ? ((product.brand as string[])[0] ?? "")
-            : ((product.brand as string) ?? "");
-        const productFamilyName =
-          product.productFamily || (product.categories as string) || "";
-        const tdsUrl = await generateTdsPdf(
-          {
-            itemDescription: product.itemDescription || product.name || "",
-            litItemCode: product.litItemCode,
-            ecoItemCode: product.ecoItemCode,
-            brand,
-            productFamilyName,
-            technicalSpecs: product.technicalSpecs ?? [],
-          },
-          {
-            mainImageUrl: product.mainImage || undefined,
-            cloudinaryUploadFn: uploadToCloudinary,
-          },
-          templateCache,
-        );
-        await updateDoc(doc(db, "products", product.id), {
-          tdsFileUrl: tdsUrl,
-          updatedAt: serverTimestamp(),
+
+        const itemDescription = product.itemDescription || product.name || "";
+        const technicalSpecs = product.technicalSpecs ?? [];
+
+        // ── Step 1: generate PDF blob using new single-arg API ─────────────
+        const tdsBlob = await generateTdsPdf({
+          itemDescription,
+          litItemCode: product.litItemCode,
+          technicalSpecs,
+          mainImageUrl:
+            product.mainImage ||
+            (Array.isArray(product.rawImage)
+              ? product.rawImage[0]
+              : (product.rawImage as unknown as string)) ||
+            undefined,
+          // dimensionalDrawingUrl + illuminanceLevelUrl from product doc if stored
+          dimensionalDrawingUrl:
+            (product as any).dimensionDrawingImage ||
+            (product as any).dimensionalDrawingImage ||
+            undefined,
+          illuminanceLevelUrl:
+            (product as any).illuminanceLevelImage || undefined,
         });
+
+        // ── Step 2: upload blob to Cloudinary ──────────────────────────────
+        const filename = `${itemDescription}_TDS.pdf`;
+        const tdsUrl = await uploadTdsPdf(
+          tdsBlob,
+          filename,
+          CLOUDINARY_CLOUD_NAME,
+          CLOUDINARY_UPLOAD_PRESET,
+        );
+
+        // ── Step 3: persist URL to Firestore ──────────────────────────────
+        if (tdsUrl.startsWith("http")) {
+          await updateDoc(doc(db, "products", product.id), {
+            tdsFileUrl: tdsUrl,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
         setTdsJobs((prev) =>
           prev.map((j) =>
             j.productId === job.productId ? { ...j, status: "done" } : j,
@@ -1484,6 +1557,7 @@ export default function AllProductsPage() {
     }
 
     setIsTdsRunning(false);
+
     await logAuditEvent({
       action: "update",
       entityType: "product",
@@ -1603,7 +1677,7 @@ export default function AllProductsPage() {
         const family =
           row.original.productFamily || (row.original.categories as string);
         return (
-          <div className="flex flex-col max-w-[260px]">
+          <div className="flex flex-col max-w-65">
             <span className="font-semibold text-sm line-clamp-2 leading-snug">
               {desc || fallback || "—"}
             </span>
@@ -1708,7 +1782,7 @@ export default function AllProductsPage() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                {hasTds ? "Preview TDS" : "No TDS available"}
+                {hasTds ? "View / Download TDS" : "No TDS available"}
               </TooltipContent>
             </Tooltip>
             <Tooltip>
@@ -1854,25 +1928,6 @@ export default function AllProductsPage() {
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
           <Button
-            variant="outline"
-            onClick={() => setAssignWebsiteOpen(true)}
-            disabled={selectedCount === 0}
-            className="gap-2"
-            title={
-              selectedCount === 0
-                ? "Select products first"
-                : `Assign ${selectedCount} product${selectedCount !== 1 ? "s" : ""} to a website`
-            }
-          >
-            <Globe className="h-4 w-4" />
-            Assign to Website
-            {selectedCount > 0 && (
-              <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] font-bold">
-                {selectedCount}
-              </Badge>
-            )}
-          </Button>
-          <Button
             onClick={() => {
               setSelectedProduct(null);
               setIsEditing(true);
@@ -1919,16 +1974,6 @@ export default function AllProductsPage() {
             >
               <Globe className="h-4 w-4" />
               Assign to Website
-            </Button>
-            {/* ── Shopify shortcut ── */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 border-green-300 text-green-700 hover:bg-green-50"
-              onClick={() => setAssignShopifyOpen(true)}
-            >
-              <ShoppingBag className="h-4 w-4" />
-              Assign to Shopify
             </Button>
             <Button
               variant="outline"
@@ -2322,7 +2367,7 @@ export default function AllProductsPage() {
           </SidebarInset>
         </SidebarProvider>
 
-        {/* Dialogs */}
+        {/* ── Dialogs ── */}
         <TdsPreviewDialog
           open={!!tdsPreviewProduct}
           onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
@@ -2363,7 +2408,6 @@ export default function AllProductsPage() {
           onConfirm={handleBulkAssignWebsite}
         />
 
-        {/* Dedicated Shopify assign dialog */}
         <AssignToShopifyDialog
           open={assignShopifyOpen}
           onOpenChange={setAssignShopifyOpen}

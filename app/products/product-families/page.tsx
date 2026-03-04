@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useDropzone } from "react-dropzone";
 import { db } from "@/lib/firebase";
 import {
@@ -76,6 +76,12 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+
+// ─── TDS lib ──────────────────────────────────────────────────────────────────
+import {
+  generateTdsTemplatePdf,
+  uploadTdsPdf,
+} from "@/lib/tdsGenerator";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -159,7 +165,9 @@ export default function ProductFamiliesPage() {
 
   // ── List search/filter/selection ──────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
+  const [filterStatus, setFilterStatus] = useState<
+    "all" | "active" | "inactive"
+  >("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
@@ -175,15 +183,26 @@ export default function ProductFamiliesPage() {
   const [previewUrl, setPreviewUrl] = useState("");
 
   const [openSpecGroups, setOpenSpecGroups] = useState(false);
-  const [selectedSpecGroupIds, setSelectedSpecGroupIds] = useState<string[]>([]);
-  const [specItemSelections, setSpecItemSelections] = useState<Record<string, string[]>>({});
-  const [specItemSearch, setSpecItemSearch] = useState<Record<string, string>>({});
+  const [selectedSpecGroupIds, setSelectedSpecGroupIds] = useState<string[]>(
+    [],
+  );
+  const [specItemSelections, setSpecItemSelections] = useState<
+    Record<string, string[]>
+  >({});
+  const [specItemSearch, setSpecItemSearch] = useState<Record<string, string>>(
+    {},
+  );
 
   // ── Firestore listeners ───────────────────────────────────────────────────
   useEffect(() => {
-    const q = query(collection(db, "productfamilies"), orderBy("createdAt", "desc"));
+    const q = query(
+      collection(db, "productfamilies"),
+      orderBy("createdAt", "desc"),
+    );
     return onSnapshot(q, (snap) => {
-      setFamilies(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      setFamilies(
+        snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
+      );
       setLoadingFamilies(false);
     });
   }, []);
@@ -191,7 +210,9 @@ export default function ProductFamiliesPage() {
   useEffect(() => {
     const q = query(collection(db, "specs"), orderBy("createdAt", "desc"));
     return onSnapshot(q, (snap) => {
-      setSpecGroups(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      setSpecGroups(
+        snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
+      );
     });
   }, []);
 
@@ -220,10 +241,13 @@ export default function ProductFamiliesPage() {
         const labels = (group?.items ?? [])
           .map((i) => i.label)
           .filter(Boolean)
-          .map((l) => l.toUpperCase().trim());
+          .map((l) => l.toUpperCase().trim()); // ALL CAPS
         const chosenItemIds = new Set(specItemSelections[specGroupId] ?? []);
         const chosenItems: SpecItemRef[] = labels
-          .map((label) => ({ id: buildSpecItemId(specGroupId, label), name: label }))
+          .map((label) => ({
+            id: buildSpecItemId(specGroupId, label),
+            name: label, // already ALL CAPS
+          }))
           .filter((item) => chosenItemIds.has(item.id));
         return { specGroupId, specItems: chosenItems };
       })
@@ -266,7 +290,9 @@ export default function ProductFamiliesPage() {
     setIsBulkDeleting(true);
     try {
       await Promise.all(
-        Array.from(selectedIds).map((id) => deleteDoc(doc(db, "productfamilies", id))),
+        Array.from(selectedIds).map((id) =>
+          deleteDoc(doc(db, "productfamilies", id)),
+        ),
       );
       toast.success(`Deleted ${selectedIds.size} product families`);
       setSelectedIds(new Set());
@@ -306,9 +332,12 @@ export default function ProductFamiliesPage() {
     const labels = (group?.items ?? [])
       .map((i) => i.label)
       .filter(Boolean)
-      .map((l) => l.toUpperCase().trim());
+      .map((l) => l.toUpperCase().trim()); // ALL CAPS
     const ids = labels.map((label) => buildSpecItemId(specGroupId, label));
-    setSpecItemSelections((prev) => ({ ...prev, [specGroupId]: on ? ids : [] }));
+    setSpecItemSelections((prev) => ({
+      ...prev,
+      [specGroupId]: on ? ids : [],
+    }));
   };
 
   const validate = (): { ok: boolean; message?: string } => {
@@ -319,7 +348,10 @@ export default function ProductFamiliesPage() {
       const chosen = specItemSelections[gid] ?? [];
       if (chosen.length === 0) {
         const name = specGroupById.get(gid)?.name ?? "Spec Group";
-        return { ok: false, message: `Select at least one spec item for "${name}"` };
+        return {
+          ok: false,
+          message: `Select at least one spec item for "${name}"`,
+        };
       }
     }
     return { ok: true };
@@ -332,6 +364,7 @@ export default function ProductFamiliesPage() {
 
     setIsSubmitLoading(true);
     try {
+      // ── Upload image ──────────────────────────────────────────────────────
       let finalImageUrl = previewUrl;
       if (imageFile) {
         const fd = new FormData();
@@ -345,27 +378,81 @@ export default function ProductFamiliesPage() {
         finalImageUrl = json?.secure_url ?? "";
       }
 
+      // ── Normalise title to ALL CAPS ───────────────────────────────────────
+      const normalisedTitle = title.trim().toUpperCase();
+
       const payload: any = {
-        title: title.trim(),
+        title: normalisedTitle,
         specs: selectedSpecsForSave,
-        productUsage,              // ← NEW field persisted to Firestore
+        productUsage,
         updatedAt: serverTimestamp(),
       };
       const desc = description.trim();
-      if (desc) payload.description = desc;
+      if (desc) payload.description = desc.toUpperCase();
       if (finalImageUrl) payload.image = finalImageUrl;
 
+      // ── Save / update productFamily document ──────────────────────────────
+      let familyDocId: string = editId ?? "";
       if (editId) {
         await updateDoc(doc(db, "productfamilies", editId), payload);
-        toast.success("Product family updated");
       } else {
-        await addDoc(collection(db, "productfamilies"), {
+        const ref = await addDoc(collection(db, "productfamilies"), {
           ...payload,
           isActive: true,
           createdAt: serverTimestamp(),
         });
-        toast.success("Product family created");
+        familyDocId = ref.id;
       }
+
+      // ── Generate & save TDS template PDF ─────────────────────────────────
+      try {
+        // Build spec groups for the template using ALL CAPS labels
+        const specGroupsForTemplate = selectedSpecGroupIds
+          .map((gid) => {
+            const group = specGroupById.get(gid);
+            const selectedItemIds = new Set(specItemSelections[gid] ?? []);
+            const items = (group?.items ?? [])
+              .map((i) => ({
+                label: (i.label ?? "").toUpperCase().trim(),
+              }))
+              .filter((i) => {
+                if (!i.label) return false;
+                const id = buildSpecItemId(gid, i.label);
+                return selectedItemIds.has(id);
+              });
+            return {
+              name: (group?.name ?? "").toUpperCase().trim(),
+              items,
+            };
+          })
+          .filter((g) => g.items.length > 0);
+
+        if (specGroupsForTemplate.length > 0) {
+          toast.loading("Generating TDS template…", {
+            id: "tds-template",
+          });
+          const blob = await generateTdsTemplatePdf({
+            specGroups: specGroupsForTemplate,
+          });
+          const tplUrl = await uploadTdsPdf(
+            blob,
+            `${normalisedTitle}_TEMPLATE.pdf`,
+            CLOUDINARY_CLOUD_NAME,
+            CLOUDINARY_UPLOAD_PRESET,
+          );
+          await updateDoc(doc(db, "productfamilies", familyDocId), {
+            tdsTemplate: tplUrl,
+            updatedAt: serverTimestamp(),
+          });
+          toast.dismiss("tds-template");
+        }
+      } catch (tplErr: any) {
+        toast.dismiss("tds-template");
+        console.warn("TDS template generation failed:", tplErr);
+        // Non-fatal — family was still saved
+      }
+
+      toast.success(editId ? "Product family updated" : "Product family created");
       resetForm();
     } catch {
       toast.error("Error processing request");
@@ -378,7 +465,11 @@ export default function ProductFamiliesPage() {
     return selectedSpecsForSave
       .map((g) => {
         const group = specGroupById.get(g.specGroupId);
-        return { specGroupId: g.specGroupId, groupName: group?.name ?? g.specGroupId, specItems: g.specItems };
+        return {
+          specGroupId: g.specGroupId,
+          groupName: group?.name ?? g.specGroupId,
+          specItems: g.specItems,
+        };
       })
       .filter((g) => g.specItems.length > 0);
   }, [selectedSpecsForSave, specGroupById]);
@@ -408,9 +499,12 @@ export default function ProductFamiliesPage() {
 
           <main className="flex flex-1 flex-col gap-6 p-4 md:p-8">
             <div className="space-y-1">
-              <h1 className="text-2xl font-semibold tracking-tight">Product Families</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                Product Families
+              </h1>
               <p className="text-sm text-muted-foreground">
-                Create and manage product families and their specs.
+                Create and manage product families and their specs. A blank TDS
+                template PDF is auto-generated on each save.
               </p>
             </div>
 
@@ -421,7 +515,9 @@ export default function ProductFamiliesPage() {
                   <CardHeader className="border-b">
                     <div className="flex items-center justify-between gap-3">
                       <CardTitle className="text-xs font-black uppercase tracking-widest">
-                        {editId ? "Edit Product Family" : "Add Product Family"}
+                        {editId
+                          ? "Edit Product Family"
+                          : "Add Product Family"}
                       </CardTitle>
                       {editId && (
                         <Button
@@ -438,7 +534,6 @@ export default function ProductFamiliesPage() {
 
                   <CardContent className="pt-5 space-y-5">
                     <form onSubmit={handleSubmit} className="space-y-5">
-
                       {/* Title */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
@@ -446,32 +541,43 @@ export default function ProductFamiliesPage() {
                         </label>
                         <Input
                           value={title}
-                          onChange={(e) => setTitle(e.target.value)}
+                          onChange={(e) =>
+                            setTitle(e.target.value.toUpperCase())
+                          }
                           placeholder="E.G. RECESSED LIGHTS"
-                          className={cn("rounded-none h-10 text-xs", !title.trim() && "border-destructive/40")}
+                          className={cn(
+                            "rounded-none h-10 text-xs uppercase",
+                            !title.trim() && "border-destructive/40",
+                          )}
                         />
                         {!title.trim() && (
-                          <p className="text-[10px] text-destructive font-bold uppercase">Title is required</p>
+                          <p className="text-[10px] text-destructive font-bold uppercase">
+                            Title is required
+                          </p>
                         )}
                       </div>
 
                       {/* Description */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Description <span className="opacity-60">(optional)</span>
+                          Description{" "}
+                          <span className="opacity-60">(optional)</span>
                         </label>
                         <Textarea
                           value={description}
-                          onChange={(e) => setDescription(e.target.value)}
-                          placeholder="Enter overview…"
-                          className="rounded-none min-h-[80px] text-xs resize-none"
+                          onChange={(e) =>
+                            setDescription(e.target.value.toUpperCase())
+                          }
+                          placeholder="ENTER OVERVIEW…"
+                          className="rounded-none min-h-20 text-xs resize-none uppercase"
                         />
                       </div>
 
-                      {/* ── Product Usage (NEW) ── */}
+                      {/* Product Usage */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Product Usage <span className="opacity-60">(optional)</span>
+                          Product Usage{" "}
+                          <span className="opacity-60">(optional)</span>
                         </label>
                         <div className="flex gap-1.5 flex-wrap">
                           {PRODUCT_USAGE_OPTIONS.map((u) => (
@@ -481,7 +587,9 @@ export default function ProductFamiliesPage() {
                               active={productUsage.includes(u)}
                               onClick={() =>
                                 setProductUsage((p) =>
-                                  p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
+                                  p.includes(u)
+                                    ? p.filter((v) => v !== u)
+                                    : [...p, u],
                                 )
                               }
                             />
@@ -489,7 +597,8 @@ export default function ProductFamiliesPage() {
                         </div>
                         {productUsage.length === 0 && (
                           <p className="text-[9px] text-muted-foreground uppercase font-bold">
-                            Tagging usage helps filter families in the product form
+                            Tagging usage helps filter families in the product
+                            form
                           </p>
                         )}
                       </div>
@@ -502,28 +611,41 @@ export default function ProductFamiliesPage() {
                         <div
                           {...getRootProps()}
                           className={cn(
-                            "flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-none cursor-pointer hover:bg-accent transition-colors min-h-[120px]",
+                            "flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-none cursor-pointer hover:bg-accent transition-colors min-h-30",
                             isDragActive && "border-primary bg-primary/5",
                           )}
                         >
                           <input {...getInputProps()} />
                           {previewUrl ? (
                             <div className="relative w-full aspect-video border bg-muted overflow-hidden">
-                              <img src={previewUrl} className="h-full w-full object-cover" alt="Preview" />
+                              <img
+                                src={previewUrl}
+                                className="h-full w-full object-cover"
+                                alt="Preview"
+                              />
                               <Button
                                 type="button"
                                 variant="destructive"
                                 size="icon"
                                 className="absolute top-1 right-1 h-6 w-6 rounded-none"
-                                onClick={(evt) => { evt.stopPropagation(); setPreviewUrl(""); setImageFile(null); }}
+                                onClick={(evt) => {
+                                  evt.stopPropagation();
+                                  setPreviewUrl("");
+                                  setImageFile(null);
+                                }}
                               >
                                 <X size={12} />
                               </Button>
                             </div>
                           ) : (
                             <div className="flex flex-col items-center gap-2">
-                              <ImageIcon size={20} className="text-muted-foreground opacity-40" />
-                              <p className="text-[10px] font-bold uppercase tracking-tight">Drop Image Here</p>
+                              <ImageIcon
+                                size={20}
+                                className="text-muted-foreground opacity-40"
+                              />
+                              <p className="text-[10px] font-bold uppercase tracking-tight">
+                                Drop Image Here
+                              </p>
                             </div>
                           )}
                         </div>
@@ -532,9 +654,13 @@ export default function ProductFamiliesPage() {
                       {/* Spec groups selection */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
-                          Spec Groups <span className="text-destructive">*</span>
+                          Spec Groups{" "}
+                          <span className="text-destructive">*</span>
                         </label>
-                        <Popover open={openSpecGroups} onOpenChange={setOpenSpecGroups}>
+                        <Popover
+                          open={openSpecGroups}
+                          onOpenChange={setOpenSpecGroups}
+                        >
                           <PopoverTrigger asChild>
                             <Button
                               type="button"
@@ -543,29 +669,51 @@ export default function ProductFamiliesPage() {
                               className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
                             >
                               {selectedSpecGroupIds.length > 0
-                                ? `${selectedSpecGroupIds.length} group${selectedSpecGroupIds.length !== 1 ? "s" : ""} selected`
-                                : canPickSpecs ? "Select Spec Groups…" : "Enter a title first"}
+                                ? `${selectedSpecGroupIds.length} GROUP${selectedSpecGroupIds.length !== 1 ? "S" : ""} SELECTED`
+                                : canPickSpecs
+                                  ? "SELECT SPEC GROUPS…"
+                                  : "ENTER A TITLE FIRST"}
                               <Layers className="ml-2 h-3 w-3 shrink-0 opacity-50" />
                             </Button>
                           </PopoverTrigger>
-                          <PopoverContent className="w-(--radix-popover-trigger-width) p-0 rounded-none" align="start">
+                          <PopoverContent
+                            className="w-(--radix-popover-trigger-width) p-0 rounded-none"
+                            align="start"
+                          >
                             <Command>
-                              <CommandInput placeholder="Search spec groups…" className="h-9 text-xs" />
+                              <CommandInput
+                                placeholder="Search spec groups…"
+                                className="h-9 text-xs"
+                              />
                               <CommandList>
-                                <CommandEmpty>No spec groups found.</CommandEmpty>
+                                <CommandEmpty>
+                                  No spec groups found.
+                                </CommandEmpty>
                                 <CommandGroup>
                                   {specGroups.map((g) => {
-                                    const active = selectedSpecGroupIds.includes(g.id);
+                                    const active =
+                                      selectedSpecGroupIds.includes(g.id);
                                     return (
                                       <CommandItem
                                         key={g.id}
-                                        onSelect={() => handleToggleSpecGroup(g.id)}
+                                        onSelect={() =>
+                                          handleToggleSpecGroup(g.id)
+                                        }
                                         className="text-[10px] uppercase font-bold"
                                       >
-                                        <Check className={cn("mr-2 h-3 w-3", active ? "opacity-100" : "opacity-0")} />
-                                        {g.name}
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-3 w-3",
+                                            active
+                                              ? "opacity-100"
+                                              : "opacity-0",
+                                          )}
+                                        />
+                                        {(g.name ?? "").toUpperCase()}
                                         {g.isActive === false && (
-                                          <span className="ml-auto text-[8px] text-muted-foreground uppercase">Disabled</span>
+                                          <span className="ml-auto text-[8px] text-muted-foreground uppercase">
+                                            Disabled
+                                          </span>
                                         )}
                                       </CommandItem>
                                     );
@@ -587,39 +735,81 @@ export default function ProductFamiliesPage() {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <label className="text-[10px] font-bold uppercase opacity-60">
-                              Spec Items <span className="text-destructive">*</span>
+                              Spec Items{" "}
+                              <span className="text-destructive">*</span>
                             </label>
-                            <Badge variant="outline" className="rounded-none text-[8px] font-black uppercase px-2 h-5">
-                              {selectedSummary.reduce((sum, g) => sum + g.specItems.length, 0)} selected
+                            <Badge
+                              variant="outline"
+                              className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                            >
+                              {selectedSummary.reduce(
+                                (sum, g) => sum + g.specItems.length,
+                                0,
+                              )}{" "}
+                              selected
                             </Badge>
                           </div>
                           <div className="space-y-2">
                             {selectedSpecGroupIds.map((gid) => {
                               const group = specGroupById.get(gid);
-                              const groupName = group?.name ?? gid;
+                              const groupName = (
+                                group?.name ?? gid
+                              ).toUpperCase();
                               const labels = Array.from(
                                 new Set(
-                                  (group?.items ?? []).map((i) => i.label).filter(Boolean).map((l) => l.toUpperCase().trim()),
+                                  (group?.items ?? [])
+                                    .map((i) => i.label)
+                                    .filter(Boolean)
+                                    .map((l) => l.toUpperCase().trim()),
                                 ),
                               );
-                              const search = (specItemSearch[gid] ?? "").toUpperCase();
-                              const filtered = search ? labels.filter((l) => l.includes(search)) : labels;
-                              const selectedSet = new Set(specItemSelections[gid] ?? []);
+                              const search = (
+                                specItemSearch[gid] ?? ""
+                              ).toUpperCase();
+                              const filtered = search
+                                ? labels.filter((l) => l.includes(search))
+                                : labels;
+                              const selectedSet = new Set(
+                                specItemSelections[gid] ?? [],
+                              );
 
                               return (
-                                <div key={gid} className="border border-foreground/10 rounded-none">
+                                <div
+                                  key={gid}
+                                  className="border border-foreground/10 rounded-none"
+                                >
                                   <div className="flex items-center justify-between gap-2 p-2.5 border-b bg-muted/20">
                                     <div className="min-w-0">
-                                      <p className="text-[10px] font-black uppercase truncate leading-tight">{groupName}</p>
+                                      <p className="text-[10px] font-black uppercase truncate leading-tight">
+                                        {groupName}
+                                      </p>
                                       <p className="text-[9px] text-muted-foreground uppercase">
-                                        {selectedSet.size} selected · {labels.length} available
+                                        {selectedSet.size} SELECTED ·{" "}
+                                        {labels.length} AVAILABLE
                                       </p>
                                     </div>
                                     <div className="flex items-center gap-1.5 shrink-0">
-                                      <Button type="button" variant="outline" size="sm" className="rounded-none h-7 text-[9px] uppercase font-bold" onClick={() => setAllItemsInGroup(gid, true)} disabled={labels.length === 0}>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-none h-7 text-[9px] uppercase font-bold"
+                                        onClick={() =>
+                                          setAllItemsInGroup(gid, true)
+                                        }
+                                        disabled={labels.length === 0}
+                                      >
                                         Select all
                                       </Button>
-                                      <Button type="button" variant="outline" size="sm" className="rounded-none h-7 text-[9px] uppercase font-bold" onClick={() => setAllItemsInGroup(gid, false)}>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="rounded-none h-7 text-[9px] uppercase font-bold"
+                                        onClick={() =>
+                                          setAllItemsInGroup(gid, false)
+                                        }
+                                      >
                                         Clear
                                       </Button>
                                     </div>
@@ -627,38 +817,67 @@ export default function ProductFamiliesPage() {
                                   <div className="p-2.5 space-y-2">
                                     <Input
                                       value={specItemSearch[gid] ?? ""}
-                                      onChange={(evt) => setSpecItemSearch((prev) => ({ ...prev, [gid]: evt.target.value }))}
-                                      placeholder="Filter items…"
-                                      className="rounded-none h-9 text-xs"
+                                      onChange={(evt) =>
+                                        setSpecItemSearch((prev) => ({
+                                          ...prev,
+                                          [gid]:
+                                            evt.target.value.toUpperCase(),
+                                        }))
+                                      }
+                                      placeholder="FILTER ITEMS…"
+                                      className="rounded-none h-9 text-xs uppercase"
                                     />
                                     {filtered.length === 0 ? (
-                                      <p className="text-[10px] text-muted-foreground uppercase font-bold border border-dashed border-foreground/10 p-3 bg-muted/30 text-center">No items found</p>
+                                      <p className="text-[10px] text-muted-foreground uppercase font-bold border border-dashed border-foreground/10 p-3 bg-muted/30 text-center">
+                                        No items found
+                                      </p>
                                     ) : (
-                                      <div className="grid grid-cols-1 gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+                                      <div className="grid grid-cols-1 gap-1.5 max-h-55 overflow-y-auto pr-1">
                                         {filtered.map((label) => {
-                                          const itemId = buildSpecItemId(gid, label);
-                                          const checked = selectedSet.has(itemId);
+                                          const itemId = buildSpecItemId(
+                                            gid,
+                                            label,
+                                          );
+                                          const checked =
+                                            selectedSet.has(itemId);
                                           return (
                                             <button
                                               type="button"
                                               key={itemId}
-                                              onClick={() => toggleSpecItem(gid, itemId)}
+                                              onClick={() =>
+                                                toggleSpecItem(gid, itemId)
+                                              }
                                               className={cn(
                                                 "flex items-center gap-2 border border-foreground/10 bg-background hover:bg-accent/40 transition-colors px-2.5 py-2 rounded-none text-left",
-                                                checked && "border-primary/40 bg-primary/5",
+                                                checked &&
+                                                  "border-primary/40 bg-primary/5",
                                               )}
                                             >
-                                              <span className={cn("h-4 w-4 border border-foreground/20 flex items-center justify-center", checked ? "bg-primary text-primary-foreground border-primary" : "bg-background")}>
-                                                {checked && <Check size={12} />}
+                                              <span
+                                                className={cn(
+                                                  "h-4 w-4 border border-foreground/20 flex items-center justify-center",
+                                                  checked
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "bg-background",
+                                                )}
+                                              >
+                                                {checked && (
+                                                  <Check size={12} />
+                                                )}
                                               </span>
-                                              <span className="text-[10px] font-black uppercase text-muted-foreground">{label}</span>
+                                              <span className="text-[10px] font-black uppercase text-muted-foreground">
+                                                {label}
+                                              </span>
                                             </button>
                                           );
                                         })}
                                       </div>
                                     )}
-                                    {(specItemSelections[gid] ?? []).length === 0 && (
-                                      <p className="text-[10px] text-destructive uppercase font-bold">Select at least one item for this group</p>
+                                    {(specItemSelections[gid] ?? []).length ===
+                                      0 && (
+                                      <p className="text-[10px] text-destructive uppercase font-bold">
+                                        Select at least one item for this group
+                                      </p>
                                     )}
                                   </div>
                                 </div>
@@ -672,21 +891,42 @@ export default function ProductFamiliesPage() {
                       {selectedSummary.length > 0 && (
                         <div className="space-y-2 border border-foreground/10 p-3 bg-muted/20 rounded-none">
                           <div className="flex items-center justify-between">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Selection Summary</p>
-                            <Badge variant="secondary" className="rounded-none text-[8px] font-black uppercase px-2 h-5">
-                              {selectedSummary.length} group{selectedSummary.length !== 1 ? "s" : ""}
+                            <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                              Selection Summary
+                            </p>
+                            <Badge
+                              variant="secondary"
+                              className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                            >
+                              {selectedSummary.length} GROUP
+                              {selectedSummary.length !== 1 ? "S" : ""}
                             </Badge>
                           </div>
                           <div className="space-y-2">
                             {selectedSummary.map((g) => {
                               const seen = new Set<string>();
-                              const uniqueItems = g.specItems.filter((it) => { if (seen.has(it.id)) return false; seen.add(it.id); return true; });
+                              const uniqueItems = g.specItems.filter((it) => {
+                                if (seen.has(it.id)) return false;
+                                seen.add(it.id);
+                                return true;
+                              });
                               return (
-                                <div key={g.specGroupId} className="border border-foreground/10 bg-background p-2 rounded-none">
-                                  <p className="text-[10px] font-black uppercase mb-1">{g.groupName}</p>
+                                <div
+                                  key={g.specGroupId}
+                                  className="border border-foreground/10 bg-background p-2 rounded-none"
+                                >
+                                  <p className="text-[10px] font-black uppercase mb-1">
+                                    {(g.groupName ?? "").toUpperCase()}
+                                  </p>
                                   <div className="flex flex-wrap gap-1.5">
                                     {uniqueItems.map((it) => (
-                                      <Badge key={it.id} variant="outline" className="rounded-none text-[8px] font-black uppercase px-2 h-5">{it.name}</Badge>
+                                      <Badge
+                                        key={it.id}
+                                        variant="outline"
+                                        className="rounded-none text-[8px] font-black uppercase px-2 h-5"
+                                      >
+                                        {it.name}
+                                      </Badge>
                                     ))}
                                   </div>
                                 </div>
@@ -696,8 +936,18 @@ export default function ProductFamiliesPage() {
                         </div>
                       )}
 
-                      <Button type="submit" disabled={isSubmitLoading} className="w-full rounded-none uppercase font-bold text-[10px] h-11 tracking-widest">
-                        {isSubmitLoading ? <Loader2 className="animate-spin h-4 w-4" /> : editId ? "Push Update" : "Create Product Family"}
+                      <Button
+                        type="submit"
+                        disabled={isSubmitLoading}
+                        className="w-full rounded-none uppercase font-bold text-[10px] h-11 tracking-widest"
+                      >
+                        {isSubmitLoading ? (
+                          <Loader2 className="animate-spin h-4 w-4" />
+                        ) : editId ? (
+                          "Push Update"
+                        ) : (
+                          "Create Product Family"
+                        )}
                       </Button>
                     </form>
                   </CardContent>
@@ -708,12 +958,25 @@ export default function ProductFamiliesPage() {
               <div className="lg:col-span-8">
                 {!loadingFamilies && families.length > 0 && (
                   <div className="space-y-3 mb-6">
-                    <Input placeholder="Search product families..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="rounded-none text-sm h-10" />
+                    <Input
+                      placeholder="Search product families..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="rounded-none text-sm h-10"
+                    />
                     <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
                       <div className="flex gap-1 flex-wrap">
                         {(["all", "active", "inactive"] as const).map((s) => (
-                          <Button key={s} variant={filterStatus === s ? "default" : "outline"} size="sm" className="rounded-none text-xs h-8 capitalize" onClick={() => setFilterStatus(s)}>
-                            {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+                          <Button
+                            key={s}
+                            variant={filterStatus === s ? "default" : "outline"}
+                            size="sm"
+                            className="rounded-none text-xs h-8 capitalize"
+                            onClick={() => setFilterStatus(s)}
+                          >
+                            {s === "all"
+                              ? "All"
+                              : s.charAt(0).toUpperCase() + s.slice(1)}
                           </Button>
                         ))}
                       </div>
@@ -722,61 +985,129 @@ export default function ProductFamiliesPage() {
                           <>
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
-                                <Button variant="destructive" size="sm" className="rounded-none text-xs h-8" disabled={isBulkDeleting}>
-                                  {isBulkDeleting ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Deleting...</> : <><Trash2 className="h-3 w-3 mr-1" />Delete {selectedIds.size}</>}
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="rounded-none text-xs h-8"
+                                  disabled={isBulkDeleting}
+                                >
+                                  {isBulkDeleting ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      Deleting...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trash2 className="h-3 w-3 mr-1" />
+                                      Delete {selectedIds.size}
+                                    </>
+                                  )}
                                 </Button>
                               </AlertDialogTrigger>
                               <AlertDialogContent className="rounded-none">
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle className="text-sm font-bold uppercase">Confirm Deletion</AlertDialogTitle>
-                                  <AlertDialogDescription className="text-xs">Delete {selectedIds.size} product families? This cannot be undone.</AlertDialogDescription>
+                                  <AlertDialogTitle className="text-sm font-bold uppercase">
+                                    Confirm Deletion
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription className="text-xs">
+                                    Delete {selectedIds.size} product families?
+                                    This cannot be undone.
+                                  </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel className="rounded-none text-xs">Cancel</AlertDialogCancel>
-                                  <AlertDialogAction className="rounded-none bg-destructive text-xs" onClick={handleBulkDelete}>Delete All</AlertDialogAction>
+                                  <AlertDialogCancel className="rounded-none text-xs">
+                                    Cancel
+                                  </AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="rounded-none bg-destructive text-xs"
+                                    onClick={handleBulkDelete}
+                                  >
+                                    Delete All
+                                  </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
-                            <Button variant="outline" size="sm" className="rounded-none text-xs h-8" onClick={() => setSelectedIds(new Set())}>Deselect All</Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-none text-xs h-8"
+                              onClick={() => setSelectedIds(new Set())}
+                            >
+                              Deselect All
+                            </Button>
                           </>
                         )}
                       </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">Showing {filteredFamilies.length} of {families.length} product families</div>
+                    <div className="text-xs text-muted-foreground">
+                      Showing {filteredFamilies.length} of {families.length}{" "}
+                      product families
+                    </div>
                   </div>
                 )}
 
                 {loadingFamilies ? (
-                  <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" /></div>
+                  <div className="flex justify-center py-20">
+                    <Loader2 className="animate-spin text-primary" />
+                  </div>
                 ) : filteredFamilies.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
+                  <div className="flex flex-col items-center justify-center min-h-100 border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
                     <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm">
                       <FolderPlus className="h-8 w-8 text-muted-foreground/40" />
                     </div>
-                    <h3 className="text-sm font-bold uppercase tracking-widest mb-1">{families.length === 0 ? "No Product Families" : "No Results"}</h3>
-                    <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
-                      {families.length === 0 ? "Your database is currently empty. Create a new product family using the panel on the left." : "No product families match your search or filter criteria."}
+                    <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
+                      {families.length === 0
+                        ? "No Product Families"
+                        : "No Results"}
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground uppercase max-w-60 leading-relaxed">
+                      {families.length === 0
+                        ? "Your database is currently empty. Create a new product family using the panel on the left."
+                        : "No product families match your search or filter criteria."}
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredFamilies.map((f) => {
-                      const img = f.image || f.imageUrl || "/placeholder.png";
-                      const groupCount = Array.isArray(f.specs) ? f.specs.length : Array.isArray(f.specifications) ? f.specifications.length : 0;
-                      const itemCount = Array.isArray(f.specs) ? f.specs.reduce((sum, g) => sum + (g.specItems?.length ?? 0), 0) : 0;
+                      const img =
+                        f.image || f.imageUrl || "/placeholder.png";
+                      const groupCount = Array.isArray(f.specs)
+                        ? f.specs.length
+                        : Array.isArray(f.specifications)
+                          ? f.specifications.length
+                          : 0;
+                      const itemCount = Array.isArray(f.specs)
+                        ? f.specs.reduce(
+                            (sum, g) => sum + (g.specItems?.length ?? 0),
+                            0,
+                          )
+                        : 0;
 
                       return (
                         <Card
                           key={f.id}
                           className={cn(
                             "rounded-none shadow-none group relative overflow-hidden border-foreground/10 transition-all",
-                            selectedIds.has(f.id) && "ring-2 ring-primary border-primary/50",
+                            selectedIds.has(f.id) &&
+                              "ring-2 ring-primary border-primary/50",
                           )}
                         >
                           <div className="aspect-4/3 relative bg-muted border-b overflow-hidden">
-                            <img src={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={f.title ?? "Product family"} />
-                            <div className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors" onClick={() => toggleSelect(f.id)}>
-                              <input type="checkbox" checked={selectedIds.has(f.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
+                            <img
+                              src={img}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              alt={f.title ?? "Product family"}
+                            />
+                            <div
+                              className="absolute top-2 left-2 bg-background/80 rounded-none border border-foreground/10 p-1 cursor-pointer hover:bg-background transition-colors"
+                              onClick={() => toggleSelect(f.id)}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(f.id)}
+                                onChange={() => {}}
+                                className="h-4 w-4 cursor-pointer"
+                              />
                             </div>
                             <div className="absolute top-2 right-2 flex gap-1">
                               <Button
@@ -787,39 +1118,82 @@ export default function ProductFamiliesPage() {
                                   setEditId(f.id);
                                   setTitle(f.title ?? "");
                                   setDescription(f.description ?? "");
-                                  setProductUsage((f.productUsage as ProductUsage[]) ?? []);
-                                  setPreviewUrl(f.image ?? f.imageUrl ?? "");
+                                  setProductUsage(
+                                    (f.productUsage as ProductUsage[]) ?? [],
+                                  );
+                                  setPreviewUrl(
+                                    f.image ?? f.imageUrl ?? "",
+                                  );
                                   setImageFile(null);
-                                  if (Array.isArray(f.specs) && f.specs.length > 0) {
-                                    const gids = f.specs.map((s) => s.specGroupId);
+                                  if (
+                                    Array.isArray(f.specs) &&
+                                    f.specs.length > 0
+                                  ) {
+                                    const gids = f.specs.map(
+                                      (s) => s.specGroupId,
+                                    );
                                     setSelectedSpecGroupIds(gids);
-                                    const nextSel: Record<string, string[]> = {};
-                                    for (const s of f.specs) { nextSel[s.specGroupId] = (s.specItems ?? []).map((it) => it.id); }
+                                    const nextSel: Record<string, string[]> =
+                                      {};
+                                    for (const s of f.specs) {
+                                      nextSel[s.specGroupId] = (
+                                        s.specItems ?? []
+                                      ).map((it) => it.id);
+                                    }
                                     setSpecItemSelections(nextSel);
-                                  } else if (Array.isArray(f.specifications) && f.specifications.length > 0) {
-                                    setSelectedSpecGroupIds(f.specifications);
+                                  } else if (
+                                    Array.isArray(f.specifications) &&
+                                    f.specifications.length > 0
+                                  ) {
+                                    setSelectedSpecGroupIds(
+                                      f.specifications,
+                                    );
                                     setSpecItemSelections({});
                                   } else {
                                     setSelectedSpecGroupIds([]);
                                     setSpecItemSelections({});
                                   }
-                                  window.scrollTo({ top: 0, behavior: "smooth" });
+                                  window.scrollTo({
+                                    top: 0,
+                                    behavior: "smooth",
+                                  });
                                 }}
                               >
                                 <Pencil size={12} />
                               </Button>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
-                                  <Button size="icon" variant="destructive" className="h-7 w-7 rounded-none shadow-sm"><Trash2 size={12} /></Button>
+                                  <Button
+                                    size="icon"
+                                    variant="destructive"
+                                    className="h-7 w-7 rounded-none shadow-sm"
+                                  >
+                                    <Trash2 size={12} />
+                                  </Button>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent className="rounded-none">
                                   <AlertDialogHeader>
-                                    <AlertDialogTitle className="text-sm font-bold uppercase">Confirm Removal</AlertDialogTitle>
-                                    <AlertDialogDescription className="text-xs">Delete "{f.title}"? This cannot be undone.</AlertDialogDescription>
+                                    <AlertDialogTitle className="text-sm font-bold uppercase">
+                                      Confirm Removal
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription className="text-xs">
+                                      Delete "{f.title}"? This cannot be undone.
+                                    </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
-                                    <AlertDialogCancel className="rounded-none text-xs">Cancel</AlertDialogCancel>
-                                    <AlertDialogAction className="rounded-none bg-destructive text-xs" onClick={() => deleteDoc(doc(db, "productfamilies", f.id))}>Delete</AlertDialogAction>
+                                    <AlertDialogCancel className="rounded-none text-xs">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="rounded-none bg-destructive text-xs"
+                                      onClick={() =>
+                                        deleteDoc(
+                                          doc(db, "productfamilies", f.id),
+                                        )
+                                      }
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
                               </AlertDialog>
@@ -827,24 +1201,37 @@ export default function ProductFamiliesPage() {
                           </div>
                           <div className="p-3 space-y-2">
                             <div className="flex items-center justify-between gap-2">
-                              <h3 className="text-[11px] font-black uppercase truncate">{f.title || "Untitled"}</h3>
-                              <Badge variant={f.isActive ? "default" : "outline"} className="rounded-none text-[7px] px-1 h-4 uppercase">
+                              <h3 className="text-[11px] font-black uppercase truncate">
+                                {f.title || "UNTITLED"}
+                              </h3>
+                              <Badge
+                                variant={f.isActive ? "default" : "outline"}
+                                className="rounded-none text-[7px] px-1 h-4 uppercase"
+                              >
                                 {f.isActive ? "Live" : "Hidden"}
                               </Badge>
                             </div>
                             {f.description && (
-                              <p className="text-[9px] text-muted-foreground uppercase line-clamp-1 italic">{f.description}</p>
+                              <p className="text-[9px] text-muted-foreground uppercase line-clamp-1 italic">
+                                {f.description}
+                              </p>
                             )}
-                            {/* ── Usage tags ── */}
+                            {/* Usage tags */}
                             {f.productUsage && f.productUsage.length > 0 && (
                               <div className="flex gap-1 flex-wrap">
                                 {f.productUsage.map((u) => (
-                                  <span key={u} className={cn(
-                                    "text-[7px] font-black uppercase px-1.5 py-0.5 rounded-none border",
-                                    u === "INDOOR" && "border-blue-300 bg-blue-50 text-blue-600",
-                                    u === "OUTDOOR" && "border-emerald-300 bg-emerald-50 text-emerald-600",
-                                    u === "SOLAR" && "border-amber-300 bg-amber-50 text-amber-600",
-                                  )}>
+                                  <span
+                                    key={u}
+                                    className={cn(
+                                      "text-[7px] font-black uppercase px-1.5 py-0.5 rounded-none border",
+                                      u === "INDOOR" &&
+                                        "border-blue-300 bg-blue-50 text-blue-600",
+                                      u === "OUTDOOR" &&
+                                        "border-emerald-300 bg-emerald-50 text-emerald-600",
+                                      u === "SOLAR" &&
+                                        "border-amber-300 bg-amber-50 text-amber-600",
+                                    )}
+                                  >
                                     {u}
                                   </span>
                                 ))}
@@ -852,8 +1239,11 @@ export default function ProductFamiliesPage() {
                             )}
                             {groupCount > 0 && (
                               <p className="text-[8px] text-muted-foreground/60 uppercase font-bold">
-                                {groupCount} spec group{groupCount !== 1 ? "s" : ""}
-                                {itemCount > 0 ? ` · ${itemCount} item${itemCount !== 1 ? "s" : ""}` : ""}
+                                {groupCount} SPEC GROUP
+                                {groupCount !== 1 ? "S" : ""}
+                                {itemCount > 0
+                                  ? ` · ${itemCount} ITEM${itemCount !== 1 ? "S" : ""}`
+                                  : ""}
                               </p>
                             )}
                           </div>

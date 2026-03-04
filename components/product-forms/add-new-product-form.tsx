@@ -78,7 +78,9 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
-import { fillTdsPdf } from "@/lib/fillTdsPdf";
+
+// ─── TDS lib (replaces fillTdsPdf) ───────────────────────────────────────────
+import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
 import {
   CreateProductFamilyDialog,
@@ -114,13 +116,7 @@ interface SpecValue {
   specs: { name: string; value: string }[];
 }
 
-type TdsStatus =
-  | "idle"
-  | "loading-template"
-  | "generating"
-  | "done"
-  | "error"
-  | "no-template";
+type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
 
 type ProductClass = "spf" | "standard" | "";
 
@@ -131,7 +127,11 @@ const PRODUCT_CLASS_OPTIONS: {
   label: string;
   icon: React.ReactNode;
 }[] = [
-  { value: "spf", label: "SPF Items", icon: <Sparkles className="w-4 h-4" /> },
+  {
+    value: "spf",
+    label: "SPF Items",
+    icon: <Sparkles className="w-4 h-4" />,
+  },
   {
     value: "standard",
     label: "Standard Items",
@@ -178,37 +178,22 @@ const USAGE_COLORS: Record<ProductUsage, { pill: string; active: string }> = {
 
 // ─── TdsBadge ─────────────────────────────────────────────────────────────────
 
-function TdsBadge({
-  tdsStatus,
-  tdsTemplateUrl,
-}: {
-  tdsStatus: TdsStatus;
-  tdsTemplateUrl: string;
-}) {
-  if (tdsStatus === "idle" && tdsTemplateUrl)
+function TdsBadge({ tdsStatus }: { tdsStatus: TdsStatus }) {
+  if (tdsStatus === "idle")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
         <FileText className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
         <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
-          TDS template loaded
+          TDS will be auto-generated on publish
         </span>
       </div>
     );
-  if (tdsStatus === "loading-template")
-    return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-muted/50 border border-border">
-        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
-        <span className="text-[10px] font-medium text-muted-foreground">
-          Loading TDS template…
-        </span>
-      </div>
-    );
-  if (tdsStatus === "no-template")
+  if (tdsStatus === "no-specs")
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
         <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
         <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
-          No TDS template on this family
+          No specs on this family — TDS skipped
         </span>
       </div>
     );
@@ -217,7 +202,7 @@ function TdsBadge({
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-primary/5 border border-primary/20">
         <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
         <span className="text-[10px] font-semibold text-primary">
-          Filling TDS PDF…
+          Generating TDS PDF…
         </span>
       </div>
     );
@@ -255,7 +240,10 @@ function QrDropzone({
   onDrop: (files: File[]) => void;
   onRemove: () => void;
 }) {
-  const { getRootProps, getInputProps } = useDropzone({ onDrop, maxFiles: 1 });
+  const { getRootProps, getInputProps } = useDropzone({
+    onDrop,
+    maxFiles: 1,
+  });
   return (
     <div
       {...getRootProps()}
@@ -304,12 +292,10 @@ export default function AddNewProduct({
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
 
   const [isPublishing, setIsPublishing] = useState(false);
-  const [tdsTemplateUrl, setTdsTemplateUrl] = useState<string>("");
+  // tdsHasSpecs: true when selected family has specs → TDS can be generated
+  const [tdsHasSpecs, setTdsHasSpecs] = useState(false);
   const [tdsStatus, setTdsStatus] = useState<TdsStatus>("idle");
   const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
-  const [tdsSpecMapping, setTdsSpecMapping] = useState<
-    Record<string, string[]>
-  >({});
 
   const [createFamilyOpen, setCreateFamilyOpen] = useState(false);
 
@@ -339,7 +325,6 @@ export default function AddNewProduct({
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
 
-  // productUsage now lives in the new top card (also used as family filter)
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
   );
@@ -486,24 +471,22 @@ export default function AddNewProduct({
     return availableCats.filter((cat) => {
       if (cat.isTemp) return true;
       const catUsage: string[] = cat.productUsage ?? [];
-      if (catUsage.length === 0) return true; // families with no usage tag always show
+      if (catUsage.length === 0) return true;
       return productUsage.some((u) => catUsage.includes(u));
     });
   }, [availableCats, productUsage]);
 
-  // ── Specs + TDS template listener ────────────────────────────────────────
+  // ── Specs listener (load specItems for selected productFamily) ────────────
   useEffect(() => {
     if (!selectedCatId) {
-      setTdsTemplateUrl("");
+      setTdsHasSpecs(false);
       setTdsStatus("idle");
-      setTdsSpecMapping({});
       setAvailableSpecs([]);
       setSpecsLoading(false);
       return;
     }
     let cancelled = false;
     let unsubSpecs: (() => void) | null = null;
-    setTdsStatus("loading-template");
     setSpecsLoading(true);
 
     (async () => {
@@ -515,15 +498,6 @@ export default function AddNewProduct({
         const familyData = familySnap.exists()
           ? (familySnap.data() as any)
           : null;
-        const templateUrl: string = familyData?.tdsTemplate ?? "";
-        if (templateUrl) {
-          setTdsTemplateUrl(templateUrl);
-          setTdsStatus("idle");
-        } else {
-          setTdsTemplateUrl("");
-          setTdsStatus("no-template");
-        }
-        setTdsSpecMapping(familyData?.tdsSpecMapping || {});
 
         const specIds = new Set<string>();
         const familySpecs: {
@@ -542,6 +516,8 @@ export default function AddNewProduct({
         if (specIds.size === 0) {
           if (!cancelled) {
             setAvailableSpecs([]);
+            setTdsHasSpecs(false);
+            setTdsStatus("no-specs");
             setSpecsLoading(false);
           }
           return;
@@ -581,13 +557,16 @@ export default function AddNewProduct({
             });
           if (!cancelled) {
             setAvailableSpecs(items);
+            setTdsHasSpecs(items.length > 0);
+            setTdsStatus(items.length > 0 ? "idle" : "no-specs");
             setSpecsLoading(false);
           }
         });
       } catch (e) {
         console.error("[AddNewProduct]", e);
         if (!cancelled) {
-          setTdsStatus("no-template");
+          setTdsHasSpecs(false);
+          setTdsStatus("no-specs");
           setAvailableSpecs([]);
           setSpecsLoading(false);
         }
@@ -667,7 +646,7 @@ export default function AddNewProduct({
     }
   }, [editData, availableCats]);
 
-  // ── Cloudinary helpers ────────────────────────────────────────────────────
+  // ── Cloudinary image helper ───────────────────────────────────────────────
   const uploadToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -679,22 +658,6 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
-  const uploadPdfToCloudinary = async (file: File): Promise<string> => {
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-    const res = await fetch(
-      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`,
-      { method: "POST", body: fd },
-    );
-    const json = await res.json();
-    if (!json?.secure_url)
-      throw new Error(
-        `Cloudinary PDF upload failed: ${json?.error?.message ?? "no secure_url"}`,
-      );
-    return json.secure_url as string;
-  };
-
   // ── Publish ───────────────────────────────────────────────────────────────
   const handlePublish = async () => {
     if (!itemDescription)
@@ -702,6 +665,7 @@ export default function AddNewProduct({
     setIsPublishing(true);
     const tid = toast.loading("Validating...");
     try {
+      // Duplicate check
       if (!editData || editData.itemDescription !== itemDescription) {
         const dupSnap = await getDocs(
           query(
@@ -725,6 +689,7 @@ export default function AddNewProduct({
         }
       }
 
+      // Save pending tags
       const pendingIdMap: Record<string, string> = {};
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: tid });
@@ -752,6 +717,7 @@ export default function AddNewProduct({
         pendingItemsRef.current = [];
       }
 
+      // Upload images
       toast.loading("Uploading images...", { id: tid });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -794,6 +760,7 @@ export default function AddNewProduct({
         : existingAccessoriesImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
+      // Build technicalSpecs — ALL CAPS labels and values
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
       Object.entries(specValues).forEach(([key, value]) => {
@@ -805,11 +772,17 @@ export default function AddNewProduct({
         );
         if (s) {
           if (!specsGrouped[s.specGroup]) specsGrouped[s.specGroup] = [];
-          specsGrouped[s.specGroup].push({ name: s.label, value });
+          specsGrouped[s.specGroup].push({
+            name: s.label.toUpperCase().trim(), // ALL CAPS
+            value: value.toUpperCase().trim(), // ALL CAPS
+          });
         }
       });
       const technicalSpecs = Object.entries(specsGrouped).map(
-        ([specGroup, specs]) => ({ specGroup, specs }),
+        ([specGroup, specs]) => ({
+          specGroup: specGroup.toUpperCase().trim(),
+          specs,
+        }),
       );
 
       const productFamilyTitle = selectedCatId
@@ -862,6 +835,7 @@ export default function AddNewProduct({
         updatedAt: serverTimestamp(),
       };
 
+      // Save product to Firestore
       let savedDocId: string = editData?.id ?? "";
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
@@ -895,31 +869,29 @@ export default function AddNewProduct({
         });
       }
 
-      try {
-        if (tdsTemplateUrl) {
+      // ── Generate TDS PDF directly from product data ───────────────────────
+      if (tdsHasSpecs && technicalSpecs.length > 0) {
+        try {
           toast.loading("Generating TDS PDF...", { id: tid });
           setTdsStatus("generating");
-          const generatedTdsUrl = await fillTdsPdf({
-            templateUrl: tdsTemplateUrl,
+
+          const blob = await generateTdsPdf({
             itemDescription,
             litItemCode,
-            ecoItemCode,
-            brand: brandName,
             technicalSpecs,
-            tdsSpecMapping,
             mainImageUrl: mainUrl || undefined,
-            dimensionDrawingUrl: dimensionDrawingUrl || undefined,
-            mountingHeightUrl: mountingHeightUrl || undefined,
-            driverCompatibilityUrl: driverCompatibilityUrl || undefined,
-            baseImageUrl: baseUrl || undefined,
+            dimensionalDrawingUrl: dimensionDrawingUrl || undefined,
             illuminanceLevelUrl: illuminanceLevelUrl || undefined,
-            wiringDiagramUrl: wiringDiagramUrl || undefined,
-            installationUrl: installationUrl || undefined,
-            wiringLayoutUrl: wiringLayoutUrl || undefined,
-            terminalLayoutUrl: terminalLayoutUrl || undefined,
-            accessoriesUrl: accessoriesUrl || undefined,
-            cloudinaryUploadFn: uploadPdfToCloudinary,
           });
+
+          const filename = `${itemDescription}_TDS.pdf`;
+          const generatedTdsUrl = await uploadTdsPdf(
+            blob,
+            filename,
+            CLOUDINARY_CLOUD_NAME,
+            CLOUDINARY_UPLOAD_PRESET,
+          );
+
           if (savedDocId && generatedTdsUrl.startsWith("http")) {
             await updateDoc(doc(db, "products", savedDocId), {
               tdsFileUrl: generatedTdsUrl,
@@ -928,15 +900,13 @@ export default function AddNewProduct({
             setTdsUrl(generatedTdsUrl);
             setTdsStatus("done");
           }
-        } else {
-          setTdsStatus("no-template");
+        } catch (pdfErr) {
+          console.error("TDS fill failed:", pdfErr);
+          setTdsStatus("error");
+          toast.warning("Product saved, but TDS PDF could not be generated.", {
+            id: tid,
+          });
         }
-      } catch (pdfErr) {
-        console.error("TDS fill failed:", pdfErr);
-        setTdsStatus("error");
-        toast.warning("Product saved, but TDS PDF could not be generated.", {
-          id: tid,
-        });
       }
 
       toast.success("Product Saved!", { id: tid });
@@ -1125,7 +1095,6 @@ export default function AddNewProduct({
     </div>
   );
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   const toggleUsage = (u: string) =>
     setProductUsage((p) =>
       p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
@@ -1160,7 +1129,7 @@ export default function AddNewProduct({
         {/* ══════════════ MAIN COLUMN ════════════════════════════════════════ */}
         <div className="md:col-span-2 space-y-6">
           {/* ── TDS note ── */}
-          {tdsTemplateUrl && (
+          {tdsHasSpecs && (
             <Card className="border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20">
               <CardContent className="pt-6">
                 <div className="flex items-start gap-3">
@@ -1171,8 +1140,8 @@ export default function AddNewProduct({
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
                       Fill in the form below with product details and media. The
-                      TDS PDF will be created from the selected product family
-                      template.
+                      TDS PDF ({itemDescription || "PRODUCT"}_TDS.pdf) will be
+                      created from the spec values entered below.
                     </p>
                   </div>
                 </div>
@@ -1189,9 +1158,9 @@ export default function AddNewProduct({
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <Images className="h-4 w-4" />
                 Media Assets
-                {tdsTemplateUrl && (
+                {tdsHasSpecs && (
                   <span className="text-[10px] font-normal text-muted-foreground ml-1">
-                    (uploaded to TDS PDF on publish)
+                    (main image + drawings used in TDS)
                   </span>
                 )}
                 <div className="ml-auto flex items-center gap-2">
@@ -1353,9 +1322,9 @@ export default function AddNewProduct({
                   >
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
                       Technical Drawings
-                      {tdsTemplateUrl && (
+                      {tdsHasSpecs && (
                         <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                          (applied to TDS)
+                          (dimensional drawing + illuminance used in TDS)
                         </span>
                       )}
                     </p>
@@ -1570,9 +1539,9 @@ export default function AddNewProduct({
               <div className="space-y-2">
                 <Label className="text-sm font-medium">
                   Item Description <span className="text-destructive">*</span>
-                  {tdsTemplateUrl && (
+                  {tdsHasSpecs && (
                     <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                      (applied to TDS)
+                      (used in TDS)
                     </span>
                   )}
                 </Label>
@@ -1585,14 +1554,7 @@ export default function AddNewProduct({
               </div>
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">
-                    Eco Item Code
-                    {tdsTemplateUrl && (
-                      <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                        (applied to TDS)
-                      </span>
-                    )}
-                  </Label>
+                  <Label className="text-sm font-medium">Eco Item Code</Label>
                   <Input
                     className="h-10 font-mono"
                     value={ecoItemCode}
@@ -1602,10 +1564,10 @@ export default function AddNewProduct({
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium">
-                    Lit Item Code
-                    {tdsTemplateUrl && (
+                    LIT Item Code
+                    {tdsHasSpecs && (
                       <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                        (applied to TDS)
+                        (used in TDS)
                       </span>
                     )}
                   </Label>
@@ -1634,9 +1596,9 @@ export default function AddNewProduct({
                     <Zap className="h-4 w-4 text-primary" />
                     <Label className="text-sm font-medium">
                       Technical Specifications
-                      {tdsTemplateUrl && (
+                      {tdsHasSpecs && (
                         <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                          (mapped to TDS fields on publish)
+                          (values mapped to TDS on publish)
                         </span>
                       )}
                     </Label>
@@ -1669,7 +1631,7 @@ export default function AddNewProduct({
                             <div key={groupName} className="space-y-3">
                               <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
                                 <Zap className="h-3 w-3" />
-                                {groupName}
+                                {groupName.toUpperCase()}
                               </h4>
                               <div className="space-y-3 pl-5">
                                 {uniqueSpecs.map((spec) => {
@@ -1679,17 +1641,18 @@ export default function AddNewProduct({
                                       key={spec.id}
                                       className="space-y-1.5 p-3 rounded-lg border bg-card"
                                     >
-                                      <Label className="text-xs font-medium">
+                                      <Label className="text-xs font-medium uppercase">
                                         {spec.label}
                                       </Label>
                                       <Input
                                         placeholder={`Enter ${spec.label}…`}
-                                        className="h-9 text-sm"
+                                        className="h-9 text-sm uppercase"
                                         value={specValues[specKey] || ""}
                                         onChange={(e) =>
                                           setSpecValues((p) => ({
                                             ...p,
-                                            [specKey]: e.target.value,
+                                            [specKey]:
+                                              e.target.value.toUpperCase(),
                                           }))
                                         }
                                       />
@@ -1768,7 +1731,7 @@ export default function AddNewProduct({
                         _TDS.pdf
                       </p>
                       <p className="text-[10px] text-muted-foreground">
-                        Filled from family template · Stored on Cloudinary
+                        Auto-generated · Stored on Cloudinary
                       </p>
                     </div>
                   </div>
@@ -1777,13 +1740,14 @@ export default function AddNewProduct({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0"
+                    download={`${itemDescription || "Product"}_TDS.pdf`}
                   >
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/40"
                     >
-                      View PDF
+                      View / Download PDF
                     </Button>
                   </a>
                 </div>
@@ -1794,10 +1758,7 @@ export default function AddNewProduct({
 
         {/* ══════════════ SIDEBAR ════════════════════════════════════════════ */}
         <div className="space-y-6">
-          {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ① NEW TOP CARD — Product Usage & Product Family
-              Placed ABOVE product class and the rest of classification.
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+          {/* ── Usage & Product Family card ── */}
           <Card className="border-primary/20 bg-primary/[0.02]">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1806,7 +1767,7 @@ export default function AddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* ── Product Usage pills ─────────────────────────────────── */}
+              {/* Product Usage pills */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -1845,7 +1806,7 @@ export default function AddNewProduct({
                 </div>
               </div>
 
-              {/* ── Product Family combobox ─────────────────────────────── */}
+              {/* Product Family combobox */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Tag className="h-3 w-3 text-primary" />
@@ -1854,7 +1815,6 @@ export default function AddNewProduct({
                   </Label>
                 </div>
 
-                {/* Filter tip */}
                 <div
                   className={cn(
                     "flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-medium transition-all",
@@ -1868,11 +1828,10 @@ export default function AddNewProduct({
                     {productUsage.length > 0 ? (
                       <>
                         Showing families tagged{" "}
-                        <strong>{productUsage.join(", ")}</strong>. Select usage
-                        above to filter.
+                        <strong>{productUsage.join(", ")}</strong>.
                       </>
                     ) : (
-                      "Select a product usage above to filter families by type. This is optional."
+                      "Select a product usage above to filter families."
                     )}
                   </span>
                 </div>
@@ -1900,7 +1859,6 @@ export default function AddNewProduct({
                         className="h-9 text-xs"
                       />
                       <CommandList>
-                        {/* Create new shortcut */}
                         <CommandGroup>
                           <CommandItem
                             onSelect={() => {
@@ -1962,7 +1920,6 @@ export default function AddNewProduct({
                               <span className="flex-1 truncate">
                                 {cat.name}
                               </span>
-                              {/* Usage tags inline */}
                               {cat.productUsage &&
                                 cat.productUsage.length > 0 && (
                                   <span className="ml-2 flex gap-1 shrink-0">
@@ -1997,19 +1954,12 @@ export default function AddNewProduct({
                   </PopoverContent>
                 </Popover>
 
-                {selectedCatId && (
-                  <TdsBadge
-                    tdsStatus={tdsStatus}
-                    tdsTemplateUrl={tdsTemplateUrl}
-                  />
-                )}
+                {selectedCatId && <TdsBadge tdsStatus={tdsStatus} />}
               </div>
             </CardContent>
           </Card>
 
-          {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ② Product Class (moved below the usage+family card)
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+          {/* Product Class */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2043,7 +1993,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── Targeted Websites ── */}
+          {/* Targeted Websites */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2076,7 +2026,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── Classification (Brand + Applications) ── */}
+          {/* Classification */}
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium">
@@ -2255,7 +2205,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── Pricing ── */}
+          {/* Pricing */}
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -2285,7 +2235,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── SEO ── */}
+          {/* SEO */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2336,7 +2286,10 @@ export default function AddNewProduct({
                     placeholder="Brief summary for search results…"
                     value={seoData.description}
                     onChange={(e) =>
-                      setSeoData((p) => ({ ...p, description: e.target.value }))
+                      setSeoData((p) => ({
+                        ...p,
+                        description: e.target.value,
+                      }))
                     }
                   />
                 </div>
@@ -2426,7 +2379,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── Publish ── */}
+          {/* Publish */}
           <Button
             disabled={isPublishing}
             onClick={handlePublish}
