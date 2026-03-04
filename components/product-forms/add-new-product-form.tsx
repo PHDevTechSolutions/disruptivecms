@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useDropzone } from "react-dropzone";
 import { db } from "@/lib/firebase";
 import {
@@ -53,6 +53,7 @@ import {
   AlertCircle,
   Plus,
   FolderPlus,
+  Info,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -79,18 +80,18 @@ import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 import { fillTdsPdf } from "@/lib/fillTdsPdf";
 
-// ─── NEW: inline product-family creator ──────────────────────────────────────
 import {
   CreateProductFamilyDialog,
   type CreatedFamily,
 } from "./CreateProductFamilyDialog";
 
-// ─── Shared types ─────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MasterItem {
   id: string;
   name: string;
   websites: string[];
+  productUsage?: string[];
   isTemp?: boolean;
 }
 
@@ -122,6 +123,8 @@ type TdsStatus =
   | "no-template";
 
 type ProductClass = "spf" | "standard" | "";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const PRODUCT_CLASS_OPTIONS: {
   value: ProductClass;
@@ -155,7 +158,23 @@ const WEBSITE_DOMAINS: Record<string, string> = {
   "Value Acquisitions Holdings": "https://vah.com.ph",
 };
 
-const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"];
+const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"] as const;
+type ProductUsage = (typeof PRODUCT_USAGE_OPTIONS)[number];
+
+const USAGE_COLORS: Record<ProductUsage, { pill: string; active: string }> = {
+  INDOOR: {
+    pill: "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400",
+    active: "border-blue-500 bg-blue-500 text-white",
+  },
+  OUTDOOR: {
+    pill: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400",
+    active: "border-emerald-500 bg-emerald-500 text-white",
+  },
+  SOLAR: {
+    pill: "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-400",
+    active: "border-amber-400 bg-amber-400 text-white",
+  },
+};
 
 // ─── TdsBadge ─────────────────────────────────────────────────────────────────
 
@@ -292,7 +311,6 @@ export default function AddNewProduct({
     Record<string, string[]>
   >({});
 
-  // ── NEW: controls the CreateProductFamilyDialog ───────────────────────────
   const [createFamilyOpen, setCreateFamilyOpen] = useState(false);
 
   const [productClass, setProductClass] = useState<ProductClass>(
@@ -320,6 +338,8 @@ export default function AddNewProduct({
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
+
+  // productUsage now lives in the new top card (also used as family filter)
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
   );
@@ -327,6 +347,7 @@ export default function AddNewProduct({
   const [appsOpen, setAppsOpen] = useState(false);
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
+  // ── Image state ────────────────────────────────────────────────────────────
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [rawImage, setRawImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
@@ -405,7 +426,7 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Firestore listeners (brands, apps, families) ─────────────────────────
+  // ── Firestore listeners ───────────────────────────────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -414,6 +435,7 @@ export default function AddNewProduct({
           id: d.id,
           name: d.data().title || d.data().name || "Unnamed",
           websites: d.data().websites || [],
+          productUsage: d.data().productUsage || [],
         }));
         const pending = pendingItemsRef.current
           .filter((p) => p.type === "category")
@@ -421,6 +443,7 @@ export default function AddNewProduct({
             id: `temp-${p.name}`,
             name: p.name,
             websites: [],
+            productUsage: [],
             isTemp: true,
           }));
         setAvailableCats([...db_items, ...pending]);
@@ -457,7 +480,18 @@ export default function AddNewProduct({
     };
   }, []);
 
-  // ── Specs + TDS template listener (fires when selectedCatId changes) ──────
+  // ── Filter families by selected productUsage ──────────────────────────────
+  const filteredCats = useMemo(() => {
+    if (productUsage.length === 0) return availableCats;
+    return availableCats.filter((cat) => {
+      if (cat.isTemp) return true;
+      const catUsage: string[] = cat.productUsage ?? [];
+      if (catUsage.length === 0) return true; // families with no usage tag always show
+      return productUsage.some((u) => catUsage.includes(u));
+    });
+  }, [availableCats, productUsage]);
+
+  // ── Specs + TDS template listener ────────────────────────────────────────
   useEffect(() => {
     if (!selectedCatId) {
       setTdsTemplateUrl("");
@@ -1091,27 +1125,31 @@ export default function AddNewProduct({
     </div>
   );
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const toggleUsage = (u: string) =>
+    setProductUsage((p) =>
+      p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
+    );
+
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ══ NEW: CreateProductFamilyDialog ══════════════════════════════════
-          Opens when the user clicks "Create new product family" in the
-          product-family combobox. On success it cross-saves the new spec
-          groups (if any) to `specs` and the family to `productfamilies`,
-          then immediately sets selectedCatId to the new family's ID so the
-          specs listener above fires and populates the form.
-      ═══════════════════════════════════════════════════════════════════════ */}
       <CreateProductFamilyDialog
         open={createFamilyOpen}
         onOpenChange={setCreateFamilyOpen}
         onCreated={(family: CreatedFamily) => {
-          // The onSnapshot listener on `productfamilies` will add this family
-          // to availableCats automatically. We optimistically inject it so the
-          // combobox label updates instantly before the snapshot fires.
           setAvailableCats((prev) =>
             prev.some((c) => c.id === family.id)
               ? prev
-              : [{ id: family.id, name: family.name, websites: [] }, ...prev],
+              : [
+                  {
+                    id: family.id,
+                    name: family.name,
+                    websites: [],
+                    productUsage: family.productUsage ?? [],
+                  },
+                  ...prev,
+                ],
           );
           setSelectedCatId(family.id);
           setCatOpen(false);
@@ -1119,42 +1157,9 @@ export default function AddNewProduct({
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 min-h-screen">
+        {/* ══════════════ MAIN COLUMN ════════════════════════════════════════ */}
         <div className="md:col-span-2 space-y-6">
-          {/* Product Class */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                <Package className="h-4 w-4" />
-                Product Class
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-3">
-                {PRODUCT_CLASS_OPTIONS.map((opt) => {
-                  const active = productClass === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setProductClass(active ? "" : opt.value)}
-                      className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? "border-primary bg-primary/5 text-primary font-semibold" : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
-                    >
-                      <span
-                        className={
-                          active ? "text-primary" : "text-muted-foreground"
-                        }
-                      >
-                        {opt.icon}
-                      </span>
-                      <p className="text-sm font-semibold">{opt.label}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* TDS note */}
+          {/* ── TDS note ── */}
           {tdsTemplateUrl && (
             <Card className="border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20">
               <CardContent className="pt-6">
@@ -1175,7 +1180,7 @@ export default function AddNewProduct({
             </Card>
           )}
 
-          {/* Media Assets */}
+          {/* ── Media Assets ── */}
           <Card>
             <CardHeader
               className="cursor-pointer select-none"
@@ -1336,7 +1341,7 @@ export default function AddNewProduct({
                   </div>
                 </div>
 
-                {/* Technical drawings (collapsed sub-section) */}
+                {/* Technical drawings */}
                 <div className="pt-2 border-t">
                   <button
                     type="button"
@@ -1553,7 +1558,7 @@ export default function AddNewProduct({
             )}
           </Card>
 
-          {/* General Information */}
+          {/* ── General Information ── */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1564,7 +1569,7 @@ export default function AddNewProduct({
             <CardContent className="space-y-5">
               <div className="space-y-2">
                 <Label className="text-sm font-medium">
-                  Item Description
+                  Item Description <span className="text-destructive">*</span>
                   {tdsTemplateUrl && (
                     <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
                       (applied to TDS)
@@ -1622,7 +1627,7 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* Technical specs (only shown when a family is selected) */}
+              {/* Technical specs */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
                   <div className="flex items-center gap-2 mb-4">
@@ -1703,7 +1708,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* Product Status */}
+          {/* ── Product Status ── */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1740,7 +1745,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* TDS file card (shown after publish) */}
+          {/* TDS file card */}
           {tdsUrl && (
             <Card className="border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-800">
               <CardHeader className="pb-3">
@@ -1789,7 +1794,256 @@ export default function AddNewProduct({
 
         {/* ══════════════ SIDEBAR ════════════════════════════════════════════ */}
         <div className="space-y-6">
-          {/* Targeted websites */}
+          {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              ① NEW TOP CARD — Product Usage & Product Family
+              Placed ABOVE product class and the rest of classification.
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+          <Card className="border-primary/20 bg-primary/[0.02]">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <LayoutGrid className="h-4 w-4 text-primary" />
+                Usage &amp; Product Family
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* ── Product Usage pills ─────────────────────────────────── */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                    <Sun className="h-3 w-3" />
+                    Product Usage
+                  </Label>
+                  {productUsage.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setProductUsage([])}
+                      className="text-[10px] text-muted-foreground hover:text-destructive transition-colors font-medium"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {PRODUCT_USAGE_OPTIONS.map((u) => {
+                    const active = productUsage.includes(u);
+                    const colors = USAGE_COLORS[u];
+                    return (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => toggleUsage(u)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-[11px] font-semibold transition-all",
+                          active ? colors.active : colors.pill,
+                        )}
+                      >
+                        {active && <Check className="h-3 w-3" />}
+                        {u}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── Product Family combobox ─────────────────────────────── */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Tag className="h-3 w-3 text-primary" />
+                  <Label className="text-xs font-medium">
+                    Product Family <span className="text-destructive">*</span>
+                  </Label>
+                </div>
+
+                {/* Filter tip */}
+                <div
+                  className={cn(
+                    "flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-medium transition-all",
+                    productUsage.length > 0
+                      ? "bg-primary/5 border border-primary/20 text-primary"
+                      : "bg-muted/50 border border-border text-muted-foreground",
+                  )}
+                >
+                  <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>
+                    {productUsage.length > 0 ? (
+                      <>
+                        Showing families tagged{" "}
+                        <strong>{productUsage.join(", ")}</strong>. Select usage
+                        above to filter.
+                      </>
+                    ) : (
+                      "Select a product usage above to filter families by type. This is optional."
+                    )}
+                  </span>
+                </div>
+
+                <Popover open={catOpen} onOpenChange={setCatOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      className="w-full justify-between h-9 text-xs font-medium"
+                    >
+                      <span className="truncate text-left">
+                        {selectedCatName || "Select product family…"}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[--radix-popover-trigger-width] p-0"
+                    align="start"
+                  >
+                    <Command>
+                      <CommandInput
+                        placeholder="Search families…"
+                        className="h-9 text-xs"
+                      />
+                      <CommandList>
+                        {/* Create new shortcut */}
+                        <CommandGroup>
+                          <CommandItem
+                            onSelect={() => {
+                              setCatOpen(false);
+                              setCreateFamilyOpen(true);
+                            }}
+                            className="text-xs font-bold text-primary gap-2 aria-selected:bg-primary/10"
+                          >
+                            <div className="flex h-5 w-5 items-center justify-center rounded-sm border border-primary/40 bg-primary/10 shrink-0">
+                              <Plus className="h-3 w-3 text-primary" />
+                            </div>
+                            Create new product family…
+                          </CommandItem>
+                        </CommandGroup>
+
+                        <CommandSeparator />
+                        <CommandEmpty>No family found.</CommandEmpty>
+
+                        <CommandGroup
+                          heading={
+                            productUsage.length > 0
+                              ? `Filtered by ${productUsage.join(", ")}`
+                              : "Existing families"
+                          }
+                        >
+                          {selectedCatId && (
+                            <CommandItem
+                              onSelect={() => {
+                                setSelectedCatId("");
+                                setCatOpen(false);
+                              }}
+                              className="text-xs text-muted-foreground italic"
+                            >
+                              <X className="mr-2 h-3 w-3" />
+                              Clear selection
+                            </CommandItem>
+                          )}
+                          {filteredCats.map((cat) => (
+                            <CommandItem
+                              key={cat.id}
+                              value={cat.name}
+                              onSelect={() => {
+                                setSelectedCatId(cat.id);
+                                setCatOpen(false);
+                              }}
+                              className={cn(
+                                "text-xs",
+                                cat.isTemp && "italic text-muted-foreground",
+                              )}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  selectedCatId === cat.id
+                                    ? "opacity-100 text-primary"
+                                    : "opacity-0",
+                                )}
+                              />
+                              <span className="flex-1 truncate">
+                                {cat.name}
+                              </span>
+                              {/* Usage tags inline */}
+                              {cat.productUsage &&
+                                cat.productUsage.length > 0 && (
+                                  <span className="ml-2 flex gap-1 shrink-0">
+                                    {(cat.productUsage as string[]).map((u) => (
+                                      <span
+                                        key={u}
+                                        className={cn(
+                                          "text-[7px] font-bold uppercase px-1 py-0.5 rounded-sm border",
+                                          u === "INDOOR" &&
+                                            "border-blue-200 bg-blue-50 text-blue-600",
+                                          u === "OUTDOOR" &&
+                                            "border-emerald-200 bg-emerald-50 text-emerald-600",
+                                          u === "SOLAR" &&
+                                            "border-amber-200 bg-amber-50 text-amber-600",
+                                        )}
+                                      >
+                                        {u}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              {cat.isTemp && (
+                                <span className="ml-1 text-[10px] opacity-60">
+                                  *new
+                                </span>
+                              )}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+
+                {selectedCatId && (
+                  <TdsBadge
+                    tdsStatus={tdsStatus}
+                    tdsTemplateUrl={tdsTemplateUrl}
+                  />
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              ② Product Class (moved below the usage+family card)
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Package className="h-4 w-4" />
+                Product Class
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3">
+                {PRODUCT_CLASS_OPTIONS.map((opt) => {
+                  const active = productClass === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setProductClass(active ? "" : opt.value)}
+                      className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? "border-primary bg-primary/5 text-primary font-semibold" : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
+                    >
+                      <span
+                        className={
+                          active ? "text-primary" : "text-muted-foreground"
+                        }
+                      >
+                        {opt.icon}
+                      </span>
+                      <p className="text-sm font-semibold">{opt.label}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── Targeted Websites ── */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1822,120 +2076,14 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* Classification */}
+          {/* ── Classification (Brand + Applications) ── */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium text-center">
+              <CardTitle className="text-sm font-medium">
                 Classification
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {/* ── Product Family combobox (REFACTORED) ─────────────────── */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-primary">
-                  <Tag className="h-3 w-3" />
-                  <Label className="text-xs font-medium">Product Family</Label>
-                </div>
-                <Popover open={catOpen} onOpenChange={setCatOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      className="w-full justify-between h-9 text-xs font-medium"
-                    >
-                      <span className="truncate text-left">
-                        {selectedCatName || "Select product family…"}
-                      </span>
-                      <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-[--radix-popover-trigger-width] p-0"
-                    align="start"
-                  >
-                    <Command>
-                      <CommandInput
-                        placeholder="Search families…"
-                        className="h-9 text-xs"
-                      />
-                      <CommandList>
-                        {/* ── Create-new shortcut ── */}
-                        <CommandGroup>
-                          <CommandItem
-                            onSelect={() => {
-                              setCatOpen(false);
-                              setCreateFamilyOpen(true);
-                            }}
-                            className="text-xs font-bold text-primary gap-2 aria-selected:bg-primary/10"
-                          >
-                            <div className="flex h-5 w-5 items-center justify-center rounded-sm border border-primary/40 bg-primary/10 shrink-0">
-                              <Plus className="h-3 w-3 text-primary" />
-                            </div>
-                            Create new product family…
-                          </CommandItem>
-                        </CommandGroup>
-
-                        <CommandSeparator />
-
-                        <CommandEmpty>No family found.</CommandEmpty>
-
-                        <CommandGroup heading="Existing families">
-                          {selectedCatId && (
-                            <CommandItem
-                              onSelect={() => {
-                                setSelectedCatId("");
-                                setCatOpen(false);
-                              }}
-                              className="text-xs text-muted-foreground italic"
-                            >
-                              <X className="mr-2 h-3 w-3" />
-                              Clear selection
-                            </CommandItem>
-                          )}
-                          {availableCats.map((cat) => (
-                            <CommandItem
-                              key={cat.id}
-                              value={cat.name}
-                              onSelect={() => {
-                                setSelectedCatId(cat.id);
-                                setCatOpen(false);
-                              }}
-                              className={cn(
-                                "text-xs",
-                                cat.isTemp && "italic text-muted-foreground",
-                              )}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-3 w-3",
-                                  selectedCatId === cat.id
-                                    ? "opacity-100 text-primary"
-                                    : "opacity-0",
-                                )}
-                              />
-                              {cat.name}
-                              {cat.isTemp && (
-                                <span className="ml-1 text-[10px] opacity-60">
-                                  *new
-                                </span>
-                              )}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-
-                {selectedCatId && (
-                  <TdsBadge
-                    tdsStatus={tdsStatus}
-                    tdsTemplateUrl={tdsTemplateUrl}
-                  />
-                )}
-              </div>
-              {/* ── End Product Family combobox ── */}
-
+            <CardContent className="space-y-5">
               {/* Brand */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
@@ -2104,90 +2252,10 @@ export default function AddNewProduct({
                   </div>
                 )}
               </div>
-
-              {/* Product Usage */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-primary">
-                  <LayoutGrid className="h-3 w-3" />
-                  <Label className="text-xs font-medium">Product Usage</Label>
-                </div>
-                <Popover open={usageOpen} onOpenChange={setUsageOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      className="w-full justify-between h-9 text-xs font-medium"
-                    >
-                      <span className="truncate text-left">
-                        {productUsage.length
-                          ? productUsage.join(", ")
-                          : "Select usage…"}
-                      </span>
-                      <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-[--radix-popover-trigger-width] p-0"
-                    align="start"
-                  >
-                    <Command>
-                      <CommandList>
-                        <CommandGroup>
-                          {PRODUCT_USAGE_OPTIONS.map((opt) => (
-                            <CommandItem
-                              key={opt}
-                              value={opt}
-                              onSelect={() =>
-                                setProductUsage((p) =>
-                                  p.includes(opt)
-                                    ? p.filter((v) => v !== opt)
-                                    : [...p, opt],
-                                )
-                              }
-                              className="text-xs"
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-3 w-3",
-                                  productUsage.includes(opt)
-                                    ? "opacity-100 text-primary"
-                                    : "opacity-0",
-                                )}
-                              />
-                              {opt}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                {productUsage.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {productUsage.map((u) => (
-                      <span
-                        key={u}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold border border-primary/20"
-                      >
-                        {u}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setProductUsage((p) => p.filter((v) => v !== u))
-                          }
-                          className="hover:text-destructive transition-colors"
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
 
-          {/* Pricing */}
+          {/* ── Pricing ── */}
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -2217,7 +2285,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* SEO */}
+          {/* ── SEO ── */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2240,7 +2308,7 @@ export default function AddNewProduct({
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium flex justify-between">
-                    URL Slug
+                    URL Slug <span className="text-destructive">*</span>
                     <span className="text-[10px] text-destructive font-normal">
                       No forward slash (/)
                     </span>
@@ -2358,7 +2426,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* Publish button */}
+          {/* ── Publish ── */}
           <Button
             disabled={isPublishing}
             onClick={handlePublish}

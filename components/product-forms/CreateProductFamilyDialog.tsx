@@ -50,6 +50,11 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"] as const;
+type ProductUsage = (typeof PRODUCT_USAGE_OPTIONS)[number];
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SpecGroupDoc = {
@@ -62,7 +67,6 @@ type SpecGroupDoc = {
 type SpecItemRef = { id: string; name: string };
 type FamilySpec = { specGroupId: string; specItems: SpecItemRef[] };
 
-/** A brand-new spec group that hasn't been saved to Firestore yet. */
 type PendingGroup = {
   tempId: string;
   name: string;
@@ -72,18 +76,17 @@ type PendingGroup = {
 export interface CreatedFamily {
   id: string;
   name: string;
+  productUsage: ProductUsage[];
 }
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  /** Called after both the spec groups and the product family are persisted. */
   onCreated: (family: CreatedFamily) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Mirrors the same helper used in ProductFamiliesPage. */
 function buildItemId(groupId: string, label: string): string {
   return `${groupId}:${label.toUpperCase().trim()}`;
 }
@@ -92,47 +95,87 @@ function makeTempId(): string {
   return `pending:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// ─── Usage pill ───────────────────────────────────────────────────────────────
+
+function UsagePill({
+  label,
+  active,
+  onClick,
+}: {
+  label: ProductUsage;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const colors: Record<ProductUsage, string> = {
+    INDOOR:
+      "border-blue-300 bg-blue-50 text-blue-700 data-[active=true]:bg-blue-600 data-[active=true]:text-white data-[active=true]:border-blue-600",
+    OUTDOOR:
+      "border-emerald-300 bg-emerald-50 text-emerald-700 data-[active=true]:bg-emerald-600 data-[active=true]:text-white data-[active=true]:border-emerald-600",
+    SOLAR:
+      "border-amber-300 bg-amber-50 text-amber-700 data-[active=true]:bg-amber-500 data-[active=true]:text-white data-[active=true]:border-amber-500",
+  };
+  return (
+    <button
+      type="button"
+      data-active={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1 border rounded-none px-2.5 py-1 text-[9px] font-black uppercase transition-colors",
+        colors[label],
+      )}
+    >
+      {active && <Check size={9} />}
+      {label}
+    </button>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Props) {
-  // ── Family basic fields ──────────────────────────────────────────────────
+export function CreateProductFamilyDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [productUsage, setProductUsage] = useState<ProductUsage[]>([]);
 
-  // ── Existing spec groups (from Firestore) ────────────────────────────────
   const [existingGroups, setExistingGroups] = useState<SpecGroupDoc[]>([]);
   const [groupComboOpen, setGroupComboOpen] = useState(false);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
 
-  // ── Item selections — key = groupId OR tempId, value = array of item IDs ─
-  const [itemSelections, setItemSelections] = useState<Record<string, string[]>>({});
+  const [itemSelections, setItemSelections] = useState<
+    Record<string, string[]>
+  >({});
   const [itemSearch, setItemSearch] = useState<Record<string, string>>({});
 
-  // ── Pending new spec groups (not yet in Firestore) ───────────────────────
   const [pendingGroups, setPendingGroups] = useState<PendingGroup[]>([]);
 
-  // ── Inline new-group form ────────────────────────────────────────────────
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupLabels, setNewGroupLabels] = useState<string[]>([""]);
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // ── Firestore listener for existing groups ───────────────────────────────
+  // ── Firestore listener ───────────────────────────────────────────────────
   useEffect(() => {
     if (!open) return;
     const q = query(collection(db, "specs"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
-      setExistingGroups(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      setExistingGroups(
+        snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
+      );
     });
     return unsub;
   }, [open]);
 
-  // ── Reset all state when the dialog closes ───────────────────────────────
+  // ── Reset on close ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!open) {
       setTitle("");
       setDescription("");
+      setProductUsage([]);
       setSelectedGroupIds([]);
       setItemSelections({});
       setItemSearch({});
@@ -143,17 +186,12 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     }
   }, [open]);
 
-  // ── Derived: lookup map ───────────────────────────────────────────────────
   const groupById = useMemo(() => {
     const m = new Map<string, SpecGroupDoc>();
     for (const g of existingGroups) m.set(g.id, g);
     return m;
   }, [existingGroups]);
 
-  /**
-   * All groups currently "active" in the form — existing selected ones plus
-   * any pending (locally-created) ones.
-   */
   const allGroups = useMemo(() => {
     const existing = selectedGroupIds.map((id) => {
       const g = groupById.get(id);
@@ -171,7 +209,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
         isPending: false as const,
       };
     });
-
     const pending = pendingGroups.map((pg) => ({
       id: pg.tempId,
       name: pg.name,
@@ -185,15 +222,13 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
       ),
       isPending: true as const,
     }));
-
     return [...existing, ...pending];
   }, [selectedGroupIds, pendingGroups, groupById]);
 
-  // ── Existing-group selection ──────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────────────────
   const toggleExistingGroup = (id: string) => {
     setSelectedGroupIds((prev) => {
       if (prev.includes(id)) {
-        // Remove and clear its selections
         setItemSelections((s) => {
           const copy = { ...s };
           delete copy[id];
@@ -206,7 +241,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     setGroupComboOpen(false);
   };
 
-  // ── Item toggle helpers ───────────────────────────────────────────────────
   const toggleItem = (groupId: string, itemId: string) => {
     setItemSelections((prev) => {
       const cur = new Set(prev[groupId] ?? []);
@@ -222,12 +256,11 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     }));
   };
 
-  // ── Inline new-group form helpers ─────────────────────────────────────────
   const addLabel = () => setNewGroupLabels((p) => [...p, ""]);
-
   const removeLabel = (i: number) =>
-    setNewGroupLabels((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i));
-
+    setNewGroupLabels((p) =>
+      p.length === 1 ? p : p.filter((_, idx) => idx !== i),
+    );
   const updateLabel = (i: number, val: string) =>
     setNewGroupLabels((p) => {
       const c = [...p];
@@ -241,16 +274,16 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
       .map((l) => l.trim().toUpperCase())
       .filter(Boolean);
     if (validLabels.length === 0) return toast.error("Add at least one label");
-
     const tempId = makeTempId();
     const groupName = newGroupName.trim().toUpperCase();
-
     setPendingGroups((p) => [
       ...p,
-      { tempId, name: groupName, items: validLabels.map((label) => ({ label })) },
+      {
+        tempId,
+        name: groupName,
+        items: validLabels.map((label) => ({ label })),
+      },
     ]);
-
-    // Reset the inline form
     setNewGroupName("");
     setNewGroupLabels([""]);
     setNewGroupOpen(false);
@@ -266,10 +299,10 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     });
   };
 
-  // ── Validation ────────────────────────────────────────────────────────────
   const validate = (): string | null => {
     if (!title.trim()) return "Product family title is required";
-    if (allGroups.length === 0) return "Select or create at least one spec group";
+    if (allGroups.length === 0)
+      return "Select or create at least one spec group";
     for (const g of allGroups) {
       if ((itemSelections[g.id] ?? []).length === 0)
         return `Select at least one spec item for "${g.name}"`;
@@ -277,19 +310,18 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     return null;
   };
 
-  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     const err = validate();
     if (err) return toast.error(err);
 
     setIsSaving(true);
     try {
-      // 1. Persist pending spec groups → collect real Firestore IDs
+      // 1. Persist pending spec groups
       const tempToRealId: Record<string, string> = {};
       for (const pg of pendingGroups) {
         const ref = await addDoc(collection(db, "specs"), {
           name: pg.name,
-          items: pg.items,          // [{ label: string }] — same schema as specsMaintenancePage
+          items: pg.items,
           isActive: true,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -297,32 +329,29 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
         tempToRealId[pg.tempId] = ref.id;
       }
 
-      // 2. Build the `specs` array for the product family
-      //    (same schema as ProductFamiliesPage: specGroupId + specItems[{id, name}])
+      // 2. Build specs array
       const specs: FamilySpec[] = allGroups
         .map((g) => {
           const realGroupId = tempToRealId[g.id] ?? g.id;
           const chosenIds = new Set(itemSelections[g.id] ?? []);
-
           const specItems: SpecItemRef[] = g.labels
             .map((label) => ({
               id: buildItemId(realGroupId, label),
               name: label,
-              // Keep the original temp-based ID for matching against chosenIds
               _tempId: buildItemId(g.id, label),
             }))
             .filter((it) => chosenIds.has(it._tempId) || chosenIds.has(it.id))
             .map(({ _tempId: _ignored, ...rest }) => rest);
-
           return { specGroupId: realGroupId, specItems };
         })
         .filter((g) => g.specItems.length > 0);
 
-      // 3. Persist the product family
+      // 3. Persist product family (with productUsage)
       const familyRef = await addDoc(collection(db, "productfamilies"), {
         title: title.trim().toUpperCase(),
         description: description.trim() || null,
-        specs,                      // same schema as ProductFamiliesPage
+        specs,
+        productUsage, // ← NEW field
         isActive: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -330,7 +359,7 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
 
       const createdName = title.trim().toUpperCase();
       toast.success(`Product family "${createdName}" created`);
-      onCreated({ id: familyRef.id, name: createdName });
+      onCreated({ id: familyRef.id, name: createdName, productUsage });
       onOpenChange(false);
     } catch (e) {
       console.error("[CreateProductFamilyDialog]", e);
@@ -340,30 +369,28 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
     }
   };
 
-  // ── Derived stats ─────────────────────────────────────────────────────────
   const totalSelectedItems = allGroups.reduce(
     (sum, g) => sum + (itemSelections[g.id] ?? []).length,
     0,
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col rounded-none p-0 gap-0">
-        {/* ── Header ── */}
+        {/* Header */}
         <DialogHeader className="p-6 pb-4 border-b shrink-0">
           <DialogTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
             <FolderPlus className="h-4 w-4 text-primary" />
             Create New Product Family
           </DialogTitle>
           <p className="text-[10px] text-muted-foreground uppercase font-bold pt-0.5">
-            This family and any new spec groups will be saved to Firestore immediately.
+            This family and any new spec groups will be saved to Firestore
+            immediately.
           </p>
         </DialogHeader>
 
-        {/* ── Scrollable body ── */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-
           {/* Title */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold uppercase opacity-60">
@@ -379,7 +406,9 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
               )}
             />
             {!title.trim() && (
-              <p className="text-[10px] text-destructive font-bold uppercase">Title is required</p>
+              <p className="text-[10px] text-destructive font-bold uppercase">
+                Title is required
+              </p>
             )}
           </div>
 
@@ -396,9 +425,33 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
             />
           </div>
 
+          {/* ── Product Usage (NEW) ── */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase opacity-60">
+              Product Usage <span className="opacity-50">(optional)</span>
+            </label>
+            <div className="flex gap-1.5 flex-wrap">
+              {PRODUCT_USAGE_OPTIONS.map((u) => (
+                <UsagePill
+                  key={u}
+                  label={u}
+                  active={productUsage.includes(u)}
+                  onClick={() =>
+                    setProductUsage((p) =>
+                      p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
+                    )
+                  }
+                />
+              ))}
+            </div>
+            <p className="text-[9px] text-muted-foreground uppercase font-bold">
+              Tagging usage enables filtering in the product form
+            </p>
+          </div>
+
           <Separator />
 
-          {/* ── Spec Group Section ── */}
+          {/* Spec Groups */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -414,12 +467,13 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                   variant="secondary"
                   className="rounded-none text-[8px] font-black uppercase px-2 h-5"
                 >
-                  {allGroups.length} group{allGroups.length !== 1 ? "s" : ""} · {totalSelectedItems} items
+                  {allGroups.length} group{allGroups.length !== 1 ? "s" : ""} ·{" "}
+                  {totalSelectedItems} items
                 </Badge>
               )}
             </div>
 
-            {/* ── Existing groups combobox ── */}
+            {/* Existing groups combobox */}
             <Popover open={groupComboOpen} onOpenChange={setGroupComboOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -441,7 +495,10 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                 align="start"
               >
                 <Command>
-                  <CommandInput placeholder="Search spec groups…" className="h-9 text-xs" />
+                  <CommandInput
+                    placeholder="Search spec groups…"
+                    className="h-9 text-xs"
+                  />
                   <CommandList>
                     <CommandEmpty>No spec groups found.</CommandEmpty>
                     <CommandGroup>
@@ -454,7 +511,10 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                             className="text-[10px] uppercase font-bold"
                           >
                             <Check
-                              className={cn("mr-2 h-3 w-3", selected ? "opacity-100" : "opacity-0")}
+                              className={cn(
+                                "mr-2 h-3 w-3",
+                                selected ? "opacity-100" : "opacity-0",
+                              )}
                             />
                             {g.name}
                             {g.isActive === false && (
@@ -474,7 +534,7 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
               </PopoverContent>
             </Popover>
 
-            {/* ── Per-group item selector ── */}
+            {/* Per-group item selector */}
             {allGroups.length > 0 && (
               <div className="space-y-2">
                 {allGroups.map((g) => {
@@ -483,10 +543,11 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                     ? g.labels.filter((l) => l.includes(search))
                     : g.labels;
                   const selectedSet = new Set(itemSelections[g.id] ?? []);
-
                   return (
-                    <div key={g.id} className="border border-foreground/10 rounded-none">
-                      {/* Group header */}
+                    <div
+                      key={g.id}
+                      className="border border-foreground/10 rounded-none"
+                    >
                       <div className="flex items-center justify-between gap-2 p-2.5 border-b bg-muted/20">
                         <div className="min-w-0 flex items-center gap-2">
                           {g.isPending && (
@@ -502,7 +563,8 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                               {g.name}
                             </p>
                             <p className="text-[9px] text-muted-foreground uppercase">
-                              {selectedSet.size} selected · {g.labels.length} available
+                              {selectedSet.size} selected · {g.labels.length}{" "}
+                              available
                             </p>
                           </div>
                         </div>
@@ -539,18 +601,18 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                           )}
                         </div>
                       </div>
-
-                      {/* Item list */}
                       <div className="p-2.5 space-y-2">
                         <Input
                           value={itemSearch[g.id] ?? ""}
                           onChange={(e) =>
-                            setItemSearch((p) => ({ ...p, [g.id]: e.target.value }))
+                            setItemSearch((p) => ({
+                              ...p,
+                              [g.id]: e.target.value,
+                            }))
                           }
                           placeholder="Filter items…"
                           className="rounded-none h-8 text-xs"
                         />
-
                         {g.labels.length === 0 ? (
                           <p className="text-[10px] text-muted-foreground uppercase font-bold border border-dashed border-foreground/10 p-2 text-center">
                             No items defined for this group
@@ -592,7 +654,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                             })}
                           </div>
                         )}
-
                         {(itemSelections[g.id] ?? []).length === 0 && (
                           <p className="text-[10px] text-destructive uppercase font-bold">
                             Select at least one item for this group
@@ -607,7 +668,7 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
 
             <Separator />
 
-            {/* ── Inline new spec group creator ── */}
+            {/* Inline new spec group creator */}
             <div className="space-y-3">
               <button
                 type="button"
@@ -627,7 +688,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
 
               {newGroupOpen && (
                 <div className="border border-foreground/10 p-4 space-y-4 bg-muted/10 rounded-none">
-                  {/* Group name */}
                   <div className="space-y-1.5">
                     <label className="text-[9px] font-black uppercase opacity-60">
                       Group Name <span className="text-destructive">*</span>
@@ -639,8 +699,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                       className="rounded-none h-9 text-xs uppercase font-bold"
                     />
                   </div>
-
-                  {/* Label rows */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-[9px] font-black uppercase opacity-60">
@@ -679,7 +737,6 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
                       ))}
                     </div>
                   </div>
-
                   <Button
                     type="button"
                     onClick={handleAddPendingGroup}
@@ -696,16 +753,17 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
               <div className="flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 rounded-none">
                 <span className="text-amber-500 text-sm shrink-0">⚠</span>
                 <p className="text-[9px] text-amber-700 uppercase font-bold leading-relaxed">
-                  {pendingGroups.length} new spec group{pendingGroups.length !== 1 ? "s" : ""} (
-                  {pendingGroups.map((g) => g.name).join(", ")}) will be saved to Firestore
-                  when you click "Create Product Family".
+                  {pendingGroups.length} new spec group
+                  {pendingGroups.length !== 1 ? "s" : ""} (
+                  {pendingGroups.map((g) => g.name).join(", ")}) will be saved
+                  to Firestore when you click "Create Product Family".
                 </p>
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Footer ── */}
+        {/* Footer */}
         <DialogFooter className="p-5 border-t shrink-0 flex flex-row gap-2">
           <Button
             type="button"
@@ -725,8 +783,7 @@ export function CreateProductFamilyDialog({ open, onOpenChange, onCreated }: Pro
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <>
-                <FolderPlus size={14} />
-                Create Product Family
+                <FolderPlus size={14} /> Create Product Family
               </>
             )}
           </Button>

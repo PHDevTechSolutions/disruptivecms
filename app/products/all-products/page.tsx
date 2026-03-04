@@ -35,6 +35,7 @@ import {
   CheckCircle2,
   AlertCircle,
   CircleDashed,
+  ShoppingBag,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -124,7 +125,6 @@ export type Product = {
   mainImage: string;
   rawImage: string[];
   categories: string;
-  /** Canonical product family title — matches productfamilies.title in Firestore. */
   productFamily?: string;
   brand: string | string[];
   website: string | string[];
@@ -149,9 +149,9 @@ interface TdsJob {
   error?: string;
 }
 
-// ─── Taskflow schema builder ──────────────────────────────────────────────────
+// ─── Schema builder (shared by Taskflow & Shopify transforms) ─────────────────
 
-function buildTaskflowProduct(product: Product, newWebsites: string[]) {
+function buildTransformedProduct(product: Product, newWebsites: string[]) {
   const existingWebsites: string[] = Array.isArray(product.websites)
     ? product.websites
     : product.website
@@ -180,7 +180,7 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
   const rawMain =
     Array.isArray(product.rawImage) && product.rawImage.length > 0
       ? product.rawImage[0]
-      : ((product.rawImage as unknown as string) || "");
+      : (product.rawImage as unknown as string) || "";
   const mainImage = product.mainImage || rawMain || "";
 
   return {
@@ -216,6 +216,9 @@ function buildTaskflowProduct(product: Product, newWebsites: string[]) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+/** Website values that trigger a schema transform on bulk-assign. */
+const SCHEMA_TRANSFORM_WEBSITES = new Set(["Taskflow", "Shopify"]);
+
 const WEBSITE_OPTIONS = [
   {
     id: "disruptive",
@@ -224,6 +227,7 @@ const WEBSITE_OPTIONS = [
     color: "bg-blue-50 border-blue-200 text-blue-700",
     activeColor: "bg-blue-100 border-blue-500 text-blue-800",
     dot: "bg-blue-500",
+    transformNote: null,
   },
   {
     id: "ecoshift",
@@ -232,6 +236,7 @@ const WEBSITE_OPTIONS = [
     color: "bg-emerald-50 border-emerald-200 text-emerald-700",
     activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
     dot: "bg-emerald-500",
+    transformNote: null,
   },
   {
     id: "vah",
@@ -240,6 +245,7 @@ const WEBSITE_OPTIONS = [
     color: "bg-amber-50 border-amber-200 text-amber-700",
     activeColor: "bg-amber-100 border-amber-500 text-amber-800",
     dot: "bg-amber-500",
+    transformNote: null,
   },
   {
     id: "taskflow",
@@ -248,10 +254,18 @@ const WEBSITE_OPTIONS = [
     color: "bg-violet-50 border-violet-200 text-violet-700",
     activeColor: "bg-violet-100 border-violet-500 text-violet-800",
     dot: "bg-violet-500",
+    transformNote: "Schema transform",
+  },
+  {
+    id: "shopify",
+    label: "Shopify",
+    value: "Shopify",
+    color: "bg-green-50 border-green-200 text-green-700",
+    activeColor: "bg-green-100 border-green-500 text-green-800",
+    dot: "bg-green-500",
+    transformNote: "Schema transform",
   },
 ];
-
-const TASKFLOW = "Taskflow";
 
 const PRODUCT_CLASS_OPTIONS: {
   value: "spf" | "standard";
@@ -282,7 +296,7 @@ const PRODUCT_CLASS_OPTIONS: {
   },
 ];
 
-// ─── Custom filter (handles arrays) ──────────────────────────────────────────
+// ─── Custom filter ────────────────────────────────────────────────────────────
 
 const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   const value = row.getValue(columnId);
@@ -292,7 +306,7 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   return String(value).toLowerCase().includes(filter);
 };
 
-// ─── Product-class badge helper ───────────────────────────────────────────────
+// ─── Product-class badge ──────────────────────────────────────────────────────
 
 function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
   if (!value)
@@ -324,7 +338,6 @@ function TdsPreviewDialog({
   product: Product | null;
 }) {
   if (!product) return null;
-
   const tdsUrl = product.tdsFileUrl;
   const productName = product.itemDescription || product.name || "Product";
 
@@ -475,19 +488,11 @@ function BulkGenerateTdsDialog({
                   <AlertCircle className="w-4 h-4 text-destructive" />
                 )}
               </span>
-
               <span
-                className={`flex-1 truncate text-xs ${
-                  job.status === "error"
-                    ? "text-destructive"
-                    : job.status === "done"
-                      ? "text-muted-foreground"
-                      : "text-foreground"
-                }`}
+                className={`flex-1 truncate text-xs ${job.status === "error" ? "text-destructive" : job.status === "done" ? "text-muted-foreground" : "text-foreground"}`}
               >
                 {job.productName}
               </span>
-
               <span className="text-[10px] text-muted-foreground shrink-0 max-w-[140px] truncate text-right">
                 {job.status === "pending" && "Queued"}
                 {job.status === "generating" && "Generating…"}
@@ -500,11 +505,7 @@ function BulkGenerateTdsDialog({
 
         {isComplete && (
           <div
-            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${
-              errors === 0
-                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-amber-50 border-amber-200 text-amber-700"
-            }`}
+            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${errors === 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
           >
             <p className="font-semibold">
               {errors === 0
@@ -593,7 +594,10 @@ function AssignToWebsiteDialog({
     }
   };
 
-  const includesTaskflow = selectedWebsites.includes(TASKFLOW);
+  // Which transform-tagged sites are currently selected
+  const selectedTransformSites = selectedWebsites.filter((w) =>
+    SCHEMA_TRANSFORM_WEBSITES.has(w),
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -624,12 +628,7 @@ function AssignToWebsiteDialog({
                 key={site.id}
                 type="button"
                 onClick={() => toggleWebsite(site.value)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150
-                  ${
-                    isSelected
-                      ? `${site.activeColor} shadow-sm`
-                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
-                  }`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150 ${isSelected ? `${site.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
               >
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
@@ -639,14 +638,15 @@ function AssignToWebsiteDialog({
                 >
                   {site.label}
                 </span>
-                {site.value === TASKFLOW && (
-                  <span className="text-[10px] text-violet-500 font-semibold mr-1">
-                    Schema transform
+                {site.transformNote && (
+                  <span
+                    className={`text-[10px] font-semibold mr-1 ${site.id === "shopify" ? "text-green-600" : "text-violet-500"}`}
+                  >
+                    {site.transformNote}
                   </span>
                 )}
                 <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all
-                    ${isSelected ? "bg-current/20 opacity-100" : "opacity-0"}`}
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-current/20 opacity-100" : "opacity-0"}`}
                 >
                   <Check className="w-3 h-3" />
                 </span>
@@ -655,15 +655,39 @@ function AssignToWebsiteDialog({
           })}
         </div>
 
-        {includesTaskflow && (
-          <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
-            <p className="font-semibold">Taskflow schema transformation</p>
-            <p className="text-violet-600 leading-snug">
-              Products assigned to Taskflow will be written to{" "}
-              <span className="font-mono font-semibold">taskflow_products</span>{" "}
-              with a transformed schema — item codes, names, and images are
-              remapped and defaults are set for slug, SEO, pricing, and status.
-            </p>
+        {/* Schema transform notice — shown when Taskflow and/or Shopify selected */}
+        {selectedTransformSites.length > 0 && (
+          <div className="space-y-2">
+            {selectedTransformSites.includes("Taskflow") && (
+              <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                  Taskflow schema transformation
+                </p>
+                <p className="text-violet-600 leading-snug">
+                  Products will be written to{" "}
+                  <span className="font-mono font-semibold">
+                    taskflow_products
+                  </span>{" "}
+                  with remapped item codes, names, images, and defaults for
+                  slug, SEO, pricing, and status.
+                </p>
+              </div>
+            )}
+            {selectedTransformSites.includes("Shopify") && (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-xs text-green-700 space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+                  Shopify schema transformation
+                </p>
+                <p className="text-green-600 leading-snug">
+                  Products tagged <span className="font-semibold">Shopify</span>{" "}
+                  will have the same schema transform applied — item codes,
+                  names, and images remapped with defaults for slug, SEO,
+                  pricing, and status.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -708,6 +732,108 @@ function AssignToWebsiteDialog({
                 {selectedWebsites.length > 0
                   ? `${selectedWebsites.length} Website${selectedWebsites.length !== 1 ? "s" : ""}`
                   : "Website"}
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Assign to Shopify Dialog ─────────────────────────────────────────────────
+
+function AssignToShopifyDialog({
+  open,
+  onOpenChange,
+  selectedCount,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  selectedCount: number;
+  onConfirm: () => Promise<void>;
+}) {
+  const [isAssigning, setIsAssigning] = React.useState(false);
+
+  const handleConfirm = async () => {
+    setIsAssigning(true);
+    try {
+      await onConfirm();
+      onOpenChange(false);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-green-50 border border-green-200 flex items-center justify-center shrink-0">
+              <ShoppingBag className="w-4 h-4 text-green-600" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">Assign to Shopify</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
+                tagged and schema-transformed for Shopify.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-xs text-green-700 space-y-1.5">
+          <p className="font-semibold flex items-center gap-1.5">
+            <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+            Shopify schema transformation
+          </p>
+          <p className="text-green-600 leading-snug">
+            The same transform used for Taskflow will be applied — item codes,
+            names, and images are remapped, and defaults are set for slug, SEO,
+            pricing, and status.
+          </p>
+          <p className="text-green-600 leading-snug">
+            Products will be tagged{" "}
+            <span className="font-mono font-semibold">Shopify</span> in their{" "}
+            <span className="font-mono font-semibold">websites</span> array.
+          </p>
+        </div>
+
+        <div className="bg-muted/50 rounded-lg px-4 py-3 border">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">
+              {selectedCount} product{selectedCount !== 1 ? "s" : ""}
+            </span>{" "}
+            will be assigned to{" "}
+            <span className="font-semibold text-foreground">Shopify</span>.
+            Existing website assignments will be preserved.
+          </p>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={isAssigning}
+            className="gap-2 bg-green-600 hover:bg-green-700 text-white"
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Assigning…
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="h-4 w-4" />
+                Assign {selectedCount} to Shopify
               </>
             )}
           </Button>
@@ -781,12 +907,7 @@ function AssignProductClassDialog({
                 key={option.value}
                 type="button"
                 onClick={() => setSelectedClass(option.value)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150
-                  ${
-                    isSelected
-                      ? `${option.activeColor} shadow-sm`
-                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
-                  }`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150 ${isSelected ? `${option.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
               >
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`}
@@ -802,8 +923,7 @@ function AssignProductClassDialog({
                   </span>
                 </span>
                 <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all
-                    ${isSelected ? "opacity-100" : "opacity-0"}`}
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
                 >
                   <Check className="w-3 h-3" />
                 </span>
@@ -814,11 +934,7 @@ function AssignProductClassDialog({
 
         {selectedClass && (
           <div
-            className={`rounded-lg px-4 py-3 border text-xs space-y-1 ${
-              selectedClass === "spf"
-                ? "bg-violet-50 border-violet-200 text-violet-700"
-                : "bg-slate-50 border-slate-200 text-slate-700"
-            }`}
+            className={`rounded-lg px-4 py-3 border text-xs space-y-1 ${selectedClass === "spf" ? "bg-violet-50 border-violet-200 text-violet-700" : "bg-slate-50 border-slate-200 text-slate-700"}`}
           >
             <p className="font-semibold">
               {selectedClass === "spf" ? "SPF" : "Standard"} class will be
@@ -850,11 +966,7 @@ function AssignProductClassDialog({
           <Button
             onClick={handleConfirm}
             disabled={!selectedClass || isAssigning}
-            className={`gap-2 ${
-              selectedClass === "spf"
-                ? "bg-violet-600 hover:bg-violet-700 text-white"
-                : ""
-            }`}
+            className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}
           >
             {isAssigning ? (
               <>
@@ -907,12 +1019,12 @@ export default function AllProductsPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
+  const [assignShopifyOpen, setAssignShopifyOpen] = React.useState(false);
   const [assignProductClassOpen, setAssignProductClassOpen] =
     React.useState(false);
 
   const [tdsPreviewProduct, setTdsPreviewProduct] =
     React.useState<Product | null>(null);
-
   const [bulkTdsOpen, setBulkTdsOpen] = React.useState(false);
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
@@ -985,6 +1097,7 @@ export default function AllProductsPage() {
         "Ecoshift Corporation",
         "Value Acquisitions Holdings",
         "Taskflow",
+        "Shopify",
       ]),
       orderBy("createdAt", "desc"),
     );
@@ -1040,7 +1153,6 @@ export default function AllProductsPage() {
     const batch = writeBatch(db);
     const { id, ...rest } = product;
     const actor = getCurrentAdminUser();
-
     batch.set(doc(db, "recycle_bin", id), {
       ...rest,
       originalCollection: "products",
@@ -1057,7 +1169,6 @@ export default function AllProductsPage() {
     });
     batch.delete(doc(db, "products", id));
     await batch.commit();
-
     await logAuditEvent({
       action: "delete",
       entityType: "product",
@@ -1069,7 +1180,6 @@ export default function AllProductsPage() {
         collection: "products",
       },
     });
-
     toast.success(
       `"${product.itemDescription || product.name}" moved to recycle bin.`,
     );
@@ -1085,7 +1195,6 @@ export default function AllProductsPage() {
       const batch = writeBatch(db);
       const actor = getCurrentAdminUser();
       const ids: string[] = [];
-
       selectedRows.forEach(({ original: product }) => {
         const { id, ...rest } = product;
         ids.push(id);
@@ -1106,7 +1215,6 @@ export default function AllProductsPage() {
         batch.delete(doc(db, "products", id));
       });
       await batch.commit();
-
       await logAuditEvent({
         action: "delete",
         entityType: "product",
@@ -1134,11 +1242,13 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk assign to website ────────────────────────────────────────────────
+  // ── Bulk assign to website (includes optional schema transform) ───────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
-    const includesTaskflow = websites.includes(TASKFLOW);
+    const transformSites = websites.filter((w) =>
+      SCHEMA_TRANSFORM_WEBSITES.has(w),
+    );
 
     const loadingToast = toast.loading(
       `Assigning ${count} product${count !== 1 ? "s" : ""} to ${websites.length} website${websites.length !== 1 ? "s" : ""}...`,
@@ -1159,9 +1269,10 @@ export default function AllProductsPage() {
             updatedAt: serverTimestamp(),
           });
 
-          if (includesTaskflow) {
-            const taskflowData = buildTaskflowProduct(product, websites);
-            batch.set(doc(db, "products", product.id), taskflowData, {
+          // Apply schema transform for any transform-tagged websites
+          if (transformSites.length > 0) {
+            const transformedData = buildTransformedProduct(product, websites);
+            batch.set(doc(db, "products", product.id), transformedData, {
               merge: true,
             });
           }
@@ -1183,13 +1294,73 @@ export default function AllProductsPage() {
     }
   };
 
+  // ── Bulk assign to Shopify (dedicated handler) ────────────────────────────
+  const handleBulkAssignShopify = async () => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const count = selectedRows.length;
+
+    const loadingToast = toast.loading(
+      `Assigning ${count} product${count !== 1 ? "s" : ""} to Shopify...`,
+    );
+
+    try {
+      const CHUNK = 200;
+      const rows = selectedRows.map((r) => r.original);
+
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const chunk = rows.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+
+        chunk.forEach((product) => {
+          batch.update(doc(db, "products", product.id), {
+            websites: arrayUnion("Shopify"),
+            website: arrayUnion("Shopify"),
+            updatedAt: serverTimestamp(),
+          });
+
+          // Apply same schema transform as Taskflow
+          const transformedData = buildTransformedProduct(product, ["Shopify"]);
+          batch.set(doc(db, "products", product.id), transformedData, {
+            merge: true,
+          });
+        });
+
+        await batch.commit();
+      }
+
+      await logAuditEvent({
+        action: "update",
+        entityType: "product",
+        entityId: null,
+        entityName: `${count} products`,
+        context: {
+          page: "/products/all-products",
+          source: "all-products:bulk-assign-shopify",
+          collection: "products",
+          bulk: true,
+        },
+        metadata: { target: "Shopify", ids: rows.map((r) => r.id) },
+      });
+
+      toast.success(
+        `${count} product${count !== 1 ? "s" : ""} assigned to Shopify.`,
+        { id: loadingToast },
+      );
+      setRowSelection({});
+    } catch (error) {
+      console.error("Bulk assign Shopify error:", error);
+      toast.error("Failed to assign products to Shopify.", {
+        id: loadingToast,
+      });
+    }
+  };
+
   // ── Bulk assign product class ─────────────────────────────────────────────
   const handleBulkAssignProductClass = async (
     productClass: "spf" | "standard",
   ) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const count = selectedRows.length;
-
     const loadingToast = toast.loading(
       `Setting ${count} product${count !== 1 ? "s" : ""} to "${productClass}"...`,
     );
@@ -1197,7 +1368,6 @@ export default function AllProductsPage() {
     try {
       const CHUNK = 400;
       const rows = selectedRows.map((r) => r.original);
-
       for (let i = 0; i < rows.length; i += CHUNK) {
         const chunk = rows.slice(i, i + CHUNK);
         const batch = writeBatch(db);
@@ -1209,7 +1379,6 @@ export default function AllProductsPage() {
         });
         await batch.commit();
       }
-
       await logAuditEvent({
         action: "update",
         entityType: "product",
@@ -1223,7 +1392,6 @@ export default function AllProductsPage() {
         },
         metadata: { productClass, ids: rows.map((r) => r.id) },
       });
-
       toast.success(
         `${count} product${count !== 1 ? "s" : ""} set to "${productClass === "spf" ? "SPF" : "Standard"}".`,
         { id: loadingToast },
@@ -1235,7 +1403,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Open bulk TDS dialog ──────────────────────────────────────────────────
+  // ── Bulk TDS ──────────────────────────────────────────────────────────────
   const handleOpenBulkTds = () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
@@ -1248,34 +1416,18 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
-  // ── Run bulk TDS generation ───────────────────────────────────────────────
-  // Uses generateTdsPdf which:
-  //   1. Reads productFamily (or categories) from the product to find the
-  //      matching productfamilies document in Firestore.
-  //   2. Fetches that document's tdsTemplate URL.
-  //   3. Fills the AcroForm with the product's specs, item code, brand, and
-  //      main image — exactly the same logic as AddNewProduct on save.
-  //   4. Uploads the filled PDF to Cloudinary and returns the URL.
-  //
-  // A shared templateCache Map is passed across the whole loop so Firestore
-  // is only queried once per unique product family in the batch.
-
   const handleStartBulkTds = async () => {
     setIsTdsRunning(true);
-
     const productMap = new Map<string, Product>(
       table
         .getFilteredSelectedRowModel()
         .rows.map((r) => [r.original.id, r.original]),
     );
-
-    // One Firestore lookup per unique family across the entire batch.
     const templateCache = new Map<string, FamilyMeta>();
 
     for (let i = 0; i < tdsJobs.length; i++) {
       const job = tdsJobs[i];
       const product = productMap.get(job.productId);
-
       setTdsJobs((prev) =>
         prev.map((j) =>
           j.productId === job.productId ? { ...j, status: "generating" } : j,
@@ -1284,18 +1436,13 @@ export default function AllProductsPage() {
 
       try {
         if (!product) throw new Error("Product not found in selection");
-
         const brand = Array.isArray(product.brands)
           ? (product.brands[0] ?? "")
           : Array.isArray(product.brand)
             ? ((product.brand as string[])[0] ?? "")
             : ((product.brand as string) ?? "");
-
-        // productFamily is the canonical field set by AddNewProduct.
-        // Fall back to categories for older documents.
         const productFamilyName =
           product.productFamily || (product.categories as string) || "";
-
         const tdsUrl = await generateTdsPdf(
           {
             itemDescription: product.itemDescription || product.name || "",
@@ -1311,12 +1458,10 @@ export default function AllProductsPage() {
           },
           templateCache,
         );
-
         await updateDoc(doc(db, "products", product.id), {
           tdsFileUrl: tdsUrl,
           updatedAt: serverTimestamp(),
         });
-
         setTdsJobs((prev) =>
           prev.map((j) =>
             j.productId === job.productId ? { ...j, status: "done" } : j,
@@ -1339,7 +1484,6 @@ export default function AllProductsPage() {
     }
 
     setIsTdsRunning(false);
-
     await logAuditEvent({
       action: "update",
       entityType: "product",
@@ -1351,7 +1495,10 @@ export default function AllProductsPage() {
         collection: "products",
         bulk: true,
       },
-      metadata: { total: tdsJobs.length, productIds: tdsJobs.map((j) => j.productId) },
+      metadata: {
+        total: tdsJobs.length,
+        productIds: tdsJobs.map((j) => j.productId),
+      },
     }).catch(console.warn);
   };
 
@@ -1385,7 +1532,6 @@ export default function AllProductsPage() {
       enableSorting: false,
       enableHiding: false,
     },
-
     {
       accessorKey: "mainImage",
       header: () => <div className="text-xs font-medium">Main Image</div>,
@@ -1408,7 +1554,6 @@ export default function AllProductsPage() {
       },
       enableHiding: false,
     },
-
     {
       accessorKey: "rawImage",
       header: () => <div className="text-xs font-medium">Raw Image</div>,
@@ -1431,7 +1576,6 @@ export default function AllProductsPage() {
       },
       enableHiding: false,
     },
-
     {
       accessorKey: "ecoItemCode",
       header: () => <div className="text-xs font-medium">Eco Item Code</div>,
@@ -1441,7 +1585,6 @@ export default function AllProductsPage() {
         </span>
       ),
     },
-
     {
       accessorKey: "litItemCode",
       header: () => <div className="text-xs font-medium">LIT Item Code</div>,
@@ -1451,7 +1594,6 @@ export default function AllProductsPage() {
         </span>
       ),
     },
-
     {
       accessorKey: "itemDescription",
       header: () => <div className="text-xs font-medium">Item Description</div>,
@@ -1474,7 +1616,6 @@ export default function AllProductsPage() {
         );
       },
     },
-
     {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Product Class</div>,
@@ -1488,7 +1629,6 @@ export default function AllProductsPage() {
         return (row.getValue("productClass") as string) === filterValue;
       },
     },
-
     {
       id: "details",
       accessorFn: (row) => {
@@ -1516,9 +1656,20 @@ export default function AllProductsPage() {
               {brands.join(", ")}
             </Badge>
             {websites.length > 0 ? (
-              <Badge variant="secondary" className="text-xs">
-                {websites.join(", ")}
-              </Badge>
+              <div className="flex flex-wrap gap-1">
+                {websites.map((w) => (
+                  <Badge
+                    key={w}
+                    variant="secondary"
+                    className={`text-xs ${w === "Shopify" ? "bg-green-100 text-green-700 border-green-200" : w === "Taskflow" ? "bg-violet-100 text-violet-700 border-violet-200" : ""}`}
+                  >
+                    {w === "Shopify" && (
+                      <ShoppingBag className="w-2.5 h-2.5 mr-1" />
+                    )}
+                    {w}
+                  </Badge>
+                ))}
+              </div>
             ) : (
               <Badge
                 variant="outline"
@@ -1532,7 +1683,6 @@ export default function AllProductsPage() {
       },
       filterFn: multiValueFilter,
     },
-
     {
       id: "actions",
       header: () => (
@@ -1541,7 +1691,6 @@ export default function AllProductsPage() {
       cell: ({ row }) => {
         const product = row.original;
         const hasTds = !!product.tdsFileUrl;
-
         return (
           <div
             className="flex justify-end items-center gap-1"
@@ -1552,11 +1701,7 @@ export default function AllProductsPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className={`h-8 w-8 transition-colors ${
-                    hasTds
-                      ? "text-red-500 hover:text-red-600 hover:bg-red-50"
-                      : "text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-muted/50"
-                  }`}
+                  className={`h-8 w-8 transition-colors ${hasTds ? "text-red-500 hover:text-red-600 hover:bg-red-50" : "text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-muted/50"}`}
                   onClick={() => setTdsPreviewProduct(product)}
                 >
                   <FileText className="h-4 w-4" />
@@ -1566,7 +1711,6 @@ export default function AllProductsPage() {
                 {hasTds ? "Preview TDS" : "No TDS available"}
               </TooltipContent>
             </Tooltip>
-
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1582,7 +1726,6 @@ export default function AllProductsPage() {
                 Edit product
               </TooltipContent>
             </Tooltip>
-
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1710,7 +1853,6 @@ export default function AllProductsPage() {
         </div>
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
-
           <Button
             variant="outline"
             onClick={() => setAssignWebsiteOpen(true)}
@@ -1718,8 +1860,8 @@ export default function AllProductsPage() {
             className="gap-2"
             title={
               selectedCount === 0
-                ? "Select products first to assign them to a website"
-                : `Assign ${selectedCount} selected product${selectedCount !== 1 ? "s" : ""} to a website`
+                ? "Select products first"
+                : `Assign ${selectedCount} product${selectedCount !== 1 ? "s" : ""} to a website`
             }
           >
             <Globe className="h-4 w-4" />
@@ -1730,7 +1872,6 @@ export default function AllProductsPage() {
               </Badge>
             )}
           </Button>
-
           <Button
             onClick={() => {
               setSelectedProduct(null);
@@ -1778,6 +1919,16 @@ export default function AllProductsPage() {
             >
               <Globe className="h-4 w-4" />
               Assign to Website
+            </Button>
+            {/* ── Shopify shortcut ── */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-green-300 text-green-700 hover:bg-green-50"
+              onClick={() => setAssignShopifyOpen(true)}
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Assign to Shopify
             </Button>
             <Button
               variant="outline"
@@ -1982,6 +2133,9 @@ export default function AllProductsPage() {
                 key={web}
                 onClick={() => table.getColumn("details")?.setFilterValue(web)}
               >
+                {web === "Shopify" && (
+                  <ShoppingBag className="w-3.5 h-3.5 mr-2 text-green-500" />
+                )}
                 {web}
               </DropdownMenuItem>
             ))}
@@ -2137,84 +2291,92 @@ export default function AllProductsPage() {
     <ProtectedLayout>
       <TooltipProvider delayDuration={0}>
         <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-            <div className="flex items-center gap-2 px-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 h-4" />
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem className="hidden md:block">
-                    <BreadcrumbLink href="#">Products</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator className="hidden md:block" />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>
-                      {isEditing
-                        ? selectedProduct
-                          ? "Edit Product"
-                          : "Add Product"
-                        : "All Products"}
-                    </BreadcrumbPage>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
+          <AppSidebar />
+          <SidebarInset>
+            <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+              <div className="flex items-center gap-2 px-4">
+                <SidebarTrigger className="-ml-1" />
+                <Separator orientation="vertical" className="mr-2 h-4" />
+                <Breadcrumb>
+                  <BreadcrumbList>
+                    <BreadcrumbItem className="hidden md:block">
+                      <BreadcrumbLink href="#">Products</BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator className="hidden md:block" />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage>
+                        {isEditing
+                          ? selectedProduct
+                            ? "Edit Product"
+                            : "Add Product"
+                          : "All Products"}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </BreadcrumbList>
+                </Breadcrumb>
+              </div>
+            </header>
+            <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+              {isEditing ? renderEditMode() : renderTableMode()}
             </div>
-          </header>
-          <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-            {isEditing ? renderEditMode() : renderTableMode()}
-          </div>
-        </SidebarInset>
-      </SidebarProvider>
+          </SidebarInset>
+        </SidebarProvider>
 
-      {/* Dialogs */}
-      <TdsPreviewDialog
-        open={!!tdsPreviewProduct}
-        onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
-        product={tdsPreviewProduct}
-      />
+        {/* Dialogs */}
+        <TdsPreviewDialog
+          open={!!tdsPreviewProduct}
+          onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
+          product={tdsPreviewProduct}
+        />
 
-      <BulkGenerateTdsDialog
-        open={bulkTdsOpen}
-        onOpenChange={(v) => {
-          setBulkTdsOpen(v);
-          if (!v && !isTdsRunning) setTdsJobs([]);
-        }}
-        jobs={tdsJobs}
-        onStart={handleStartBulkTds}
-        isRunning={isTdsRunning}
-      />
+        <BulkGenerateTdsDialog
+          open={bulkTdsOpen}
+          onOpenChange={(v) => {
+            setBulkTdsOpen(v);
+            if (!v && !isTdsRunning) setTdsJobs([]);
+          }}
+          jobs={tdsJobs}
+          onStart={handleStartBulkTds}
+          isRunning={isTdsRunning}
+        />
 
-      <DeleteToRecycleBinDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(null)}
-        itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
-        onConfirm={() => handleSoftDelete(deleteTarget!)}
-      />
+        <DeleteToRecycleBinDialog
+          open={!!deleteTarget}
+          onOpenChange={(v) => !v && setDeleteTarget(null)}
+          itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
+          onConfirm={() => handleSoftDelete(deleteTarget!)}
+        />
 
-      <DeleteToRecycleBinDialog
-        open={bulkDeleteOpen}
-        onOpenChange={setBulkDeleteOpen}
-        itemName={`${selectedCount} products`}
-        confirmText={`${selectedCount} products`}
-        count={selectedCount}
-        onConfirm={handleBulkSoftDelete}
-      />
+        <DeleteToRecycleBinDialog
+          open={bulkDeleteOpen}
+          onOpenChange={setBulkDeleteOpen}
+          itemName={`${selectedCount} products`}
+          confirmText={`${selectedCount} products`}
+          count={selectedCount}
+          onConfirm={handleBulkSoftDelete}
+        />
 
-      <AssignToWebsiteDialog
-        open={assignWebsiteOpen}
-        onOpenChange={setAssignWebsiteOpen}
-        selectedCount={selectedCount}
-        onConfirm={handleBulkAssignWebsite}
-      />
+        <AssignToWebsiteDialog
+          open={assignWebsiteOpen}
+          onOpenChange={setAssignWebsiteOpen}
+          selectedCount={selectedCount}
+          onConfirm={handleBulkAssignWebsite}
+        />
 
-      <AssignProductClassDialog
-        open={assignProductClassOpen}
-        onOpenChange={setAssignProductClassOpen}
-        selectedCount={selectedCount}
-        onConfirm={handleBulkAssignProductClass}
-      />
+        {/* Dedicated Shopify assign dialog */}
+        <AssignToShopifyDialog
+          open={assignShopifyOpen}
+          onOpenChange={setAssignShopifyOpen}
+          selectedCount={selectedCount}
+          onConfirm={handleBulkAssignShopify}
+        />
+
+        <AssignProductClassDialog
+          open={assignProductClassOpen}
+          onOpenChange={setAssignProductClassOpen}
+          selectedCount={selectedCount}
+          onConfirm={handleBulkAssignProductClass}
+        />
       </TooltipProvider>
     </ProtectedLayout>
   );
