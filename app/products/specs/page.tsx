@@ -454,7 +454,7 @@ export default function SpecsMaintenancePage() {
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent
-                            className="w-[var(--radix-popover-trigger-width)] p-0 rounded-none"
+                            className="w-(--radix-popover-trigger-width) p-0 rounded-none"
                             align="start"
                           >
                             <Command>
@@ -519,7 +519,7 @@ export default function SpecsMaintenancePage() {
                           </Button>
                         </div>
 
-                        <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2 scrollbar-thin">
+                        <div className="space-y-2 max-h-87.5 overflow-y-auto pr-2 scrollbar-thin">
                           {items.map((item, index) => (
                             <div
                               key={index}
@@ -573,14 +573,14 @@ export default function SpecsMaintenancePage() {
                     <Loader2 className="animate-spin text-primary" />
                   </div>
                 ) : specGroups.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
+                  <div className="flex flex-col items-center justify-center min-h-100 border-2 border-dashed border-foreground/5 bg-muted/30 p-8 text-center">
                     <div className="h-16 w-16 rounded-full bg-background flex items-center justify-center mb-4 shadow-sm border">
                       <ClipboardList className="h-8 w-8 text-muted-foreground/40" />
                     </div>
                     <h3 className="text-sm font-bold uppercase tracking-widest mb-1">
                       No Specifications Found
                     </h3>
-                    <p className="text-[11px] text-muted-foreground uppercase max-w-[240px] leading-relaxed">
+                    <p className="text-[11px] text-muted-foreground uppercase max-w-60 leading-relaxed">
                       You haven't defined any specification groups yet. Create
                       one to start attaching specs to your products.
                     </p>

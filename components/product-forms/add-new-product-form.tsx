@@ -247,7 +247,7 @@ function QrDropzone({
   return (
     <div
       {...getRootProps()}
-      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-35 flex flex-col items-center justify-center"
     >
       <input {...getInputProps()} />
       {file || existingUrl ? (
@@ -1193,7 +1193,7 @@ export default function AddNewProduct({
                     </Label>
                     <div
                       {...mainRoot()}
-                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-35 flex-col items-center justify-center"
                     >
                       <input {...mainInput()} />
                       {mainImage || existingMainImage ? (
@@ -1235,7 +1235,7 @@ export default function AddNewProduct({
                     </Label>
                     <div
                       {...rawRoot()}
-                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-35 flex-col items-center justify-center"
                     >
                       <input {...rawInput()} />
                       {rawImage || existingRawImage ? (
@@ -1294,7 +1294,7 @@ export default function AddNewProduct({
                     </Label>
                     <div
                       {...galleryRoot()}
-                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[140px] flex flex-col items-center justify-center"
+                      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-35 flex flex-col items-center justify-center"
                     >
                       <input {...galleryInput()} />
                       <div className="flex flex-col items-center gap-1">
@@ -1759,7 +1759,7 @@ export default function AddNewProduct({
         {/* ══════════════ SIDEBAR ════════════════════════════════════════════ */}
         <div className="space-y-6">
           {/* ── Usage & Product Family card ── */}
-          <Card className="border-primary/20 bg-primary/[0.02]">
+          <Card className="border-primary/20 bg-primary/2">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <LayoutGrid className="h-4 w-4 text-primary" />
@@ -2328,7 +2328,7 @@ export default function AddNewProduct({
                   </div>
                 )}
                 <div
-                  className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${previewMode === "mobile" ? "max-w-[360px]" : "max-w-[600px]"}`}
+                  className={`p-4 bg-card border rounded-lg shadow-sm transition-all duration-300 ${previewMode === "mobile" ? "max-w-90" : "max-w-150"}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center">
@@ -2356,7 +2356,7 @@ export default function AddNewProduct({
                           "Enter a meta description to see how it looks here."}
                       </p>
                     </div>
-                    <div className="w-[104px] h-[104px] shrink-0 bg-muted/50 rounded-md overflow-hidden border">
+                    <div className="w-26 h-26 shrink-0 bg-muted/50 rounded-md overflow-hidden border">
                       {mainImage || existingMainImage ? (
                         <img
                           src={

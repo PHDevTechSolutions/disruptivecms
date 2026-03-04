@@ -743,7 +743,7 @@ export default function TaskflowAddNewProduct({
                   </Label>
                   <div
                     {...getMainRootProps()}
-                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
                   >
                     <input {...getMainInputProps()} />
                     {mainImage || existingMainImage ? (
@@ -804,7 +804,7 @@ export default function TaskflowAddNewProduct({
                   </Label>
                   <div
                     {...getGalleryRootProps()}
-                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
                   >
                     <input {...getGalleryInputProps()} />
                     <div className="flex flex-col items-center">
@@ -997,7 +997,7 @@ export default function TaskflowAddNewProduct({
         {/* SIDEBAR */}
         <div className="space-y-6">
           {/* USAGE & PRODUCT FAMILY CARD */}
-          <Card className="border-primary/20 bg-primary/[0.02]">
+          <Card className="border-primary/20 bg-primary/2">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <LayoutGrid className="h-4 w-4 text-primary" />
@@ -1421,7 +1421,7 @@ function QrDropzone({
   return (
     <div
       {...getRootProps()}
-      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
     >
       <input {...getInputProps()} />
       {file || existingUrl ? (

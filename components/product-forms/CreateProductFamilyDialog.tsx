@@ -365,7 +365,7 @@ export function CreateProductFamilyDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Matches BulkUploader: sm:max-w-190 h-[88vh] */}
-      <DialogContent className="sm:max-w-[76rem] h-[88vh] flex flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-304 h-[88vh] flex flex-col p-0 gap-0 overflow-hidden">
         {/* ── Header ── */}
         <DialogHeader className="px-6 pt-5 pb-4 border-b shrink-0">
           <div className="flex items-center gap-3">
@@ -396,7 +396,7 @@ export function CreateProductFamilyDialog({
         {/* ── Two-panel body ── */}
         <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* ══════════════ LEFT PANEL — Family Details ══════════════ */}
-          <div className="w-[340px] shrink-0 border-r flex flex-col overflow-hidden">
+          <div className="w-85 shrink-0 border-r flex flex-col overflow-hidden">
             {/* Panel header */}
             <div className="px-5 py-3 border-b bg-muted/30 shrink-0">
               <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
@@ -440,7 +440,7 @@ export function CreateProductFamilyDialog({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Brief overview of this product family…"
-                  className="text-sm resize-none min-h-[90px]"
+                  className="text-sm resize-none min-h-22.5"
                 />
               </div>
 
@@ -494,7 +494,7 @@ export function CreateProductFamilyDialog({
                 <label className="text-xs font-semibold text-muted-foreground">
                   Spec Summary
                 </label>
-                <div className="min-h-[90px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                <div className="min-h-22.5 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
                   {allGroups.length === 0 ? (
                     <p className="text-muted-foreground text-xs">
                       No spec groups added yet. Use the right panel to select or
@@ -722,7 +722,7 @@ export function CreateProductFamilyDialog({
                               No items match "{itemSearch[g.id]}"
                             </p>
                           ) : (
-                            <div className="grid grid-cols-3 gap-1.5 max-h-[200px] overflow-y-auto pr-0.5">
+                            <div className="grid grid-cols-3 gap-1.5 max-h-50 overflow-y-auto pr-0.5">
                               {filtered.map((label) => {
                                 const itemId = buildItemId(g.id, label);
                                 const checked = selectedSet.has(itemId);
@@ -816,7 +816,7 @@ export function CreateProductFamilyDialog({
                           <Plus size={10} /> Add Label
                         </Button>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5 max-h-[160px] overflow-y-auto pr-0.5">
+                      <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-0.5">
                         {newGroupLabels.map((label, i) => (
                           <div key={i} className="flex gap-1.5 items-center">
                             <Input

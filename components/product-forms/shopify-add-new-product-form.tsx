@@ -791,7 +791,7 @@ export default function ShopifyAddNewProduct({
                   </Label>
                   <div
                     {...getMainRootProps()}
-                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
                   >
                     <input {...getMainInputProps()} />
                     {mainImagePreview || existingMainImage ? (
@@ -854,7 +854,7 @@ export default function ShopifyAddNewProduct({
                   </Label>
                   <div
                     {...getGalleryRootProps()}
-                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+                    className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
                   >
                     <input {...getGalleryInputProps()} />
                     <div className="flex flex-col items-center">
@@ -1036,7 +1036,7 @@ export default function ShopifyAddNewProduct({
         {/* SIDEBAR */}
         <div className="space-y-6">
           {/* USAGE & PRODUCT FAMILY CARD */}
-          <Card className="border-primary/20 bg-primary/[0.02]">
+          <Card className="border-primary/20 bg-primary/2">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <LayoutGrid className="h-4 w-4 text-primary" />
@@ -1347,7 +1347,7 @@ function SidebarList({
           <Label className="text-xs font-medium">{label}</Label>
         </div>
       </div>
-      <div className="space-y-1 max-h-48 overflow-y-auto pr-2 min-h-[50px]">
+      <div className="space-y-1 max-h-48 overflow-y-auto pr-2 min-h-12.5">
         {items.length === 0 ? (
           <p className="text-xs text-muted-foreground italic py-2">
             No items found.
@@ -1454,7 +1454,7 @@ function QrDropzone({
   return (
     <div
       {...getRootProps()}
-      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-[160px] flex flex-col items-center justify-center"
+      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
     >
       <input {...getInputProps()} />
       {preview || existingUrl ? (
