@@ -8,18 +8,21 @@ export default function RegisterLayout({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
   const [shouldRender, setShouldRender] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
     if (isLoading) return;
 
     // Must be authenticated and have superadmin role
     if (!user) {
+      setIsRedirecting(true);
       router.push("/auth/login");
       return;
     }
 
     const userRole = String(user?.role || "").toLowerCase().trim();
     if (userRole !== "superadmin") {
+      setIsRedirecting(true);
       router.push(`/access-denied?from=${encodeURIComponent("/admin/register")}`);
       return;
     }
@@ -28,8 +31,8 @@ export default function RegisterLayout({ children }: { children: ReactNode }) {
     setShouldRender(true);
   }, [user, isLoading, router]);
 
-  // Show loading state only during initial auth check
-  if (isLoading) {
+  // Show loading state only during initial auth check or redirecting
+  if (isLoading || isRedirecting) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />

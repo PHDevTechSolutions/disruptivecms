@@ -45,10 +45,10 @@ export const roleAccessConfig: RoleAccessConfig = {
   marketing: ["/content"],
   // /inquiries and all nested routes
   csr: ["/inquiries"],
-  warehouse: [],
-  staff: [],
-  inventory: [],
-  ecomm: [],
+  warehouse: ["/access-denied"],
+  staff: ["/access-denied"],
+  inventory: ["/access-denied"],
+  ecomm: ["/access-denied"],
 };
 
 /* ==============================
