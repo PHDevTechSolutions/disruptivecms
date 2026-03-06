@@ -44,7 +44,7 @@ export default function AdminRegisterPage() {
                 Register Account
               </h1>
               <p className="text-sm text-muted-foreground">
-                Create a new admin account to grant access to the dashboard.
+                Create a new account to grant access to the users.
               </p>
             </div>
 
