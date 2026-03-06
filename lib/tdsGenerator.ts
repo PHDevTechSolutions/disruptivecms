@@ -184,7 +184,11 @@ async function buildTdsPdf(
   const SAFE = 20;
   const maxTableH = PH - FOOTER_H_APPROX - DRAWING_BLOCK_H - SAFE - y;
 
-  let fontSize = 9;
+  let fontSize = 11;
+  const TABLE_W = 540; // Maximize width (leave ~25pt margins on each side)
+  const MARGIN_LR = 10; // Left/right margins
+  const tableX = MARGIN_LR;
+  
   while (fontSize > 5) {
     const tmp = new jsPDF("p", "pt", "a4");
     autoTable(tmp, {
@@ -192,8 +196,8 @@ async function buildTdsPdf(
       theme: "grid",
       styles: { fontSize },
       body: tableRows as any[],
-      margin: { left: 0 },
-      tableWidth: 450,
+      margin: { left: tableX, right: MARGIN_LR },
+      tableWidth: TABLE_W,
     });
     const endY = (tmp as any).lastAutoTable.finalY as number;
     if (endY - y <= maxTableH) break;
@@ -201,19 +205,17 @@ async function buildTdsPdf(
   }
 
   // ── Spec table ───────────────────────────────────────────────────────────
-  const TABLE_W = 450;
-  const tableX = (PW - TABLE_W) / 2;
   autoTable(pdf, {
     startY: y,
     theme: "grid",
     pageBreak: "avoid",
     tableWidth: TABLE_W,
-    margin: { left: tableX },
-    styles: { fontSize, cellPadding: 2, overflow: "linebreak" },
+    margin: { left: tableX, right: MARGIN_LR },
+    styles: { fontSize, cellPadding: 3, overflow: "linebreak" },
     body: tableRows as any[],
     columnStyles: {
-      0: { cellWidth: 230 },
-      1: { cellWidth: 220 },
+      0: { cellWidth: 270 },
+      1: { cellWidth: 270 },
     },
   });
 
