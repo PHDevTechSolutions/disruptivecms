@@ -77,6 +77,7 @@ export function LoginForm({
     }
 
     const validRoles = [
+      "superadmin",
       "admin",
       "warehouse",
       "staff",
@@ -303,7 +304,7 @@ export function LoginForm({
                 <FieldDescription className="text-center">
                   Don&apos;t have an account?{" "}
                   <a
-                    href="/auth/register"
+                    href="/admin/register"
                     className="underline underline-offset-4"
                   >
                     Sign up
