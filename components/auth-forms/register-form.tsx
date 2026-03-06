@@ -150,7 +150,7 @@ export function RegisterForm({
     }
 
     setIsLoading(true);
-    const googleToast = toast.loading("Connecting to Google...");
+    const googleToast = toast.loading("Connecting to Google..");
 
     try {
       const provider = new GoogleAuthProvider();
