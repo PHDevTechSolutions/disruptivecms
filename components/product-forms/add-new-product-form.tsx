@@ -880,6 +880,7 @@ export default function AddNewProduct({
             litItemCode,
             technicalSpecs,
             mainImageUrl: mainUrl || undefined,
+            rawImageUrl: rawUrl || undefined,
             dimensionalDrawingUrl: dimensionDrawingUrl || undefined,
             recommendedMountingHeightUrl: mountingHeightUrl || undefined,
             driverCompatibilityUrl: driverCompatibilityUrl || undefined,

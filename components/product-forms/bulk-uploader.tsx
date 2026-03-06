@@ -1428,6 +1428,7 @@ export default function BulkUploader({
               litItemCode: p.litItemCode,
               technicalSpecs,
               mainImageUrl: mainImage || undefined,
+              rawImageUrl: rawImageUploaded || undefined,
               dimensionalDrawingUrl: dimensionalDrawingImage || undefined,
               recommendedMountingHeightUrl:
                 recommendedMountingHeightImage || undefined,
