@@ -4,6 +4,7 @@
  */
 
 export type UserRole =
+  | "superadmin"
   | "admin"
   | "warehouse"
   | "staff"
@@ -34,6 +35,7 @@ export const PUBLIC_ROUTES = [
    ============================== */
 
 export const roleAccessConfig: RoleAccessConfig = {
+  superadmin: ["*"],
   admin: ["*"],
   pd: ["/products/all-products"],
   // /jobs and all nested routes like /jobs/applications
@@ -135,6 +137,7 @@ export function getPrimaryRouteForRole(role: string): string {
   if (!normalizedRole) return "/access-denied";
 
   const primaryRoutes: Record<UserRole, string> = {
+    superadmin: "/products/all-products",
     admin: "/products/all-products",
     pd: "/products/all-products",
     hr: "/jobs/applications",

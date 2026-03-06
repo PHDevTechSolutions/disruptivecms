@@ -19,7 +19,7 @@ export function RouteProtection({ children, requiredRoutes }: RouteProtectionPro
   const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
 
   const normalizedRole = String(user?.role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
+  const isAdmin = normalizedRole === "admin" || normalizedRole === "superadmin";
 
   // Determine whether this protection applies to the current path (layout scope)
   const inScope = requiredRoutes.some((route) => {
