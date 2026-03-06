@@ -20,6 +20,7 @@
  * - The "TECHNICAL DRAWINGS" section heading is NOT rendered.
  * - Only slots with a populated URL are shown (label + image).
  * - Partial rows (1 or 2 images) are centred within the full table width.
+ * - Page breaks are automatically inserted when a row would overflow the page.
  *
  * Supported slots (in order):
  *   dimensionalDrawingUrl · recommendedMountingHeightUrl · driverCompatibilityUrl
@@ -148,7 +149,11 @@ const DRAWINGS_PER_ROW = 3; // thumbnails per row
 const DRAWING_IMG_H = 75; // height of each thumbnail (pt)
 const DRAWING_LABEL_H = 14; // space above each thumbnail for its label
 const DRAWING_ROW_GAP = 10; // vertical gap between rows
+const DRAWING_ROW_BLOCK_H = DRAWING_LABEL_H + DRAWING_IMG_H + DRAWING_ROW_GAP;
 // NOTE: "TECHNICAL DRAWINGS" heading is intentionally omitted.
+
+// Bottom of page reserved for footer + a small margin before a page break is triggered
+const FOOTER_SAFE_H = 70;
 
 // ─── Core PDF renderer ────────────────────────────────────────────────────────
 
@@ -172,8 +177,10 @@ async function buildTdsPdf(
   const TOP_BLOCK_Y = HEADER_H + 24;
   const TABLE_Y = TOP_BLOCK_Y + BOX_H + 20;
 
-  // ── Header image ──────────────────────────────────────────────────────────
+  // Cached header base64 — re-used when new pages are added for drawings
   const headerB64 = await urlToBase64(`${origin}/templates/lit-header.png`);
+
+  // ── Header image ──────────────────────────────────────────────────────────
   if (headerB64) {
     pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
   }
@@ -275,6 +282,7 @@ async function buildTdsPdf(
   // Only slots with a non-empty URL are rendered.
   // The "TECHNICAL DRAWINGS" heading is intentionally omitted.
   // Partial rows (< DRAWINGS_PER_ROW images) are centred across the full width.
+  // Page breaks are inserted automatically when a row would overflow the page.
   const activeSlots = drawingSlots.filter((s) => !!s.url.trim());
 
   if (activeSlots.length > 0) {
@@ -283,7 +291,24 @@ async function buildTdsPdf(
 
     // Column width for a full row
     const perColW = TABLE_W / DRAWINGS_PER_ROW;
-    const imgPadL = 6; // left padding within a column
+    const imgPadL = 6; // left/right padding within a column
+
+    // Safe lower boundary before a page break is needed
+    const safeBottom = PH - FOOTER_SAFE_H;
+
+    /**
+     * Ensures there is enough vertical space for one drawing row.
+     * If not, adds a new page, re-stamps the header, and resets curY.
+     */
+    const ensureSpace = async () => {
+      if (curY + DRAWING_ROW_BLOCK_H > safeBottom) {
+        pdf.addPage();
+        if (headerB64) {
+          pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
+        }
+        curY = HEADER_H + 24; // top margin below header on the new page
+      }
+    };
 
     // Render row by row
     for (
@@ -291,6 +316,9 @@ async function buildTdsPdf(
       rowStart < activeSlots.length;
       rowStart += DRAWINGS_PER_ROW
     ) {
+      // Check / insert page break before drawing this row
+      await ensureSpace();
+
       const rowSlots = activeSlots.slice(rowStart, rowStart + DRAWINGS_PER_ROW);
       const count = rowSlots.length; // 1, 2, or 3
 
@@ -345,7 +373,7 @@ async function buildTdsPdf(
         );
       }
 
-      curY += DRAWING_LABEL_H + DRAWING_IMG_H + DRAWING_ROW_GAP;
+      curY += DRAWING_ROW_BLOCK_H;
     }
   }
 
@@ -355,7 +383,12 @@ async function buildTdsPdf(
     const { w: fw, h: fh } = await getImageDimensions(footerB64);
     const ratio = PW / fw;
     const finalH = fh * ratio;
-    pdf.addImage(footerB64, imgFormat(footerB64), 0, PH - finalH, PW, finalH);
+    // Stamp the footer on every page
+    const totalPages = pdf.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      pdf.setPage(p);
+      pdf.addImage(footerB64, imgFormat(footerB64), 0, PH - finalH, PW, finalH);
+    }
   }
 
   return pdf.output("blob");

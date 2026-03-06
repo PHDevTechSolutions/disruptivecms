@@ -1511,6 +1511,8 @@ export default function AllProductsPage() {
           .filter((group) => (group.specs ?? []).length > 0);
 
         // ── Step 1: generate PDF blob using new single-arg API ─────────────
+        const p = product as any; // local alias for brevity
+
         const tdsBlob = await generateTdsPdf({
           itemDescription,
           litItemCode: product.litItemCode,
@@ -1521,13 +1523,20 @@ export default function AllProductsPage() {
               ? product.rawImage[0]
               : (product.rawImage as unknown as string)) ||
             undefined,
-          // dimensionalDrawingUrl + illuminanceLevelUrl from product doc if stored
           dimensionalDrawingUrl:
-            (product as any).dimensionDrawingImage ||
-            (product as any).dimensionalDrawingImage ||
+            p.dimensionDrawingImage || p.dimensionalDrawingImage || undefined,
+          recommendedMountingHeightUrl:
+            p.mountingHeightImage ||
+            p.recommendedMountingHeightImage ||
             undefined,
-          illuminanceLevelUrl:
-            (product as any).illuminanceLevelImage || undefined,
+          driverCompatibilityUrl: p.driverCompatibilityImage || undefined,
+          baseImageUrl: p.baseImage || undefined,
+          illuminanceLevelUrl: p.illuminanceLevelImage || undefined,
+          wiringDiagramUrl: p.wiringDiagramImage || undefined,
+          installationUrl: p.installationImage || undefined,
+          wiringLayoutUrl: p.wiringLayoutImage || undefined,
+          terminalLayoutUrl: p.terminalLayoutImage || undefined,
+          accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
         // ── Step 2: upload blob to Cloudinary ──────────────────────────────

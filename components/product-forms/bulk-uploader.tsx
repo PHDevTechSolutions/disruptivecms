@@ -1429,7 +1429,16 @@ export default function BulkUploader({
               technicalSpecs,
               mainImageUrl: mainImage || undefined,
               dimensionalDrawingUrl: dimensionalDrawingImage || undefined,
+              recommendedMountingHeightUrl:
+                recommendedMountingHeightImage || undefined,
+              driverCompatibilityUrl: driverCompatibilityImage || undefined,
+              baseImageUrl: baseImage || undefined,
               illuminanceLevelUrl: illuminanceLevelImage || undefined,
+              wiringDiagramUrl: wiringDiagramImage || undefined,
+              installationUrl: installationImage || undefined,
+              wiringLayoutUrl: wiringLayoutImage || undefined,
+              terminalLayoutUrl: terminalLayoutImage || undefined,
+              accessoriesImageUrl: accessoriesImage || undefined,
             });
 
             const tdsFileUrl = await uploadTdsPdf(

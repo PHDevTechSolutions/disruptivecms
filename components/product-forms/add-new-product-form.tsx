@@ -881,7 +881,15 @@ export default function AddNewProduct({
             technicalSpecs,
             mainImageUrl: mainUrl || undefined,
             dimensionalDrawingUrl: dimensionDrawingUrl || undefined,
+            recommendedMountingHeightUrl: mountingHeightUrl || undefined,
+            driverCompatibilityUrl: driverCompatibilityUrl || undefined,
+            baseImageUrl: baseUrl || undefined,
             illuminanceLevelUrl: illuminanceLevelUrl || undefined,
+            wiringDiagramUrl: wiringDiagramUrl || undefined,
+            installationUrl: installationUrl || undefined,
+            wiringLayoutUrl: wiringLayoutUrl || undefined,
+            terminalLayoutUrl: terminalLayoutUrl || undefined,
+            accessoriesImageUrl: accessoriesUrl || undefined,
           });
 
           const filename = `${itemDescription}_TDS.pdf`;
