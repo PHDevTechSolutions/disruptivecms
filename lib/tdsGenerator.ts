@@ -14,6 +14,17 @@
  *
  * N/A filtering: spec entries whose value trims to "N/A" (case-insensitive)
  * are automatically excluded from generated PDFs.
+ *
+ * Drawings section: dynamically renders only the drawing slots that have
+ * an actual URL, laid out in rows of up to 3 per row.
+ * - The "TECHNICAL DRAWINGS" section heading is NOT rendered.
+ * - Only slots with a populated URL are shown (label + image).
+ * - Partial rows (1 or 2 images) are centred within the full table width.
+ *
+ * Supported slots (in order):
+ *   dimensionalDrawingUrl · recommendedMountingHeightUrl · driverCompatibilityUrl
+ *   baseImageUrl · illuminanceLevelUrl · wiringDiagramUrl
+ *   installationUrl · wiringLayoutUrl · terminalLayoutUrl · accessoriesImageUrl
  */
 
 import jsPDF from "jspdf";
@@ -39,9 +50,19 @@ export interface GenerateTdsInput {
   itemDescription: string;
   litItemCode: string;
   technicalSpecs: TdsTechnicalSpec[];
+  // ── Product image ──────────────────────────────────────────────────────────
   mainImageUrl?: string;
+  // ── Drawing / technical image slots (all optional) ────────────────────────
   dimensionalDrawingUrl?: string;
+  recommendedMountingHeightUrl?: string;
+  driverCompatibilityUrl?: string;
+  baseImageUrl?: string;
   illuminanceLevelUrl?: string;
+  wiringDiagramUrl?: string;
+  installationUrl?: string;
+  wiringLayoutUrl?: string;
+  terminalLayoutUrl?: string;
+  accessoriesImageUrl?: string;
 }
 
 /** Input for a blank template TDS (saved against a productFamily) */
@@ -52,6 +73,13 @@ export interface TdsTemplateSpecGroup {
 
 export interface GenerateTdsTemplateInput {
   specGroups: TdsTemplateSpecGroup[];
+}
+
+// ─── Drawing slot definition ──────────────────────────────────────────────────
+
+interface DrawingSlot {
+  label: string;
+  url: string;
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
@@ -104,150 +132,224 @@ function imgFormat(b64: string): string {
   return "PNG";
 }
 
+// ─── Layout constants ─────────────────────────────────────────────────────────
+
+const MARGIN_L = 28; // Left margin (pt) — image + table share this edge
+const MARGIN_R = 28; // Right margin (pt)
+const HEADER_H = 100; // Height of the header image strip
+const BOX_W = 155; // Product image box width
+const BOX_H = 130; // Product image box height
+const BOX_PAD = 8; // Inner padding inside the image box
+const GAP_IMG_TEXT = 24; // Gap between image box and product name column
+
+// ─── Drawing section constants ────────────────────────────────────────────────
+
+const DRAWINGS_PER_ROW = 3; // thumbnails per row
+const DRAWING_IMG_H = 75; // height of each thumbnail (pt)
+const DRAWING_LABEL_H = 14; // space above each thumbnail for its label
+const DRAWING_ROW_GAP = 10; // vertical gap between rows
+// NOTE: "TECHNICAL DRAWINGS" heading is intentionally omitted.
+
 // ─── Core PDF renderer ────────────────────────────────────────────────────────
 
-/**
- * Shared PDF builder used by both filled and template generation.
- *
- * @param displayName  Top-right heading (itemDescription or placeholder)
- * @param litItemCode  Item code value row (empty for templates)
- * @param tableRows    Pre-built jspdf-autotable body rows
- * @param mainImageUrl Optional product image URL
- * @param dimensionalDrawingUrl Optional drawing image URL
- * @param illuminanceLevelUrl   Optional illuminance image URL
- */
 async function buildTdsPdf(
   displayName: string,
   litItemCode: string,
   tableRows: unknown[],
   mainImageUrl?: string,
-  dimensionalDrawingUrl?: string,
-  illuminanceLevelUrl?: string,
+  drawingSlots: DrawingSlot[] = [],
 ): Promise<Blob> {
   const pdf = new jsPDF("p", "pt", "a4");
   const PW = pdf.internal.pageSize.getWidth(); // 595.28 pt
   const PH = pdf.internal.pageSize.getHeight(); // 841.89 pt
-  const HEADER_H = 100;
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
-  let y = HEADER_H + 20;
+  // ── Derived layout values ─────────────────────────────────────────────────
+  const TABLE_W = PW - MARGIN_L - MARGIN_R; // ~539 pt
+  const COL_LABEL = 210;
+  const COL_VALUE = TABLE_W - COL_LABEL;
 
-  // ── Header image ────────────────────────────────────────────────────────
+  const TOP_BLOCK_Y = HEADER_H + 24;
+  const TABLE_Y = TOP_BLOCK_Y + BOX_H + 20;
+
+  // ── Header image ──────────────────────────────────────────────────────────
   const headerB64 = await urlToBase64(`${origin}/templates/lit-header.png`);
   if (headerB64) {
     pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
   }
 
-  // ── Product image box ────────────────────────────────────────────────────
-  const BOX_W = 150;
-  const BOX_H = 120;
-  const PAD = 10;
-  const imageX = PW / 2 - BOX_W - 60;
-  const imageY = y;
-
+  // ── Product image box — left edge aligned with table ─────────────────────
   pdf.setDrawColor(0, 0, 0);
-  pdf.setLineWidth(1.5);
-  pdf.rect(imageX, imageY, BOX_W, BOX_H);
+  pdf.setLineWidth(1.2);
+  pdf.rect(MARGIN_L, TOP_BLOCK_Y, BOX_W, BOX_H);
 
   if (mainImageUrl) {
     const b64 = await urlToBase64(mainImageUrl);
     if (b64) {
       const { w, h } = await getImageDimensions(b64);
-      const ratio = Math.min((BOX_W - PAD * 2) / w, (BOX_H - PAD * 2) / h);
+      const ratio = Math.min(
+        (BOX_W - BOX_PAD * 2) / w,
+        (BOX_H - BOX_PAD * 2) / h,
+      );
       const fw = w * ratio;
       const fh = h * ratio;
       pdf.addImage(
         b64,
         imgFormat(b64),
-        imageX + (BOX_W - fw) / 2,
-        imageY + (BOX_H - fh) / 2,
+        MARGIN_L + (BOX_W - fw) / 2,
+        TOP_BLOCK_Y + (BOX_H - fh) / 2,
         fw,
         fh,
       );
     }
   }
 
-  // ── Item description (right column) ─────────────────────────────────────
-  const TEXT_X = imageX + BOX_W + 60;
-  const TEXT_MAX_W = BOX_W + 40;
+  // ── Product name — centered in the right column area ─────────────────────
+  const nameColX = MARGIN_L + BOX_W + GAP_IMG_TEXT;
+  const nameColW = PW - nameColX - MARGIN_R;
+  const nameCenterX = nameColX + nameColW / 2;
+
+  const nameBlockH = 40;
+  const nameY = TOP_BLOCK_Y + (BOX_H - nameBlockH) / 2 + 14;
+
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(18);
-  pdf.text(caps(displayName), TEXT_X, imageY + BOX_H / 2, {
-    maxWidth: TEXT_MAX_W,
-  });
+  pdf.setFontSize(20);
+  pdf.setTextColor(30, 30, 30);
 
-  y += 140;
+  const nameLines = pdf.splitTextToSize(caps(displayName), nameColW);
+  pdf.text(nameLines, nameCenterX, nameY, { align: "center" });
 
-  // ── Auto-scale font size so table fits before drawings + footer ──────────
-  const FOOTER_H_APPROX = 80;
-  const DRAWING_BLOCK_H = 140;
-  const SAFE = 20;
-  const maxTableH = PH - FOOTER_H_APPROX - DRAWING_BLOCK_H - SAFE - y;
+  // Decorative rule under name
+  const lineY = nameY + nameLines.length * 22 + 6;
+  pdf.setDrawColor(80, 80, 80);
+  pdf.setLineWidth(1.0);
+  pdf.line(nameColX, lineY, nameColX + nameColW, lineY);
 
-  let fontSize = 9;
-  while (fontSize > 5) {
-    const tmp = new jsPDF("p", "pt", "a4");
-    autoTable(tmp, {
-      startY: y,
-      theme: "grid",
-      styles: { fontSize },
-      body: tableRows as any[],
-      margin: { left: 0 },
-      tableWidth: 450,
-    });
-    const endY = (tmp as any).lastAutoTable.finalY as number;
-    if (endY - y <= maxTableH) break;
-    fontSize -= 0.5;
-  }
-
-  // ── Spec table ───────────────────────────────────────────────────────────
-  const TABLE_W = 450;
-  const tableX = (PW - TABLE_W) / 2;
+  // ── Spec table ────────────────────────────────────────────────────────────
   autoTable(pdf, {
-    startY: y,
+    startY: TABLE_Y,
     theme: "grid",
     pageBreak: "avoid",
     tableWidth: TABLE_W,
-    margin: { left: tableX },
-    styles: { fontSize, cellPadding: 2, overflow: "linebreak" },
-    body: tableRows as any[],
-    columnStyles: {
-      0: { cellWidth: 230 },
-      1: { cellWidth: 220 },
+    margin: { left: MARGIN_L, right: MARGIN_R },
+
+    styles: {
+      font: "helvetica",
+      fontStyle: "normal",
+      fontSize: 8.5,
+      cellPadding: { top: 4, bottom: 4, left: 6, right: 6 },
+      overflow: "linebreak",
+      lineColor: [180, 180, 180],
+      lineWidth: 0.4,
+      textColor: [30, 30, 30],
+      valign: "middle",
     },
+
+    columnStyles: {
+      0: { cellWidth: COL_LABEL, fontStyle: "bold", fontSize: 8.5 },
+      1: { cellWidth: COL_VALUE, fontStyle: "normal", fontSize: 8.5 },
+    },
+
+    didParseCell(data) {
+      // Section header rows (colSpan 2)
+      if (
+        data.row.raw &&
+        Array.isArray(data.row.raw) &&
+        (data.row.raw[0] as any)?.colSpan === 2
+      ) {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fontSize = 8.5;
+        data.cell.styles.fillColor = [220, 220, 220];
+        data.cell.styles.textColor = [20, 20, 20];
+        data.cell.styles.cellPadding = { top: 5, bottom: 5, left: 6, right: 6 };
+      }
+      if (data.column.index === 0 && data.cell.styles.fontStyle !== "bold") {
+        data.cell.styles.fontStyle = "bold";
+      }
+    },
+
+    body: tableRows as any[],
   });
 
-  // ── Drawings section ─────────────────────────────────────────────────────
-  const tableEndY = (pdf as any).lastAutoTable.finalY as number;
-  const drawY = tableEndY + 35;
-  const DW = 120;
-  const GAP = 80;
-  const totalDW = DW * 2 + GAP;
-  const drawStartX = (PW - totalDW) / 2;
+  // ── Drawings section ──────────────────────────────────────────────────────
+  // Only slots with a non-empty URL are rendered.
+  // The "TECHNICAL DRAWINGS" heading is intentionally omitted.
+  // Partial rows (< DRAWINGS_PER_ROW images) are centred across the full width.
+  const activeSlots = drawingSlots.filter((s) => !!s.url.trim());
 
-  pdf.setFontSize(9);
-  pdf.setFont("helvetica", "bold");
-  pdf.text("DIMENSIONAL DRAWING", drawStartX + DW / 2, drawY - 10, {
-    align: "center",
-  });
-  pdf.text("ILLUMINANCE LEVEL", drawStartX + DW + GAP + DW / 2, drawY - 10, {
-    align: "center",
-  });
+  if (activeSlots.length > 0) {
+    const tableEndY = (pdf as any).lastAutoTable.finalY as number;
+    let curY = tableEndY + 20;
 
-  if (dimensionalDrawingUrl) {
-    const b64 = await urlToBase64(dimensionalDrawingUrl);
-    if (b64) {
-      pdf.addImage(b64, imgFormat(b64), drawStartX, drawY, DW, 80);
+    // Column width for a full row
+    const perColW = TABLE_W / DRAWINGS_PER_ROW;
+    const imgPadL = 6; // left padding within a column
+
+    // Render row by row
+    for (
+      let rowStart = 0;
+      rowStart < activeSlots.length;
+      rowStart += DRAWINGS_PER_ROW
+    ) {
+      const rowSlots = activeSlots.slice(rowStart, rowStart + DRAWINGS_PER_ROW);
+      const count = rowSlots.length; // 1, 2, or 3
+
+      // For partial rows, centre the group of thumbnails inside TABLE_W.
+      // Each thumbnail occupies perColW pt; the group's total width = count * perColW.
+      const groupW = count * perColW;
+      const groupOffsetX = MARGIN_L + (TABLE_W - groupW) / 2;
+
+      // ── Labels (above images) ─────────────────────────────────────────────
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7);
+      pdf.setTextColor(50, 50, 50);
+
+      rowSlots.forEach((slot, colIdx) => {
+        const slotX = groupOffsetX + colIdx * perColW;
+        const imgW = perColW - imgPadL * 2;
+        const labelCenterX = slotX + imgPadL + imgW / 2;
+        pdf.text(
+          slot.label.toUpperCase(),
+          labelCenterX,
+          curY + DRAWING_LABEL_H - 2,
+          { align: "center", maxWidth: imgW },
+        );
+      });
+
+      const imgRowY = curY + DRAWING_LABEL_H;
+
+      // ── Fetch all images in this row in parallel ──────────────────────────
+      const b64Results = await Promise.all(
+        rowSlots.map((slot) => urlToBase64(slot.url)),
+      );
+
+      for (let colIdx = 0; colIdx < rowSlots.length; colIdx++) {
+        const b64 = b64Results[colIdx];
+        if (!b64) continue;
+
+        const imgW = perColW - imgPadL * 2;
+        const slotOriginX = groupOffsetX + colIdx * perColW + imgPadL;
+        const { w, h } = await getImageDimensions(b64);
+        const ratio = Math.min(imgW / w, DRAWING_IMG_H / h);
+        const fw = w * ratio;
+        const fh = h * ratio;
+
+        // Centre image within its slot both horizontally and vertically
+        pdf.addImage(
+          b64,
+          imgFormat(b64),
+          slotOriginX + (imgW - fw) / 2,
+          imgRowY + (DRAWING_IMG_H - fh) / 2,
+          fw,
+          fh,
+        );
+      }
+
+      curY += DRAWING_LABEL_H + DRAWING_IMG_H + DRAWING_ROW_GAP;
     }
   }
-  if (illuminanceLevelUrl) {
-    const b64 = await urlToBase64(illuminanceLevelUrl);
-    if (b64) {
-      pdf.addImage(b64, imgFormat(b64), drawStartX + DW + GAP, drawY, DW, 80);
-    }
-  }
 
-  // ── Footer image ─────────────────────────────────────────────────────────
+  // ── Footer image ──────────────────────────────────────────────────────────
   const footerB64 = await urlToBase64(`${origin}/templates/lit-footer.png`);
   if (footerB64) {
     const { w: fw, h: fh } = await getImageDimensions(footerB64);
@@ -262,9 +364,37 @@ async function buildTdsPdf(
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
+ * Builds the ordered list of drawing slots from a `GenerateTdsInput`.
+ * Only slots with a non-empty URL survive — these are what the PDF renders.
+ * Order matches the spec: Dimensional Drawing → Recommended Mounting Height →
+ * Driver Compatibility → Base → Illuminance Level → Wiring Diagram →
+ * Installation → Wiring Layout → Terminal Layout → Accessories.
+ */
+function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
+  return [
+    { label: "Dimensional Drawing", url: input.dimensionalDrawingUrl ?? "" },
+    {
+      label: "Recommended Mounting Height",
+      url: input.recommendedMountingHeightUrl ?? "",
+    },
+    { label: "Driver Compatibility", url: input.driverCompatibilityUrl ?? "" },
+    { label: "Base", url: input.baseImageUrl ?? "" },
+    { label: "Illuminance Level", url: input.illuminanceLevelUrl ?? "" },
+    { label: "Wiring Diagram", url: input.wiringDiagramUrl ?? "" },
+    { label: "Installation", url: input.installationUrl ?? "" },
+    { label: "Wiring Layout", url: input.wiringLayoutUrl ?? "" },
+    { label: "Terminal Layout", url: input.terminalLayoutUrl ?? "" },
+    { label: "Accessories", url: input.accessoriesImageUrl ?? "" },
+  ].filter((s) => !!s.url.trim());
+}
+
+/**
  * Generate a **filled** product TDS PDF.
  * Spec entries with empty values OR "N/A" (case-insensitive) are excluded.
  * All text is normalised to ALL CAPS.
+ * Drawings section renders only the image slots that have a URL, up to 3 per row.
+ * The "TECHNICAL DRAWINGS" section heading is NOT rendered — images and their
+ * individual labels are placed directly after the spec table.
  */
 export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
   const rows: unknown[] = [];
@@ -273,7 +403,6 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
   rows.push(["ITEM CODE :", caps(input.litItemCode)]);
 
   (input.technicalSpecs ?? []).forEach((group) => {
-    // Exclude specs with empty values or "N/A"
     const validSpecs = (group.specs ?? []).filter(
       (s) => !isExcludedSpecValue(s.value),
     );
@@ -283,7 +412,11 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
       {
         content: caps(group.specGroup),
         colSpan: 2,
-        styles: { fillColor: [210, 215, 220], fontStyle: "bold" },
+        styles: {
+          fillColor: [220, 220, 220],
+          fontStyle: "bold",
+          fontSize: 8.5,
+        },
       },
     ]);
     validSpecs.forEach((spec) => {
@@ -296,8 +429,7 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
     input.litItemCode,
     rows,
     input.mainImageUrl,
-    input.dimensionalDrawingUrl,
-    input.illuminanceLevelUrl,
+    buildDrawingSlots(input),
   );
 }
 
@@ -305,6 +437,7 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
  * Generate a **blank template** TDS PDF for a productFamily.
  * Contains all spec label rows with empty value cells.
  * Saved as `tdsTemplate` on the productFamily Firestore document.
+ * No drawings section — no images are available at template-generation time.
  */
 export async function generateTdsTemplatePdf(
   input: GenerateTdsTemplateInput,
@@ -312,7 +445,7 @@ export async function generateTdsTemplatePdf(
   const rows: unknown[] = [];
 
   rows.push(["BRAND :", { content: "LIT", styles: { fontStyle: "bold" } }]);
-  rows.push(["ITEM CODE :", ""]);
+  rows.push(["MODEL NO. :", ""]);
 
   (input.specGroups ?? []).forEach((group) => {
     if (!group.items?.length) return;
@@ -320,7 +453,11 @@ export async function generateTdsTemplatePdf(
       {
         content: caps(group.name),
         colSpan: 2,
-        styles: { fillColor: [210, 215, 220], fontStyle: "bold" },
+        styles: {
+          fillColor: [220, 220, 220],
+          fontStyle: "bold",
+          fontSize: 8.5,
+        },
       },
     ]);
     group.items.forEach((item) => {
@@ -328,17 +465,13 @@ export async function generateTdsTemplatePdf(
     });
   });
 
-  return buildTdsPdf("PRODUCT DESCRIPTION", "", rows);
+  // No drawings for templates
+  return buildTdsPdf('"PRODUCT NAME"', "", rows, undefined, []);
 }
 
 /**
  * Upload a PDF `Blob` to Cloudinary's raw endpoint.
  * Returns the `secure_url` of the uploaded file.
- *
- * @param blob         PDF blob (from `generateTdsPdf` / `generateTdsTemplatePdf`)
- * @param filename     Desired filename, e.g. `"MY PRODUCT_TDS.pdf"`
- * @param cloudName    Cloudinary cloud name (defaults to project default)
- * @param uploadPreset Cloudinary unsigned upload preset
  */
 export async function uploadTdsPdf(
   blob: Blob,
