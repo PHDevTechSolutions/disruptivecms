@@ -31,6 +31,14 @@ export const PUBLIC_ROUTES = [
 ];
 
 /* ==============================
+   SUPERADMIN-ONLY ROUTES
+   Routes that wildcard (*) roles like admin cannot access.
+   Only the superadmin role is exempt from this restriction.
+   ============================== */
+
+export const SUPERADMIN_ONLY_ROUTES = ["/admin/register"];
+
+/* ==============================
    ROLE ACCESS CONFIG
    ============================== */
 
@@ -76,6 +84,20 @@ export function isPublicRoute(path: string): boolean {
 }
 
 /**
+ * Check if a path is restricted to superadmin only
+ */
+export function isSuperadminOnlyRoute(path: string): boolean {
+  const normalizedPath = path.replace(/\/$/, "");
+  return SUPERADMIN_ONLY_ROUTES.some((route) => {
+    const normalizedRoute = route.replace(/\/$/, "");
+    return (
+      normalizedPath === normalizedRoute ||
+      normalizedPath.startsWith(normalizedRoute + "/")
+    );
+  });
+}
+
+/**
  * Check if a role can access a specific route
  *
  * EDGE CASES HANDLED:
@@ -86,7 +108,8 @@ export function isPublicRoute(path: string): boolean {
  * - Unknown roles: Returns false (safe fallback)
  *
  * ROLE ACCESS TEST CASES:
- * - admin: Can access all routes (*)
+ * - superadmin: Can access all routes (*) including SUPERADMIN_ONLY_ROUTES
+ * - admin: Can access all routes (*) EXCEPT SUPERADMIN_ONLY_ROUTES
  * - pd: Can access only /products/all-products
  * - seo: Can access only /content/blogs
  * - hr: Can access /jobs and nested routes (/jobs/applications, /jobs/careers, etc.)
@@ -105,6 +128,11 @@ export function canAccessRoute(
 
   const normalizedRole = role.toLowerCase().trim();
 
+  // Superadmin-only routes: only superadmin may pass
+  if (isSuperadminOnlyRoute(path)) {
+    return normalizedRole === "superadmin";
+  }
+
   const allowedRoutes = roleAccessConfig[normalizedRole as UserRole];
   if (!allowedRoutes) return false;
 
@@ -121,10 +149,15 @@ export function canAccessRoute(
     // Support simple wildcard suffix: /content/* matches /content and any nested route
     if (normalizedRoute.endsWith("/*")) {
       const prefix = normalizedRoute.slice(0, -2);
-      return normalizedPath === prefix || normalizedPath.startsWith(prefix + "/");
+      return (
+        normalizedPath === prefix || normalizedPath.startsWith(prefix + "/")
+      );
     }
 
-    return normalizedPath === normalizedRoute || normalizedPath.startsWith(normalizedRoute + "/");
+    return (
+      normalizedPath === normalizedRoute ||
+      normalizedPath.startsWith(normalizedRoute + "/")
+    );
   });
 }
 
