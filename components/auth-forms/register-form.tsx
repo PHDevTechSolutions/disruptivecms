@@ -108,7 +108,12 @@ export function RegisterForm({
         email,
         fullName,
         role,
-        accessLevel: role === "admin" ? "full" : "staff",
+        accessLevel:
+          role === "superadmin"
+            ? "superadmin"
+            : role === "admin"
+              ? "full"
+              : "staff",
         status: "active",
         website: "disruptivesolutionsinc",
         provider: "password",
@@ -176,7 +181,12 @@ export function RegisterForm({
         email: user.email,
         fullName: user.displayName || "",
         role,
-        accessLevel: role === "admin" ? "full" : "staff",
+        accessLevel:
+          role === "superadmin"
+            ? "superadmin"
+            : role === "admin"
+              ? "full"
+              : "staff",
         status: "active",
         provider: "google",
         createdAt: new Date().toISOString(),
@@ -248,6 +258,9 @@ export function RegisterForm({
                   <SelectValue placeholder="Select your role" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="superadmin">
+                    Super Administrator
+                  </SelectItem>
                   <SelectItem value="admin">Administrator</SelectItem>
                   <SelectItem value="warehouse">Warehouse Staff</SelectItem>
                   <SelectItem value="seo">SEO Specialist</SelectItem>
