@@ -138,11 +138,11 @@ async function buildTdsPdf(
     pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
   }
 
-  // ── Product image box ────────────────────────────────────────────────────
+  // ── Product image box (LEFT ALIGNED) ────────────────────────────────────
   const BOX_W = 150;
   const BOX_H = 120;
   const PAD = 10;
-  const imageX = PW / 2 - BOX_W - 60;
+  const imageX = 20; // Left aligned
   const imageY = y;
 
   pdf.setDrawColor(0, 0, 0);
@@ -167,13 +167,14 @@ async function buildTdsPdf(
     }
   }
 
-  // ── Item description (right column) ─────────────────────────────────────
-  const TEXT_X = imageX + BOX_W + 60;
-  const TEXT_MAX_W = BOX_W + 40;
+  // ── Item description (LEFT ALIGNED, below image) ─────────────────────────
+  const TEXT_X = imageX; // Left aligned with image
+  const TEXT_MAX_W = BOX_W;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(18);
-  pdf.text(caps(displayName), TEXT_X, imageY + BOX_H / 2, {
+  pdf.text(caps(displayName), TEXT_X, imageY + BOX_H + 25, {
     maxWidth: TEXT_MAX_W,
+    align: "left",
   });
 
   y += 140;
@@ -185,9 +186,8 @@ async function buildTdsPdf(
   const maxTableH = PH - FOOTER_H_APPROX - DRAWING_BLOCK_H - SAFE - y;
 
   let fontSize = 11;
-  const TABLE_W = 540; // Maximize width (leave ~25pt margins on each side)
-  const MARGIN_LR = 10; // Left/right margins
-  const tableX = MARGIN_LR;
+  const TABLE_W = 540; // Maximize width
+  const tableMarginLR = (PW - TABLE_W) / 2; // Center table
   
   while (fontSize > 5) {
     const tmp = new jsPDF("p", "pt", "a4");
@@ -196,7 +196,7 @@ async function buildTdsPdf(
       theme: "grid",
       styles: { fontSize },
       body: tableRows as any[],
-      margin: { left: tableX, right: MARGIN_LR },
+      margin: { left: tableMarginLR, right: tableMarginLR },
       tableWidth: TABLE_W,
     });
     const endY = (tmp as any).lastAutoTable.finalY as number;
@@ -204,13 +204,13 @@ async function buildTdsPdf(
     fontSize -= 0.5;
   }
 
-  // ── Spec table ───────────────────────────────────────────────────────────
+  // ── Spec table (CENTERED) ───────────────────────────────────────────────
   autoTable(pdf, {
     startY: y,
     theme: "grid",
     pageBreak: "avoid",
     tableWidth: TABLE_W,
-    margin: { left: tableX, right: MARGIN_LR },
+    margin: { left: tableMarginLR, right: tableMarginLR },
     styles: { fontSize, cellPadding: 3, overflow: "linebreak" },
     body: tableRows as any[],
     columnStyles: {
