@@ -149,10 +149,15 @@ export function canAccessRoute(
     // Support simple wildcard suffix: /content/* matches /content and any nested route
     if (normalizedRoute.endsWith("/*")) {
       const prefix = normalizedRoute.slice(0, -2);
-      return normalizedPath === prefix || normalizedPath.startsWith(prefix + "/");
+      return (
+        normalizedPath === prefix || normalizedPath.startsWith(prefix + "/")
+      );
     }
 
-    return normalizedPath === normalizedRoute || normalizedPath.startsWith(normalizedRoute + "/");
+    return (
+      normalizedPath === normalizedRoute ||
+      normalizedPath.startsWith(normalizedRoute + "/")
+    );
   });
 }
 
