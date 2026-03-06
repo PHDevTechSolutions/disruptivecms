@@ -30,6 +30,7 @@ import { Loader2, Eye, EyeOff } from "lucide-react";
 
 // Firebase Imports
 import { auth, db } from "@/lib/firebase";
+import { secondaryAuth } from "@/lib/firebase-secondary";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
@@ -92,28 +93,45 @@ export function RegisterForm({
 
     try {
       if (isAdminContext) {
-        // Use the admin registration API that doesn't log out the current user
-        const response = await fetch("/api/auth/register-admin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email,
-            password,
-            fullName,
-            role,
-            provider: "password",
-          }),
-        });
+        // Use secondary Firebase instance to create user without affecting primary session
+        const secondaryCred = await createUserWithEmailAndPassword(
+          secondaryAuth,
+          email,
+          password
+        );
+        const newSecondaryUser = secondaryCred.user;
 
-        const data = await response.json();
+        await updateProfile(newSecondaryUser, { displayName: fullName });
 
-        if (!response.ok) {
-          toast.error("Registration Failed", {
+        // Save user metadata to Firestore using primary app's database
+        const ref = doc(db, "adminaccount", newSecondaryUser.uid);
+        const snap = await getDoc(ref);
+
+        if (snap.exists()) {
+          // Sign out the secondary user immediately
+          await signOut(secondaryAuth);
+          toast.error("Account Exists", {
             id: regToast,
-            description: data.error || "An unexpected error occurred.",
+            description: "This user is already registered in the CMS.",
           });
           return;
         }
+
+        await setDoc(ref, {
+          uid: newSecondaryUser.uid,
+          email,
+          fullName,
+          role,
+          accessLevel: role === "admin" || role === "superadmin" ? "full" : "staff",
+          status: "active",
+          website: "disruptivesolutionsinc",
+          provider: "password",
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString(),
+        });
+
+        // Sign out the secondary auth instance to leave new user in "guest" state
+        await signOut(secondaryAuth);
 
         toast.success("Account Created Successfully!", {
           id: regToast,
@@ -121,6 +139,7 @@ export function RegisterForm({
         });
 
         // Reset form fields for next account creation
+        // Primary superadmin session remains intact!
         setEmail("");
         setPassword("");
         setConfirmPassword("");
