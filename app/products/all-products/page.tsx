@@ -1496,7 +1496,18 @@ export default function AllProductsPage() {
         if (!product) throw new Error("Product not found in selection");
 
         const itemDescription = product.itemDescription || product.name || "";
-        const technicalSpecs = product.technicalSpecs ?? [];
+
+        // Filter out N/A and empty spec values before TDS generation.
+        // tdsGenerator also filters independently as a safety net.
+        const technicalSpecs = (product.technicalSpecs ?? [])
+          .map((group) => ({
+            ...group,
+            specs: (group.specs ?? []).filter((s: { value: any; }) => {
+              const v = (s.value ?? "").toUpperCase().trim();
+              return v !== "" && v !== "N/A";
+            }),
+          }))
+          .filter((group) => (group.specs ?? []).length > 0);
 
         // ── Step 1: generate PDF blob using new single-arg API ─────────────
         const tdsBlob = await generateTdsPdf({

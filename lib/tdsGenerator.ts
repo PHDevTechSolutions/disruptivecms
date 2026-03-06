@@ -11,6 +11,9 @@
  * Footer  : /public/templates/lit-footer.png
  * All text is normalised to ALL CAPS.
  * A4 portrait. Output filename: {itemDescription}_TDS.pdf
+ *
+ * N/A filtering: spec entries whose value trims to "N/A" (case-insensitive)
+ * are automatically excluded from generated PDFs.
  */
 
 import jsPDF from "jspdf";
@@ -56,6 +59,15 @@ export interface GenerateTdsTemplateInput {
 /** Normalise any string to ALL CAPS, trimmed. */
 function caps(s?: string | null): string {
   return (s ?? "").toUpperCase().trim();
+}
+
+/**
+ * Returns true if a spec value should be excluded from the TDS.
+ * Excludes: empty/nullish values AND the literal string "N/A" (case-insensitive).
+ */
+function isExcludedSpecValue(value?: string | null): boolean {
+  const trimmed = (value ?? "").trim();
+  return !trimmed || trimmed.toUpperCase() === "N/A";
 }
 
 /** Fetch any URL and return a base64 data-URI, or null on failure. */
@@ -251,7 +263,7 @@ async function buildTdsPdf(
 
 /**
  * Generate a **filled** product TDS PDF.
- * Only spec entries with a non-empty `value` are included.
+ * Spec entries with empty values OR "N/A" (case-insensitive) are excluded.
  * All text is normalised to ALL CAPS.
  */
 export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
@@ -261,7 +273,10 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
   rows.push(["ITEM CODE :", caps(input.litItemCode)]);
 
   (input.technicalSpecs ?? []).forEach((group) => {
-    const validSpecs = (group.specs ?? []).filter((s) => s.value?.trim());
+    // Exclude specs with empty values or "N/A"
+    const validSpecs = (group.specs ?? []).filter(
+      (s) => !isExcludedSpecValue(s.value),
+    );
     if (!validSpecs.length) return;
 
     rows.push([

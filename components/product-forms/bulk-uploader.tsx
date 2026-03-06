@@ -1312,7 +1312,7 @@ export default function BulkUploader({
         addLog("info", `  → Uploading images for "${p.itemDescription}"...`);
         const [
           mainImage,
-          rawImage,
+          rawImageUploaded,
           dimensionalDrawingImage,
           recommendedMountingHeightImage,
           driverCompatibilityImage,
@@ -1343,16 +1343,26 @@ export default function BulkUploader({
           (m) => addLog("info", m),
         );
 
-        // Build technicalSpecs — ALL CAPS labels and values
-        const technicalSpecs = Object.entries(p.specs).map(
-          ([specGroup, entries]) => ({
+        // ── rawImage fallback: use mainImage if rawImage upload is empty ──────
+        const rawImage = rawImageUploaded || mainImage || "";
+
+        // ── Build technicalSpecs — filter out N/A and empty values ────────────
+        // Entries with value "N/A" (case-insensitive) or empty are excluded from
+        // both Firestore storage and TDS PDF generation.
+        const technicalSpecs = Object.entries(p.specs)
+          .map(([specGroup, entries]) => ({
             specGroup: specGroup.toUpperCase().trim(),
-            specs: entries.map((e) => ({
-              name: e.label.toUpperCase().trim(),
-              value: e.value.toUpperCase().trim(),
-            })),
-          }),
-        );
+            specs: entries
+              .filter((e) => {
+                const v = e.value.toUpperCase().trim();
+                return v !== "" && v !== "N/A";
+              })
+              .map((e) => ({
+                name: e.label.toUpperCase().trim(),
+                value: e.value.toUpperCase().trim(),
+              })),
+          }))
+          .filter((group) => group.specs.length > 0);
 
         const slug = p.ecoItemCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
@@ -1368,7 +1378,7 @@ export default function BulkUploader({
           salePrice: 0,
           technicalSpecs,
           mainImage: mainImage || "",
-          rawImage: rawImage || "",
+          rawImage,
           qrCodeImage: "",
           galleryImages: galleryUploaded.filter(Boolean),
           dimensionalDrawingImage: dimensionalDrawingImage || "",
@@ -1404,9 +1414,8 @@ export default function BulkUploader({
         addLog("info", `  → Saved product doc ${docRef.id}`);
 
         // ── TDS PDF generation ─────────────────────────────────────────────────
-        // Uses generateTdsPdf directly — no template fetch required.
-        // Only spec entries with non-empty values are included (handled by the lib).
-        // Output filename: {itemDescription}_TDS.pdf
+        // technicalSpecs already has N/A filtered out above.
+        // tdsGenerator also independently filters N/A as a safety net.
         if (technicalSpecs.length > 0) {
           try {
             addLog(
@@ -1883,9 +1892,9 @@ export default function BulkUploader({
                           "Images uploaded to Cloudinary automatically",
                           "Spec groups upserted from Row 2 headers (ALL CAPS)",
                           "Product families created / updated",
-                          "TDS PDF generated directly from spec values",
+                          "N/A spec values excluded from TDS and storage",
+                          "Raw image falls back to main image if missing",
                           "Duplicate check: ecoItemCode AND litItemCode",
-                          "Missing fields gracefully ignored",
                         ].map((c) => (
                           <div key={c} className="flex items-start gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1" />
@@ -2062,7 +2071,7 @@ export default function BulkUploader({
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Duplicates skipped · Saved as <strong>Draft</strong> · TDS
-                      auto-generated from spec values
+                      auto-generated · N/A values excluded
                     </p>
                   </div>
                   <Button
