@@ -38,6 +38,7 @@ import {
   ShoppingBag,
   Download,
   ExternalLink,
+  Layers,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -1502,7 +1503,7 @@ export default function AllProductsPage() {
         const technicalSpecs = (product.technicalSpecs ?? [])
           .map((group) => ({
             ...group,
-            specs: (group.specs ?? []).filter((s: { value: any; }) => {
+            specs: (group.specs ?? []).filter((s: { value: any }) => {
               const v = (s.value ?? "").toUpperCase().trim();
               return v !== "" && v !== "N/A";
             }),
@@ -1701,6 +1702,38 @@ export default function AllProductsPage() {
         );
       },
     },
+    // ── Product Family column (visible + filterable) ──────────────────────
+    {
+      id: "productFamilyFilter",
+      accessorFn: (row) =>
+        row.productFamily || (row.categories as string) || "",
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+          Product Family
+        </div>
+      ),
+      cell: ({ row }) => {
+        const family =
+          row.original.productFamily || (row.original.categories as string);
+        return family ? (
+          <span className="text-xs text-muted-foreground truncate max-w-40 block">
+            {family}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/40">—</span>
+        );
+      },
+      enableHiding: true,
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        const family =
+          row.original.productFamily ||
+          (row.original.categories as string) ||
+          "";
+        return family === filterValue;
+      },
+    },
     {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Product Class</div>,
@@ -1872,10 +1905,27 @@ export default function AllProductsPage() {
     return Array.from(s).sort();
   }, [data]);
 
+  // ── Unique product families derived from live data ────────────────────────
+  const uniqueProductFamilies = React.useMemo(() => {
+    const s = new Set<string>();
+    data.forEach((p) => {
+      const fam = p.productFamily || (p.categories as string);
+      if (fam) s.add(fam);
+    });
+    return Array.from(s).sort();
+  }, [data]);
+
   const selectedCount = Object.keys(rowSelection).length;
   const filteredCount = table.getFilteredRowModel().rows.length;
   const totalCount = data.length;
   const isFiltered = filteredCount !== totalCount;
+
+  // Current product-family filter value (empty string = no filter)
+  const activeFamilyFilter =
+    (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
+
+  // Search term inside the Product Family dropdown
+  const [familySearch, setFamilySearch] = React.useState("");
 
   const renderEditMode = () => (
     <div className="space-y-6">
@@ -2106,6 +2156,7 @@ export default function AllProductsPage() {
           )}
         </div>
 
+        {/* Product Class filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2139,6 +2190,111 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* ── Product Family filter ─────────────────────────────────────── */}
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (!open) setFamilySearch("");
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeFamilyFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              <Layers className="h-4 w-4" />
+              {activeFamilyFilter ? (
+                <span className="max-w-36 truncate">{activeFamilyFilter}</span>
+              ) : (
+                "Product Family"
+              )}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-72 p-0 overflow-x-hidden"
+          >
+            {/* Search input */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b">
+              <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <input
+                placeholder="Search families…"
+                value={familySearch}
+                onChange={(e) => setFamilySearch(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/60 min-w-0"
+                autoFocus
+              />
+              {familySearch && (
+                <button
+                  type="button"
+                  onClick={() => setFamilySearch("")}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {/* Scrollable list */}
+            <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1 [&::-webkit-scrollbar]:w-0 [scrollbar-width:none]">
+              <DropdownMenuItem
+                onClick={() =>
+                  table.getColumn("productFamilyFilter")?.setFilterValue("")
+                }
+              >
+                <span className="text-muted-foreground italic">
+                  All Families
+                </span>
+                {!activeFamilyFilter && (
+                  <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {(() => {
+                const filtered = uniqueProductFamilies.filter((f) =>
+                  f.toLowerCase().includes(familySearch.toLowerCase()),
+                );
+                if (filtered.length === 0)
+                  return (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                      No families match "{familySearch}"
+                    </div>
+                  );
+                return filtered.map((family) => (
+                  <DropdownMenuItem
+                    key={family}
+                    onClick={() =>
+                      table
+                        .getColumn("productFamilyFilter")
+                        ?.setFilterValue(
+                          activeFamilyFilter === family ? "" : family,
+                        )
+                    }
+                    className="flex items-center gap-2 w-full overflow-hidden"
+                  >
+                    <span className="truncate text-sm flex-1 min-w-0">
+                      {family}
+                    </span>
+                    {activeFamilyFilter === family && (
+                      <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ));
+              })()}
+            </div>
+            {/* Footer count */}
+            <div className="border-t px-3 py-1.5">
+              <p className="text-[11px] text-muted-foreground">
+                {familySearch
+                  ? `${uniqueProductFamilies.filter((f) => f.toLowerCase().includes(familySearch.toLowerCase())).length} of ${uniqueProductFamilies.length}`
+                  : uniqueProductFamilies.length}{" "}
+                {uniqueProductFamilies.length === 1 ? "family" : "families"}
+              </p>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Brands filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2168,6 +2324,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* Websites filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2198,6 +2355,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* Column visibility toggle */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="ml-auto">
@@ -2210,6 +2368,7 @@ export default function AllProductsPage() {
             {table
               .getAllColumns()
               .filter((c) => c.getCanHide())
+              .filter((c) => c.id !== "productFamilyFilter")
               .map((column) => (
                 <DropdownMenuCheckboxItem
                   key={column.id}
@@ -2223,6 +2382,26 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Active product family pill */}
+      {activeFamilyFilter && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtered by:</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+            <Layers className="h-3 w-3" />
+            {activeFamilyFilter}
+            <button
+              type="button"
+              onClick={() =>
+                table.getColumn("productFamilyFilter")?.setFilterValue("")
+              }
+              className="ml-0.5 hover:text-destructive transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* Table */}
       <div className="rounded-lg border">
