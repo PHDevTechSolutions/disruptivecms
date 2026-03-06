@@ -98,6 +98,7 @@ const allNavItems = {
     url: "/admin",
     icon: <LockIcon />,
     items: [
+      { title: "Register User", url: "/admin/register" },
       { title: "Audit Logs", url: "/admin/audit-logs" },
       { title: "Deleted Products", url: "/admin/deleted-products" },
     ],
@@ -106,6 +107,7 @@ const allNavItems = {
 
 // Role-based navigation mapping
 const roleNavMap: Record<string, string[]> = {
+  superadmin: ["products", "inquiries", "jobs", "contents", "settings", "recycle-bin"],
   admin: ["products", "inquiries", "jobs", "contents", "settings", "recycle-bin"],
   warehouse: ["products"],
   hr: ["jobs"],
@@ -158,7 +160,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             const allowedNavKeys = roleNavMap[userRole] || [];
             const filteredNav = allowedNavKeys
               .map((key) => allNavItems[key as keyof typeof allNavItems])
-              .filter(Boolean);
+              .filter(Boolean)
+              .map((navItem) => {
+                // Filter register item to only show for superadmin
+                if (navItem.title === "Admin") {
+                  return {
+                    ...navItem,
+                    items: navItem.items.filter((item: any) => {
+                      if (item.title === "Register User") {
+                        return userRole === "superadmin";
+                      }
+                      return true;
+                    }),
+                  };
+                }
+                return navItem;
+              });
             setNavItems(filteredNav);
           } else {
             // Fallback if no Firestore document
