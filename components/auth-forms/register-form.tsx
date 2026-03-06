@@ -39,11 +39,15 @@ import {
 } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/useAuth";
 
 export function RegisterForm({
   className,
   ...props
 }: React.ComponentProps<typeof Card>) {
+  const { user } = useAuth();
+  const isAdminContext = user?.role?.toLowerCase() === "superadmin";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -80,53 +84,96 @@ export function RegisterForm({
     }
 
     setIsLoading(true);
-    const regToast = toast.loading("Creating your internal account...");
+    const regToast = toast.loading(
+      isAdminContext
+        ? "Creating new admin account..."
+        : "Creating your internal account..."
+    );
 
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      const user = cred.user;
-
-      await updateProfile(user, { displayName: fullName });
-
-      const ref = doc(db, "adminaccount", user.uid);
-      const snap = await getDoc(ref);
-
-      if (snap.exists()) {
-        await signOut(auth);
-        toast.error("Account Exists", {
-          id: regToast,
-          description: "This user is already registered in the CMS.",
+      if (isAdminContext) {
+        // Use the admin registration API that doesn't log out the current user
+        const response = await fetch("/api/auth/register-admin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            fullName,
+            role,
+            provider: "password",
+          }),
         });
-        return;
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          toast.error("Registration Failed", {
+            id: regToast,
+            description: data.error || "An unexpected error occurred.",
+          });
+          return;
+        }
+
+        toast.success("Account Created Successfully!", {
+          id: regToast,
+          description: `${fullName} has been registered as ${role.toUpperCase()}.`,
+        });
+
+        // Reset form fields for next account creation
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
+        setFullName("");
+        setRole("");
+      } else {
+        // Standard registration flow (non-admin context)
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        const newUser = cred.user;
+
+        await updateProfile(newUser, { displayName: fullName });
+
+        const ref = doc(db, "adminaccount", newUser.uid);
+        const snap = await getDoc(ref);
+
+        if (snap.exists()) {
+          await signOut(auth);
+          toast.error("Account Exists", {
+            id: regToast,
+            description: "This user is already registered in the CMS.",
+          });
+          return;
+        }
+
+        await setDoc(ref, {
+          uid: newUser.uid,
+          email,
+          fullName,
+          role,
+          accessLevel:
+            role === "admin" || role === "superadmin" ? "full" : "staff",
+          status: "active",
+          website: "disruptivesolutionsinc",
+          provider: "password",
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString(),
+        });
+
+        // Sign out user after registration
+        await signOut(auth);
+
+        toast.success("Account Created Successfully!", {
+          id: regToast,
+          description: `${fullName} has been registered as ${role.toUpperCase()}.`,
+        });
+
+        // Reset form fields
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
+        setFullName("");
+        setRole("");
       }
-
-      await setDoc(ref, {
-        uid: user.uid,
-        email,
-        fullName,
-        role,
-        accessLevel: role === "admin" || role === "superadmin" ? "full" : "staff",
-        status: "active",
-        website: "disruptivesolutionsinc",
-        provider: "password",
-        createdAt: new Date().toISOString(),
-        lastLogin: new Date().toISOString(),
-      });
-
-      // Sign out user after registration
-      await signOut(auth);
-
-      toast.success("Account Created Successfully!", {
-        id: regToast,
-        description: `${fullName} has been registered as ${role.toUpperCase()}.`,
-      });
-
-      // Reset form fields
-      setEmail("");
-      setPassword("");
-      setConfirmPassword("");
-      setFullName("");
-      setRole("");
     } catch (err: any) {
       toast.error("Registration Failed", {
         id: regToast,
@@ -153,12 +200,25 @@ export function RegisterForm({
     const googleToast = toast.loading("Connecting to Google..");
 
     try {
+      if (isAdminContext) {
+        // Admin context: note that Google sign-up for admin account creation
+        // should be handled through the API as well for consistency
+        toast.error("Google Sign-Up Not Available", {
+          id: googleToast,
+          description:
+            "Please use email and password to create admin accounts.",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Standard Google sign-up flow (non-admin context)
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
       const result = await signInWithPopup(auth, provider);
-      const user = result.user;
+      const googleUser = result.user;
 
-      const ref = doc(db, "adminaccount", user.uid);
+      const ref = doc(db, "adminaccount", googleUser.uid);
       const snap = await getDoc(ref);
 
       if (snap.exists()) {
@@ -171,11 +231,12 @@ export function RegisterForm({
       }
 
       await setDoc(ref, {
-        uid: user.uid,
-        email: user.email,
-        fullName: user.displayName || "",
+        uid: googleUser.uid,
+        email: googleUser.email,
+        fullName: googleUser.displayName || "",
         role,
-        accessLevel: role === "admin" || role === "superadmin" ? "full" : "staff",
+        accessLevel:
+          role === "admin" || role === "superadmin" ? "full" : "staff",
         status: "active",
         provider: "google",
         createdAt: new Date().toISOString(),
@@ -187,7 +248,7 @@ export function RegisterForm({
 
       toast.success("Account Created Successfully!", {
         id: googleToast,
-        description: `${user.displayName || "User"} has been registered as ${role.toUpperCase()}.`,
+        description: `${googleUser.displayName || "User"} has been registered as ${role.toUpperCase()}.`,
       });
 
       // Reset form fields
