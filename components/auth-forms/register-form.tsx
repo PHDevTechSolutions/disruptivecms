@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -45,7 +44,6 @@ export function RegisterForm({
   className,
   ...props
 }: React.ComponentProps<typeof Card>) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -99,7 +97,6 @@ export function RegisterForm({
           id: regToast,
           description: "This user is already registered in the CMS.",
         });
-        router.push("/auth/login");
         return;
       }
 
@@ -119,13 +116,17 @@ export function RegisterForm({
       // Sign out user after registration
       await signOut(auth);
 
-      toast.success("Registration Successful!", {
+      toast.success("Account Created Successfully!", {
         id: regToast,
-        description:
-          "Your account has been created. Please sign in to continue.",
+        description: `${fullName} has been registered as ${role.toUpperCase()}.`,
       });
 
-      router.push("/auth/login");
+      // Reset form fields
+      setEmail("");
+      setPassword("");
+      setConfirmPassword("");
+      setFullName("");
+      setRole("");
     } catch (err: any) {
       toast.error("Registration Failed", {
         id: regToast,
@@ -164,10 +165,8 @@ export function RegisterForm({
         await signOut(auth);
         toast.info("Account Exists", {
           id: googleToast,
-          description:
-            "This Google account is already registered. Redirecting to login...",
+          description: "This Google account is already registered.",
         });
-        router.push("/auth/login");
         return;
       }
 
@@ -186,12 +185,17 @@ export function RegisterForm({
       // Sign out user after registration
       await signOut(auth);
 
-      toast.success("Registration Successful!", {
+      toast.success("Account Created Successfully!", {
         id: googleToast,
-        description: `Account created as ${role.toUpperCase()}. Please sign in to continue.`,
+        description: `${user.displayName || "User"} has been registered as ${role.toUpperCase()}.`,
       });
 
-      router.push("/auth/login");
+      // Reset form fields
+      setEmail("");
+      setPassword("");
+      setConfirmPassword("");
+      setFullName("");
+      setRole("");
     } catch (err: any) {
       if (err?.code !== "auth/popup-closed-by-user") {
         toast.error("Google Authentication Failed", {
