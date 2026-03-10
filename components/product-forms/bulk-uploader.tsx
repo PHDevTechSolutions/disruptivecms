@@ -231,8 +231,12 @@ async function parseWorkbook(file: File): Promise<{
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell) => {
+      const hyperlink =
+        typeof (cell as any).hyperlink === "string"
+          ? ((cell as any).hyperlink as string).trim()
+          : null;
       cells[Number(cell.col) - 1] =
-        cell.value != null ? cellStr(cell.value) : null;
+        hyperlink ?? (cell.value != null ? cellStr(cell.value) : null);
     });
     allRows.push(cells);
   });
