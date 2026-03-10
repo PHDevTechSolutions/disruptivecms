@@ -54,6 +54,7 @@ import {
   Plus,
   FolderPlus,
   Info,
+  Pencil,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,13 @@ interface PendingItem {
 interface SpecValue {
   specGroup: string;
   specs: { name: string; value: string }[];
+}
+
+interface PendingNewSpec {
+  specGroupId: string;
+  specGroup: string;
+  label: string;
+  tempId: string;
 }
 
 type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
@@ -292,7 +300,6 @@ export default function AddNewProduct({
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
 
   const [isPublishing, setIsPublishing] = useState(false);
-  // tdsHasSpecs: true when selected family has specs → TDS can be generated
   const [tdsHasSpecs, setTdsHasSpecs] = useState(false);
   const [tdsStatus, setTdsStatus] = useState<TdsStatus>("idle");
   const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
@@ -319,6 +326,16 @@ export default function AddNewProduct({
   const [availableApps, setAvailableApps] = useState<MasterItem[]>([]);
   const [catOpen, setCatOpen] = useState(false);
   const pendingItemsRef = useRef<PendingItem[]>([]);
+
+  // ── Spec editing state ─────────────────────────────────────────────────────
+  const [pendingNewSpecs, setPendingNewSpecs] = useState<PendingNewSpec[]>([]);
+  const [newSpecInputs, setNewSpecInputs] = useState<Record<string, string>>(
+    {},
+  );
+  const [groupNameEdits, setGroupNameEdits] = useState<Record<string, string>>(
+    {},
+  );
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
   const [selectedWebs, setSelectedWebs] = useState<string[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string>("");
@@ -399,6 +416,24 @@ export default function AddNewProduct({
     "desktop",
   );
 
+  // ── Auto-open technical drawings in edit view ─────────────────────────────
+  useEffect(() => {
+    if (!editData) return;
+    const hasTechDrawings = [
+      editData.dimensionDrawingImage,
+      editData.mountingHeightImage,
+      editData.driverCompatibilityImage,
+      editData.baseImage,
+      editData.illuminanceLevelImage,
+      editData.wiringDiagramImage,
+      editData.installationImage,
+      editData.wiringLayoutImage,
+      editData.terminalLayoutImage,
+      editData.accessoriesImage,
+    ].some(Boolean);
+    if (hasTechDrawings) setTechDrawingsOpen(true);
+  }, [editData]);
+
   // ── Canonical URL auto-fill ───────────────────────────────────────────────
   useEffect(() => {
     if (!seoData.slug || selectedWebs.length === 0) return;
@@ -476,13 +511,18 @@ export default function AddNewProduct({
     });
   }, [availableCats, productUsage]);
 
-  // ── Specs listener (load specItems for selected productFamily) ────────────
+  // ── Specs listener ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!selectedCatId) {
       setTdsHasSpecs(false);
       setTdsStatus("idle");
       setAvailableSpecs([]);
       setSpecsLoading(false);
+      // Reset spec editing state when family changes
+      setPendingNewSpecs([]);
+      setGroupNameEdits({});
+      setNewSpecInputs({});
+      setEditingGroupId(null);
       return;
     }
     let cancelled = false;
@@ -658,6 +698,32 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
+  // ── Add new spec item helper ───────────────────────────────────────────────
+  const addNewSpecItem = useCallback(
+    (specGroupId: string, specGroup: string) => {
+      const label = (newSpecInputs[specGroupId] || "").trim().toUpperCase();
+      if (!label) return;
+      const exists =
+        availableSpecs.some(
+          (s) => s.specGroupId === specGroupId && s.label === label,
+        ) ||
+        pendingNewSpecs.some(
+          (s) => s.specGroupId === specGroupId && s.label === label,
+        );
+      if (exists) {
+        toast.error("Spec item already exists in this group");
+        return;
+      }
+      const tempId = `new-${specGroupId}-${label}-${Date.now()}`;
+      setPendingNewSpecs((p) => [
+        ...p,
+        { specGroupId, specGroup, label, tempId },
+      ]);
+      setNewSpecInputs((p) => ({ ...p, [specGroupId]: "" }));
+    },
+    [newSpecInputs, availableSpecs, pendingNewSpecs],
+  );
+
   // ── Publish ───────────────────────────────────────────────────────────────
   const handlePublish = async () => {
     if (!itemDescription)
@@ -760,24 +826,62 @@ export default function AddNewProduct({
         : existingAccessoriesImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
-      // Build technicalSpecs — ALL CAPS labels and values
+      // Build technicalSpecs — includes existing + newly added specs
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
+
       Object.entries(specValues).forEach(([key, value]) => {
         if (!value.trim()) return;
+        // Check existing specs
         const s = availableSpecs.find(
           (sp) =>
             `${sp.specGroupId}-${sp.label}` === key ||
             `${sp.specGroup}-${sp.label}` === key,
         );
         if (s) {
-          if (!specsGrouped[s.specGroup]) specsGrouped[s.specGroup] = [];
-          specsGrouped[s.specGroup].push({
-            name: s.label.toUpperCase().trim(), // ALL CAPS
-            value: value.toUpperCase().trim(), // ALL CAPS
+          const resolvedGroupName =
+            groupNameEdits[s.specGroupId] || s.specGroup;
+          if (!specsGrouped[resolvedGroupName])
+            specsGrouped[resolvedGroupName] = [];
+          specsGrouped[resolvedGroupName].push({
+            name: s.label.toUpperCase().trim(),
+            value: value.toUpperCase().trim(),
+          });
+          return;
+        }
+        // Check pending new specs (keyed by tempId)
+        const ns = pendingNewSpecs.find((sp) => sp.tempId === key);
+        if (ns) {
+          const resolvedGroupName =
+            groupNameEdits[ns.specGroupId] || ns.specGroup;
+          if (!specsGrouped[resolvedGroupName])
+            specsGrouped[resolvedGroupName] = [];
+          specsGrouped[resolvedGroupName].push({
+            name: ns.label,
+            value: value.toUpperCase().trim(),
           });
         }
       });
+
+      // Also capture pending new spec values that may be keyed by tempId separately
+      pendingNewSpecs.forEach((spec) => {
+        const value = specValues[spec.tempId];
+        if (!value?.trim()) return;
+        const resolvedGroupName =
+          groupNameEdits[spec.specGroupId] || spec.specGroup;
+        // Avoid duplicates — already handled above if key matched
+        if (
+          !specsGrouped[resolvedGroupName]?.some((s) => s.name === spec.label)
+        ) {
+          if (!specsGrouped[resolvedGroupName])
+            specsGrouped[resolvedGroupName] = [];
+          specsGrouped[resolvedGroupName].push({
+            name: spec.label,
+            value: value.toUpperCase().trim(),
+          });
+        }
+      });
+
       const technicalSpecs = Object.entries(specsGrouped).map(
         ([specGroup, specs]) => ({
           specGroup: specGroup.toUpperCase().trim(),
@@ -869,7 +973,105 @@ export default function AddNewProduct({
         });
       }
 
-      // ── Generate TDS PDF directly from product data ───────────────────────
+      // ── Cross-save: new spec items → specs collection + productfamilies ───
+      if (pendingNewSpecs.length > 0 && selectedCatId) {
+        toast.loading("Syncing spec updates…", { id: tid });
+
+        // Group pending new specs by specGroupId
+        const byGroup = pendingNewSpecs.reduce(
+          (acc, spec) => {
+            if (!acc[spec.specGroupId]) acc[spec.specGroupId] = [];
+            acc[spec.specGroupId].push(spec.label);
+            return acc;
+          },
+          {} as Record<string, string[]>,
+        );
+
+        // Load productfamily doc once for batch update
+        const familyRef = doc(db, "productfamilies", selectedCatId);
+        const familySnap = await getDoc(familyRef);
+        const familyData = familySnap.exists()
+          ? (familySnap.data() as any)
+          : null;
+        let familySpecsArr: any[] = Array.isArray(familyData?.specs)
+          ? [...familyData.specs]
+          : [];
+
+        for (const [specGroupId, labels] of Object.entries(byGroup)) {
+          // 1. Add new items to specs/{specGroupId} collection
+          const specRef = doc(db, "specs", specGroupId);
+          const specSnap = await getDoc(specRef);
+          if (specSnap.exists()) {
+            const existingItems: any[] = specSnap.data().items || [];
+            const dedupedNew = labels
+              .filter(
+                (l) =>
+                  !existingItems.some(
+                    (i) =>
+                      String(i.label || "")
+                        .toUpperCase()
+                        .trim() === l,
+                  ),
+              )
+              .map((l) => ({ label: l }));
+            if (dedupedNew.length > 0) {
+              await updateDoc(specRef, {
+                items: [...existingItems, ...dedupedNew],
+              });
+            }
+          }
+
+          // 2. Patch productfamilies.specs[groupIdx].specItems
+          const groupIdx = familySpecsArr.findIndex(
+            (g: any) => g.specGroupId === specGroupId,
+          );
+          if (groupIdx >= 0) {
+            const existingSpecItems: any[] =
+              familySpecsArr[groupIdx].specItems || [];
+            const newSpecItems = labels
+              .filter(
+                (l) =>
+                  !existingSpecItems.some(
+                    (i) =>
+                      String(i.name || "")
+                        .toUpperCase()
+                        .trim() === l,
+                  ),
+              )
+              .map((l) => ({ id: `${specGroupId}-${l}`, name: l }));
+            if (newSpecItems.length > 0) {
+              familySpecsArr[groupIdx] = {
+                ...familySpecsArr[groupIdx],
+                specItems: [...existingSpecItems, ...newSpecItems],
+              };
+            }
+          }
+        }
+
+        // Write updated family specs
+        if (familySnap.exists()) {
+          await updateDoc(familyRef, { specs: familySpecsArr });
+        }
+
+        // Clear pending after successful save
+        setPendingNewSpecs([]);
+        setNewSpecInputs({});
+      }
+
+      // ── Cross-save: renamed spec groups → specs collection ────────────────
+      const changedGroupNames = Object.entries(groupNameEdits).filter(
+        ([, name]) => name.trim(),
+      );
+      if (changedGroupNames.length > 0) {
+        for (const [specGroupId, newName] of changedGroupNames) {
+          await updateDoc(doc(db, "specs", specGroupId), {
+            name: newName.trim(),
+          });
+        }
+        setGroupNameEdits({});
+      }
+
+      // ── Generate TDS PDF ──────────────────────────────────────────────────
       if (tdsHasSpecs && technicalSpecs.length > 0) {
         try {
           toast.loading("Generating TDS PDF...", { id: tid });
@@ -1337,9 +1539,34 @@ export default function AddNewProduct({
                         </span>
                       )}
                     </p>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
-                    />
+                    <div className="flex items-center gap-2">
+                      {/* Badge showing how many tech drawings are filled */}
+                      {(() => {
+                        const filledCount = [
+                          dimensionDrawingImage ||
+                            existingDimensionDrawingImage,
+                          mountingHeightImage || existingMountingHeightImage,
+                          driverCompatibilityImage ||
+                            existingDriverCompatibilityImage,
+                          baseImage || existingBaseImage,
+                          illuminanceLevelImage ||
+                            existingIlluminanceLevelImage,
+                          wiringDiagramImage || existingWiringDiagramImage,
+                          installationImage || existingInstallationImage,
+                          wiringLayoutImage || existingWiringLayoutImage,
+                          terminalLayoutImage || existingTerminalLayoutImage,
+                          accessoriesImage || existingAccessoriesImage,
+                        ].filter(Boolean).length;
+                        return filledCount > 0 ? (
+                          <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                            {filledCount} uploaded
+                          </span>
+                        ) : null;
+                      })()}
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${techDrawingsOpen ? "rotate-180" : ""}`}
+                      />
+                    </div>
                   </button>
                   {techDrawingsOpen && (
                     <div className="space-y-4 mt-3">
@@ -1598,7 +1825,7 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* Technical specs */}
+              {/* ── Technical Specs (with inline editing) ── */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
                   <div className="flex items-center gap-2 mb-4">
@@ -1611,7 +1838,16 @@ export default function AddNewProduct({
                         </span>
                       )}
                     </Label>
+                    {(pendingNewSpecs.length > 0 ||
+                      Object.keys(groupNameEdits).length > 0) && (
+                      <span className="ml-auto text-[10px] font-semibold text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
+                        {pendingNewSpecs.length > 0
+                          ? `${pendingNewSpecs.length} new item${pendingNewSpecs.length > 1 ? "s" : ""} · will cross-save on publish`
+                          : "Group rename · will cross-save on publish"}
+                      </span>
+                    )}
                   </div>
+
                   {specsLoading ? (
                     <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
                       <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -1619,7 +1855,8 @@ export default function AddNewProduct({
                         Loading specifications…
                       </p>
                     </div>
-                  ) : availableSpecs.length === 0 ? (
+                  ) : availableSpecs.length === 0 &&
+                    pendingNewSpecs.length === 0 ? (
                     <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed">
                       <p className="text-xs font-medium text-muted-foreground">
                         No specs attached to this product family
@@ -1636,12 +1873,73 @@ export default function AddNewProduct({
                             return true;
                           });
                           if (uniqueSpecs.length === 0) return null;
+
+                          const specGroupId = specs[0].specGroupId;
+                          const displayGroupName =
+                            groupNameEdits[specGroupId] ?? groupName;
+                          const groupPendingSpecs = pendingNewSpecs.filter(
+                            (s) => s.specGroupId === specGroupId,
+                          );
+
                           return (
                             <div key={groupName} className="space-y-3">
-                              <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
-                                <Zap className="h-3 w-3" />
-                                {groupName.toUpperCase()}
-                              </h4>
+                              {/* Group header with inline rename */}
+                              <div className="flex items-center gap-2">
+                                {editingGroupId === specGroupId ? (
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <Zap className="h-3 w-3 text-primary shrink-0" />
+                                    <Input
+                                      autoFocus
+                                      className="h-7 text-sm font-semibold text-primary uppercase px-2 py-0"
+                                      value={displayGroupName}
+                                      onChange={(e) =>
+                                        setGroupNameEdits((p) => ({
+                                          ...p,
+                                          [specGroupId]:
+                                            e.target.value.toUpperCase(),
+                                        }))
+                                      }
+                                      onBlur={() => setEditingGroupId(null)}
+                                      onKeyDown={(e) => {
+                                        if (
+                                          e.key === "Enter" ||
+                                          e.key === "Escape"
+                                        )
+                                          setEditingGroupId(null);
+                                      }}
+                                    />
+                                    {groupNameEdits[specGroupId] && (
+                                      <span className="text-[9px] text-amber-600 font-semibold shrink-0">
+                                        renamed
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <h4 className="text-sm font-semibold text-primary flex items-center gap-2 flex-1">
+                                      <Zap className="h-3 w-3" />
+                                      {displayGroupName.toUpperCase()}
+                                      {groupNameEdits[specGroupId] && (
+                                        <span className="text-[9px] text-amber-600 font-normal ml-1">
+                                          (renamed)
+                                        </span>
+                                      )}
+                                    </h4>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setEditingGroupId(specGroupId)
+                                      }
+                                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                                      title="Rename group"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Existing spec items */}
                               <div className="space-y-3 pl-5">
                                 {uniqueSpecs.map((spec) => {
                                   const specKey = `${spec.specGroupId}-${spec.label}`;
@@ -1668,6 +1966,87 @@ export default function AddNewProduct({
                                     </div>
                                   );
                                 })}
+
+                                {/* Newly added spec items (pending, not yet saved) */}
+                                {groupPendingSpecs.map((spec) => (
+                                  <div
+                                    key={spec.tempId}
+                                    className="space-y-1.5 p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <Label className="text-xs font-medium uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                        {spec.label}
+                                        <span className="text-[9px] font-bold bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 px-1.5 py-0.5 rounded-sm">
+                                          NEW
+                                        </span>
+                                      </Label>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPendingNewSpecs((p) =>
+                                            p.filter(
+                                              (s) => s.tempId !== spec.tempId,
+                                            ),
+                                          )
+                                        }
+                                        className="text-muted-foreground hover:text-destructive transition-colors"
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                    <Input
+                                      placeholder={`Enter ${spec.label}…`}
+                                      className="h-9 text-sm uppercase border-amber-200 dark:border-amber-800 focus-visible:ring-amber-400"
+                                      value={specValues[spec.tempId] || ""}
+                                      onChange={(e) =>
+                                        setSpecValues((p) => ({
+                                          ...p,
+                                          [spec.tempId]:
+                                            e.target.value.toUpperCase(),
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                ))}
+
+                                {/* Add new spec item row */}
+                                <div className="flex gap-2 pt-1">
+                                  <Input
+                                    placeholder="Add spec item (e.g. COLOR TEMP)…"
+                                    className="h-8 text-xs"
+                                    value={newSpecInputs[specGroupId] || ""}
+                                    onChange={(e) =>
+                                      setNewSpecInputs((p) => ({
+                                        ...p,
+                                        [specGroupId]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        addNewSpecItem(
+                                          specGroupId,
+                                          displayGroupName,
+                                        );
+                                      }
+                                    }}
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2.5 shrink-0 border-dashed"
+                                    onClick={() =>
+                                      addNewSpecItem(
+                                        specGroupId,
+                                        displayGroupName,
+                                      )
+                                    }
+                                  >
+                                    <Plus className="h-3.5 w-3.5 mr-1" />
+                                    Add
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -2295,10 +2674,7 @@ export default function AddNewProduct({
                     placeholder="Brief summary for search results…"
                     value={seoData.description}
                     onChange={(e) =>
-                      setSeoData((p) => ({
-                        ...p,
-                        description: e.target.value,
-                      }))
+                      setSeoData((p) => ({ ...p, description: e.target.value }))
                     }
                   />
                 </div>
