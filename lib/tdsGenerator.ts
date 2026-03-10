@@ -11,6 +11,15 @@
  * Footer  : /public/templates/lit-footer.png
  * All text is normalised to ALL CAPS.
  * A4 portrait. Output filename: {itemDescription}_TDS.pdf
+ *
+ * Layout strategy (single-page guarantee):
+ *   1. Reserve MIN_DRAWING_IMG_H × rows as a hard floor for images so specs
+ *      are given a realistic budget without hogging all the space.
+ *   2. Run the font-shrink loop against that budget (min readable: 6.5 pt).
+ *   3. After the table renders, measure the ACTUAL tableEndY and divide the
+ *      remaining vertical space across all drawing rows — clamped to
+ *      [MIN_DRAWING_IMG_H, DRAWING_IMG_H].  Images always fill available
+ *      room without ever spilling onto a second page.
  */
 
 import jsPDF from "jspdf";
@@ -120,38 +129,75 @@ const BOX_PAD = 8;
 const GAP_IMG_TEXT = 24;
 
 const DRAWINGS_PER_ROW = 3;
-const DRAWING_IMG_H = 170;
+
+/** Maximum (ideal) image height per drawing slot when space is plentiful */
+const DRAWING_IMG_H = 165;
+
+/**
+ * Absolute minimum image height — still legible at this size.
+ * Used as a hard floor when the spec table is very tall.
+ */
+const MIN_DRAWING_IMG_H = 60;
+
 const DRAWING_LABEL_H = 16;
-const DRAWING_ROW_GAP = 12;
-const DRAWING_SECTION_TOP_GAP = 16;
+const DRAWING_ROW_GAP = 8;
+const DRAWING_SECTION_TOP_GAP = 10;
 const DRAWING_IMG_PAD = 3;
-const FOOTER_RESERVE_H = 80;
-const MIN_FONT_SIZE = 5;
+
+/** Space reserved at the bottom of the page for the footer image */
+const FOOTER_RESERVE_H = 72;
+
+/**
+ * Readable minimum font size. Going below this makes spec text hard to read,
+ * so we clamp here and let image height absorb any remaining overflow instead.
+ */
+const MIN_FONT_SIZE = 6.5;
 const MAX_FONT_SIZE = 8.5;
 const FONT_SHRINK_STEP = 0.25;
 
-function drawingSectionHeight(slotCount: number): number {
+/**
+ * Height occupied by the drawings section for a given slot count + image height.
+ */
+function drawingSectionHeight(slotCount: number, imgH: number): number {
   if (slotCount === 0) return 0;
   const rows = Math.ceil(slotCount / DRAWINGS_PER_ROW);
   return (
-    DRAWING_SECTION_TOP_GAP +
-    rows * (DRAWING_LABEL_H + DRAWING_IMG_H + DRAWING_ROW_GAP)
+    DRAWING_SECTION_TOP_GAP + rows * (DRAWING_LABEL_H + imgH + DRAWING_ROW_GAP)
   );
 }
 
+/**
+ * Returns the drawing section height to RESERVE as a table budget, using
+ * a tiered target image height so the table shrinks proportionally with the
+ * number of drawing rows rather than always using the hard minimum.
+ *
+ *   1 row  (1-3 slots)  → 120 pt images  — comfortable
+ *   2 rows (4-6 slots)  →  90 pt images  — compact but readable
+ *   3 rows (7-9 slots)  →  72 pt images  — tight but still clear
+ *   4 rows (10-11 slots)→  62 pt images  — dense layout, min viable
+ */
+function budgetDrawingHeight(slotCount: number): number {
+  if (slotCount === 0) return 0;
+  const rows = Math.ceil(slotCount / DRAWINGS_PER_ROW);
+  const imgH = rows === 1 ? 120 : rows === 2 ? 90 : rows === 3 ? 72 : 62;
+  return drawingSectionHeight(slotCount, imgH);
+}
+
+/**
+ * Cell padding that compresses aggressively as font shrinks, giving back
+ * as much vertical space as possible without becoming cramped.
+ */
 function cellPaddingForFontSize(fontSize: number): {
   top: number;
   bottom: number;
   left: number;
   right: number;
 } {
-  const vPad = Math.max(
-    1,
-    Math.round(
-      ((fontSize - MIN_FONT_SIZE) / (MAX_FONT_SIZE - MIN_FONT_SIZE)) * 3 + 1,
-    ),
-  );
-  return { top: vPad, bottom: vPad, left: 5, right: 5 };
+  if (fontSize >= 8.0) return { top: 3, bottom: 3, left: 5, right: 5 };
+  if (fontSize >= 7.5) return { top: 2, bottom: 2, left: 5, right: 5 };
+  if (fontSize >= 7.0) return { top: 2, bottom: 2, left: 4, right: 4 };
+  if (fontSize >= 6.5) return { top: 1, bottom: 1, left: 4, right: 4 };
+  return { top: 1, bottom: 1, left: 3, right: 3 };
 }
 
 function probeTableHeight(
@@ -219,9 +265,16 @@ async function buildTdsPdf(
   const TABLE_Y = TOP_BLOCK_Y + BOX_H + 20;
 
   const activeSlots = drawingSlots.filter((s) => !!s.url.trim());
-  const drawH = drawingSectionHeight(activeSlots.length);
-  const maxTableH = PH - TABLE_Y - drawH - FOOTER_RESERVE_H;
+  const numDrawingRows = Math.ceil(activeSlots.length / DRAWINGS_PER_ROW);
 
+  // ── Spec table budget ───────────────────────────────────────────────────
+  // Reserve a tiered drawing budget (more rows = more reserved space, so
+  // the table shrinks proportionally rather than always using the hard min).
+  const availableH = PH - TABLE_Y - FOOTER_RESERVE_H;
+  const tieredDrawH = budgetDrawingHeight(activeSlots.length);
+  const maxTableH = Math.max(availableH - tieredDrawH, 60);
+
+  // ── Font-shrink loop ────────────────────────────────────────────────────
   let fontSize = MAX_FONT_SIZE;
   while (fontSize >= MIN_FONT_SIZE) {
     const measured = probeTableHeight(
@@ -316,11 +369,17 @@ async function buildTdsPdf(
         Array.isArray(data.row.raw) &&
         (data.row.raw[0] as any)?.colSpan === 2
       ) {
+        const groupPad = fontSize >= 8 ? 5 : fontSize >= 7 ? 4 : 3;
         data.cell.styles.fontStyle = "bold";
         data.cell.styles.fontSize = fontSize;
         data.cell.styles.fillColor = [220, 220, 220];
         data.cell.styles.textColor = [20, 20, 20];
-        data.cell.styles.cellPadding = { top: 5, bottom: 5, left: 6, right: 6 };
+        data.cell.styles.cellPadding = {
+          top: groupPad,
+          bottom: groupPad,
+          left: 6,
+          right: 6,
+        };
       }
       if (data.column.index === 0 && data.cell.styles.fontStyle !== "bold") {
         data.cell.styles.fontStyle = "bold";
@@ -332,7 +391,21 @@ async function buildTdsPdf(
   // Drawings section
   if (activeSlots.length > 0) {
     const tableEndY = (pdf as any).lastAutoTable.finalY as number;
-    const rowBlockH = DRAWING_LABEL_H + DRAWING_IMG_H + DRAWING_ROW_GAP;
+
+    // Compute remaining space between table bottom and footer, then divide
+    // evenly across drawing rows to get the adaptive image height.
+    const remainingH =
+      PH - FOOTER_RESERVE_H - tableEndY - DRAWING_SECTION_TOP_GAP;
+    const perRowBudget = numDrawingRows > 0 ? remainingH / numDrawingRows : 0;
+    const rawImgH = perRowBudget - DRAWING_LABEL_H - DRAWING_ROW_GAP;
+
+    // Clamp: never smaller than MIN (still legible), never larger than the ideal max
+    const effectiveImgH = Math.max(
+      MIN_DRAWING_IMG_H,
+      Math.min(DRAWING_IMG_H, rawImgH),
+    );
+
+    const rowBlockH = DRAWING_LABEL_H + effectiveImgH + DRAWING_ROW_GAP;
     let curY = tableEndY + DRAWING_SECTION_TOP_GAP;
 
     const perColW = TABLE_W / DRAWINGS_PER_ROW;
@@ -373,12 +446,12 @@ async function buildTdsPdf(
         const b64 = allB64[rowStart + colIdx];
         if (!b64) continue;
         const { w: natW, h: natH } = await getImageDimensions(b64);
-        const scale = Math.min(slotImgW / natW, DRAWING_IMG_H / natH);
+        const scale = Math.min(slotImgW / natW, effectiveImgH / natH);
         const fw = natW * scale;
         const fh = natH * scale;
         const slotOriginX = groupOffX + colIdx * perColW + DRAWING_IMG_PAD;
         const drawX = slotOriginX + (slotImgW - fw) / 2;
-        const drawY = imgRowY + (DRAWING_IMG_H - fh) / 2;
+        const drawY = imgRowY + (effectiveImgH - fh) / 2;
         pdf.addImage(b64, imgFormat(b64), drawX, drawY, fw, fh);
       }
 
