@@ -39,6 +39,11 @@ import {
   Download,
   ExternalLink,
   Layers,
+  ArrowUpAZ,
+  ArrowDownAZ,
+  Clock,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -158,6 +163,16 @@ interface TdsJob {
   status: TdsJobStatus;
   error?: string;
 }
+
+// ─── Sort option type ─────────────────────────────────────────────────────────
+
+type SortOption =
+  | "alpha-asc"
+  | "alpha-desc"
+  | "recent-12h"
+  | "newest"
+  | "oldest"
+  | null;
 
 // ─── Download helper (fetch-blob — works cross-origin with Cloudinary) ────────
 
@@ -1088,6 +1103,9 @@ export default function AllProductsPage() {
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
 
+  // ── Sort state ────────────────────────────────────────────────────────────
+  const [sortOption, setSortOption] = React.useState<SortOption>(null);
+
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -1473,7 +1491,6 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
-  // ── Updated: uses new generateTdsPdf + uploadTdsPdf API (matches bulk-uploader) ──
   const handleStartBulkTds = async () => {
     setIsTdsRunning(true);
 
@@ -1498,8 +1515,6 @@ export default function AllProductsPage() {
 
         const itemDescription = product.itemDescription || product.name || "";
 
-        // Filter out N/A and empty spec values before TDS generation.
-        // tdsGenerator also filters independently as a safety net.
         const technicalSpecs = (product.technicalSpecs ?? [])
           .map((group) => ({
             ...group,
@@ -1510,8 +1525,7 @@ export default function AllProductsPage() {
           }))
           .filter((group) => (group.specs ?? []).length > 0);
 
-        // ── Step 1: generate PDF blob using new single-arg API ─────────────
-        const p = product as any; // local alias for brevity
+        const p = product as any;
 
         const tdsBlob = await generateTdsPdf({
           itemDescription,
@@ -1539,7 +1553,6 @@ export default function AllProductsPage() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        // ── Step 2: upload blob to Cloudinary ──────────────────────────────
         const filename = `${itemDescription}_TDS.pdf`;
         const tdsUrl = await uploadTdsPdf(
           tdsBlob,
@@ -1548,7 +1561,6 @@ export default function AllProductsPage() {
           CLOUDINARY_UPLOAD_PRESET,
         );
 
-        // ── Step 3: persist URL to Firestore ──────────────────────────────
         if (tdsUrl.startsWith("http")) {
           await updateDoc(doc(db, "products", product.id), {
             tdsFileUrl: tdsUrl,
@@ -1711,7 +1723,6 @@ export default function AllProductsPage() {
         );
       },
     },
-    // ── Product Family column (visible + filterable) ──────────────────────
     {
       id: "productFamilyFilter",
       accessorFn: (row) =>
@@ -1874,8 +1885,62 @@ export default function AllProductsPage() {
     },
   ];
 
+  // ── Derived data: uniqueBrands, uniqueWebsites, uniqueProductFamilies ─────
+  const uniqueBrands = React.useMemo(() => {
+    const s = new Set<string>();
+    data.forEach((p) => {
+      if (Array.isArray(p.brands)) p.brands.forEach((b) => s.add(b));
+      else if (p.brand) s.add(p.brand as string);
+    });
+    return Array.from(s).sort();
+  }, [data]);
+
+  const uniqueWebsites = React.useMemo(() => {
+    const s = new Set<string>();
+    data.forEach((p) => {
+      if (Array.isArray(p.websites)) p.websites.forEach((w) => s.add(w));
+      else if (p.website) s.add(p.website as string);
+    });
+    return Array.from(s).sort();
+  }, [data]);
+
+  const uniqueProductFamilies = React.useMemo(() => {
+    const s = new Set<string>();
+    data.forEach((p) => {
+      const fam = p.productFamily || (p.categories as string);
+      if (fam) s.add(fam);
+    });
+    return Array.from(s).sort();
+  }, [data]);
+
+  // ── Sorted data ───────────────────────────────────────────────────────────
+  const sortedData = React.useMemo(() => {
+    const d = [...data];
+    const ts = (p: Product): number =>
+      p.createdAt?.toMillis?.() ??
+      (typeof p.createdAt === "number" ? p.createdAt : 0);
+    const label = (p: Product) =>
+      (p.itemDescription || p.name || "").toLowerCase();
+
+    switch (sortOption) {
+      case "alpha-asc":
+        return d.sort((a, b) => label(a).localeCompare(label(b)));
+      case "alpha-desc":
+        return d.sort((a, b) => label(b).localeCompare(label(a)));
+      case "recent-12h": {
+        const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+        return d.filter((p) => ts(p) >= cutoff).sort((a, b) => ts(b) - ts(a));
+      }
+      case "oldest":
+        return d.sort((a, b) => ts(a) - ts(b));
+      case "newest":
+      default:
+        return d.sort((a, b) => ts(b) - ts(a));
+    }
+  }, [data, sortOption]);
+
   const table = useReactTable({
-    data,
+    data: sortedData,
     columns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -1896,44 +1961,14 @@ export default function AllProductsPage() {
     filterFns: { multiValue: multiValueFilter },
   });
 
-  const uniqueBrands = React.useMemo(() => {
-    const s = new Set<string>();
-    data.forEach((p) => {
-      if (Array.isArray(p.brands)) p.brands.forEach((b) => s.add(b));
-      else if (p.brand) s.add(p.brand as string);
-    });
-    return Array.from(s).sort();
-  }, [data]);
-
-  const uniqueWebsites = React.useMemo(() => {
-    const s = new Set<string>();
-    data.forEach((p) => {
-      if (Array.isArray(p.websites)) p.websites.forEach((w) => s.add(w));
-      else if (p.website) s.add(p.website as string);
-    });
-    return Array.from(s).sort();
-  }, [data]);
-
-  // ── Unique product families derived from live data ────────────────────────
-  const uniqueProductFamilies = React.useMemo(() => {
-    const s = new Set<string>();
-    data.forEach((p) => {
-      const fam = p.productFamily || (p.categories as string);
-      if (fam) s.add(fam);
-    });
-    return Array.from(s).sort();
-  }, [data]);
-
   const selectedCount = Object.keys(rowSelection).length;
   const filteredCount = table.getFilteredRowModel().rows.length;
   const totalCount = data.length;
   const isFiltered = filteredCount !== totalCount;
 
-  // Current product-family filter value (empty string = no filter)
   const activeFamilyFilter =
     (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
 
-  // Search term inside the Product Family dropdown
   const [familySearch, setFamilySearch] = React.useState("");
 
   const renderEditMode = () => (
@@ -1966,6 +2001,15 @@ export default function AllProductsPage() {
       />
     </div>
   );
+
+  // ── Sort option label for display ─────────────────────────────────────────
+  const sortLabel: Record<NonNullable<SortOption>, string> = {
+    "alpha-asc": "A → Z",
+    "alpha-desc": "Z → A",
+    "recent-12h": "Last 12 h",
+    newest: "Newest",
+    oldest: "Oldest",
+  };
 
   const renderTableMode = () => (
     <div className="w-full space-y-4">
@@ -2083,6 +2127,7 @@ export default function AllProductsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
+        {/* Search */}
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
@@ -2199,7 +2244,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* ── Product Family filter ─────────────────────────────────────── */}
+        {/* Product Family filter */}
         <DropdownMenu
           onOpenChange={(open) => {
             if (!open) setFamilySearch("");
@@ -2223,7 +2268,6 @@ export default function AllProductsPage() {
             align="end"
             className="w-72 p-0 overflow-x-hidden"
           >
-            {/* Search input */}
             <div className="flex items-center gap-2 px-3 py-2 border-b">
               <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <input
@@ -2244,7 +2288,6 @@ export default function AllProductsPage() {
                 </button>
               )}
             </div>
-            {/* Scrollable list */}
             <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1 [&::-webkit-scrollbar]:w-0 [scrollbar-width:none]">
               <DropdownMenuItem
                 onClick={() =>
@@ -2291,7 +2334,6 @@ export default function AllProductsPage() {
                 ));
               })()}
             </div>
-            {/* Footer count */}
             <div className="border-t px-3 py-1.5">
               <p className="text-[11px] text-muted-foreground">
                 {familySearch
@@ -2364,16 +2406,93 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Column visibility toggle */}
+        {/* ── View / Sort / Column toggle (combined) ────────────────────── */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className="ml-auto">
+            <Button
+              variant="outline"
+              size="icon"
+              className={`ml-auto transition-colors ${sortOption ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="w-56">
+            {/* ── Sort section ──────────────────────────────────────────── */}
+            <DropdownMenuLabel className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Sort
+              </span>
+              {sortOption && (
+                <button
+                  type="button"
+                  onClick={() => setSortOption(null)}
+                  className="text-[10px] text-primary hover:underline font-medium"
+                >
+                  Reset
+                </button>
+              )}
+            </DropdownMenuLabel>
+
+            <DropdownMenuCheckboxItem
+              checked={sortOption === "alpha-asc"}
+              onCheckedChange={() =>
+                setSortOption((s) => (s === "alpha-asc" ? null : "alpha-asc"))
+              }
+            >
+              <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+              Alphabetically A → Z
+            </DropdownMenuCheckboxItem>
+
+            <DropdownMenuCheckboxItem
+              checked={sortOption === "alpha-desc"}
+              onCheckedChange={() =>
+                setSortOption((s) => (s === "alpha-desc" ? null : "alpha-desc"))
+              }
+            >
+              <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+              Alphabetically Z → A
+            </DropdownMenuCheckboxItem>
+
+            <DropdownMenuCheckboxItem
+              checked={sortOption === "recent-12h"}
+              onCheckedChange={() =>
+                setSortOption((s) => (s === "recent-12h" ? null : "recent-12h"))
+              }
+            >
+              <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+              <span className="flex-1">Recently Added</span>
+              <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                12 h
+              </span>
+            </DropdownMenuCheckboxItem>
+
+            <DropdownMenuCheckboxItem
+              checked={sortOption === "newest" || sortOption === null}
+              onCheckedChange={() =>
+                setSortOption((s) => (s === "newest" ? null : "newest"))
+              }
+            >
+              <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+              Newest to Oldest
+            </DropdownMenuCheckboxItem>
+
+            <DropdownMenuCheckboxItem
+              checked={sortOption === "oldest"}
+              onCheckedChange={() =>
+                setSortOption((s) => (s === "oldest" ? null : "oldest"))
+              }
+            >
+              <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+              Oldest to Newest
+            </DropdownMenuCheckboxItem>
+
             <DropdownMenuSeparator />
+
+            {/* ── Column visibility section ──────────────────────────── */}
+            <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Toggle Columns
+            </DropdownMenuLabel>
             {table
               .getAllColumns()
               .filter((c) => c.getCanHide())
@@ -2392,23 +2511,40 @@ export default function AllProductsPage() {
         </DropdownMenu>
       </div>
 
-      {/* Active product family pill */}
-      {activeFamilyFilter && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Filtered by:</span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-            <Layers className="h-3 w-3" />
-            {activeFamilyFilter}
-            <button
-              type="button"
-              onClick={() =>
-                table.getColumn("productFamilyFilter")?.setFilterValue("")
-              }
-              className="ml-0.5 hover:text-destructive transition-colors"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
+      {/* Active filters row */}
+      {(activeFamilyFilter || (sortOption && sortOption !== "newest")) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">Active:</span>
+
+          {activeFamilyFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+              <Layers className="h-3 w-3" />
+              {activeFamilyFilter}
+              <button
+                type="button"
+                onClick={() =>
+                  table.getColumn("productFamilyFilter")?.setFilterValue("")
+                }
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+
+          {sortOption && sortOption !== "newest" && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+              <SlidersHorizontal className="h-3 w-3" />
+              {sortLabel[sortOption]}
+              <button
+                type="button"
+                onClick={() => setSortOption(null)}
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -2467,7 +2603,11 @@ export default function AllProductsPage() {
                 >
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <Package className="h-8 w-8" />
-                    <p className="text-sm">No products found</p>
+                    <p className="text-sm">
+                      {sortOption === "recent-12h"
+                        ? "No products added in the last 12 hours"
+                        : "No products found"}
+                    </p>
                   </div>
                 </TableCell>
               </TableRow>
