@@ -148,9 +148,12 @@ type PreviewTab = "files" | "categories" | "products";
 
 // ─── JARIS Excel column constants ────────────────────────────────────────────
 
-const FIXED_IDENTITY_COLS = 9;
+const IDENTITY_COL_COUNT = 6;
 
 const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
+  "MAIN IMAGE": "mainImageUrl",
+  "RAW IMAGE": "rawImageUrl",
+  "GALLERY IMAGES": "galleryImageUrls",
   "DIMENSIONAL DRAWING": "dimensionalDrawingUrl",
   "RECOMMENDED MOUNTING HEIGHT": "recommendedMountingHeightUrl",
   "DRIVER COMPATIBILITY": "driverCompatibilityUrl",
@@ -202,7 +205,7 @@ function cellStr(v: unknown): string {
 function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   const map: Record<number, string> = {};
   let current = "";
-  for (let i = FIXED_IDENTITY_COLS; i < groupRow.length; i++) {
+  for (let i = IDENTITY_COL_COUNT; i < groupRow.length; i++) {
     const cell = groupRow[i];
     if (cell && cell.trim()) current = cell.trim();
     if (current) map[i] = current;
@@ -231,6 +234,8 @@ async function parseWorkbook(file: File): Promise<{
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell) => {
+      // Prefer the hyperlink href over the display text so that Google Drive
+      // URLs embedded as Excel hyperlinks are extracted correctly.
       const hyperlink =
         typeof (cell as any).hyperlink === "string"
           ? ((cell as any).hyperlink as string).trim()
@@ -247,23 +252,49 @@ async function parseWorkbook(file: File): Promise<{
   const headerRow = allRows[0];
   const groupRow = allRows[1];
   const dataRows = allRows.slice(2);
-  const groupMap = buildGroupMap(groupRow as string[]);
 
-  const specLabelMap: Record<number, string> = {};
+  // ── Step 1: scan ALL header columns for image fields by name ────────────────
+  // imgColMap  : col index → ParsedProduct image field
+  // imgColSet  : set of col indices that are image cols (excluded from specs)
   const imgColMap: Record<number, keyof ParsedProduct> = {};
+  const imgColSet = new Set<number>();
 
   headerRow.forEach((h, i) => {
-    if (i < FIXED_IDENTITY_COLS || !h) return;
-    const clean = h.replace(/[\r\n\t]+/g, " ").trim();
-    const upper = clean.toUpperCase();
-    if (groupMap[i]) {
-      specLabelMap[i] = clean;
-    } else {
-      const field = IMG_HEADER_TO_FIELD[upper];
-      if (field) imgColMap[i] = field;
+    if (!h) return;
+    const upper = h
+      .replace(/[\r\n\t]+/g, " ")
+      .trim()
+      .toUpperCase();
+    const field = IMG_HEADER_TO_FIELD[upper];
+    if (field) {
+      imgColMap[i] = field;
+      imgColSet.add(i);
     }
   });
 
+  // ── Step 2: build spec-group carry-forward map from row 2 ──────────────────
+  const groupMap = buildGroupMap(groupRow as string[]);
+
+  // ── Step 3: build spec label map — skip identity cols AND image cols ─────────
+  const specLabelMap: Record<number, string> = {};
+  headerRow.forEach((h, i) => {
+    if (i < IDENTITY_COL_COUNT) return; // fixed identity block
+    if (imgColSet.has(i)) return; // image column — never a spec
+    if (!h || !groupMap[i]) return; // no group header → not a spec column
+    specLabelMap[i] = h.replace(/[\r\n\t]+/g, " ").trim();
+  });
+
+  // ── Step 4: pre-compute per-field column indices for single-value img fields ─
+  // galleryImageUrls is handled separately (comma-split).
+  const colOf = (field: keyof ParsedProduct): number => {
+    const entry = Object.entries(imgColMap).find(([, f]) => f === field);
+    return entry ? Number(entry[0]) : -1;
+  };
+  const mainImageCol = colOf("mainImageUrl");
+  const rawImageCol = colOf("rawImageUrl");
+  const galleryCol = colOf("galleryImageUrls");
+
+  // ── Step 5: parse data rows ──────────────────────────────────────────────────
   const products: ParsedProduct[] = [];
   const warnings: string[] = [];
 
@@ -271,7 +302,8 @@ async function parseWorkbook(file: File): Promise<{
     const row = dataRows[rowIdx];
     if (!row || row.every((c) => c == null || c === "")) continue;
 
-    const g = (col: number) => row[col]?.trim() ?? "";
+    const g = (col: number) => (col >= 0 ? (row[col]?.trim() ?? "") : "");
+
     const itemDescription = g(5);
     const ecoItemCode = g(3);
     const litItemCode = g(4);
@@ -280,7 +312,8 @@ async function parseWorkbook(file: File): Promise<{
       warnings.push(`Row ${rowIdx + 3}: skipped — missing Item Description`);
       continue;
     }
-
+    // Only hard-reject blank values; "N/A" passes through so duplicate-check
+    // can apply its bypass logic (both N/A → always upload).
     if (!ecoItemCode) {
       warnings.push(
         `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing ECO Item Code`,
@@ -294,6 +327,7 @@ async function parseWorkbook(file: File): Promise<{
       continue;
     }
 
+    // ── Specs ────────────────────────────────────────────────────────────────
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
     for (const [colStr, label] of Object.entries(specLabelMap)) {
       const col = Number(colStr);
@@ -305,8 +339,10 @@ async function parseWorkbook(file: File): Promise<{
       specsByGroup[group].push({ label, value: val });
     }
 
+    // ── Single-value image fields (all matched by header name) ───────────────
     const imgVals: Partial<Record<keyof ParsedProduct, string>> = {};
     for (const [colStr, field] of Object.entries(imgColMap)) {
+      if (field === "galleryImageUrls") continue; // handled below
       imgVals[field] = row[Number(colStr)]?.trim() ?? "";
     }
 
@@ -317,9 +353,10 @@ async function parseWorkbook(file: File): Promise<{
       productFamily: g(1).toUpperCase() || "UNCATEGORISED",
       productClass: normaliseProductClass(g(2)),
       productUsage: parseProductUsage(g(0)),
-      mainImageUrl: g(7),
-      rawImageUrl: g(6),
-      galleryImageUrls: parseGalleryUrls(g(8)),
+      // Image fields — all resolved by header name, never by hard-coded index
+      mainImageUrl: imgVals.mainImageUrl ?? "",
+      rawImageUrl: imgVals.rawImageUrl ?? "",
+      galleryImageUrls: galleryCol >= 0 ? parseGalleryUrls(g(galleryCol)) : [],
       dimensionalDrawingUrl: imgVals.dimensionalDrawingUrl ?? "",
       recommendedMountingHeightUrl: imgVals.recommendedMountingHeightUrl ?? "",
       driverCompatibilityUrl: imgVals.driverCompatibilityUrl ?? "",
