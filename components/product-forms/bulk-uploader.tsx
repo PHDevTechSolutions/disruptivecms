@@ -87,6 +87,7 @@ interface ParsedProduct {
   wiringDiagramUrl: string;
   installationUrl: string;
   wiringLayoutUrl: string;
+  typeOfPlugUrl: string;
   terminalLayoutUrl: string;
   accessoriesImageUrl: string;
   specs: Record<string, { label: string; value: string }[]>;
@@ -164,6 +165,7 @@ const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
   "WIRING LAYOUT": "wiringLayoutUrl",
   "TERMINAL LAYOUT": "terminalLayoutUrl",
   ACCESSORIES: "accessoriesImageUrl",
+  "TYPE OF PLUG": "typeOfPlugUrl",
 };
 
 function normaliseProductClass(raw: string): "spf" | "standard" | "" {
@@ -367,6 +369,7 @@ async function parseWorkbook(file: File): Promise<{
       wiringLayoutUrl: imgVals.wiringLayoutUrl ?? "",
       terminalLayoutUrl: imgVals.terminalLayoutUrl ?? "",
       accessoriesImageUrl: imgVals.accessoriesImageUrl ?? "",
+      typeOfPlugUrl: imgVals.typeOfPlugUrl ?? "",
       specs: specsByGroup,
     });
   }
@@ -1378,6 +1381,7 @@ export default function BulkUploader({
           wiringLayoutImage,
           terminalLayoutImage,
           accessoriesImage,
+          typeOfPlugImage,          // ← NEW
           ...galleryUploaded
         ] = await uploadManyUrls(
           [
@@ -1393,6 +1397,7 @@ export default function BulkUploader({
             p.wiringLayoutUrl,
             p.terminalLayoutUrl,
             p.accessoriesImageUrl,
+            p.typeOfPlugUrl,         // ← NEW
             ...p.galleryImageUrls,
           ],
           (m) => addLog("info", m),
@@ -1446,6 +1451,7 @@ export default function BulkUploader({
           wiringLayoutImage: wiringLayoutImage || "",
           terminalLayoutImage: terminalLayoutImage || "",
           accessoriesImage: accessoriesImage || "",
+          typeOfPlugImage: typeOfPlugImage || "",
           productFamily: p.productFamily,
           productUsage: p.productUsage,
           brand: "",
@@ -1493,6 +1499,7 @@ export default function BulkUploader({
               wiringDiagramUrl: wiringDiagramImage || undefined,
               installationUrl: installationImage || undefined,
               wiringLayoutUrl: wiringLayoutImage || undefined,
+              typeOfPlugUrl: typeOfPlugImage || undefined,
               terminalLayoutUrl: terminalLayoutImage || undefined,
               accessoriesImageUrl: accessoriesImage || undefined,
             });

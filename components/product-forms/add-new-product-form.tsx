@@ -80,7 +80,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 
-// ─── TDS lib (replaces fillTdsPdf) ───────────────────────────────────────────
+// ─── TDS lib ──────────────────────────────────────────────────────────────────
 import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
 import {
@@ -122,6 +122,8 @@ interface PendingNewSpec {
   specGroup: string;
   label: string;
   tempId: string;
+  /** true once the item has been written to Firestore */
+  saved?: boolean;
 }
 
 type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
@@ -337,6 +339,13 @@ export default function AddNewProduct({
   );
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
+  // Inline edit for the selected product family's title
+  const [editingFamilyTitle, setEditingFamilyTitle] = useState(false);
+  const [familyTitleDraft, setFamilyTitleDraft] = useState("");
+
+  // Tracks which group names have already been synced to Firestore
+  const savedGroupNamesRef = useRef<Record<string, string>>({});
+
   const [selectedWebs, setSelectedWebs] = useState<string[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
@@ -374,6 +383,8 @@ export default function AddNewProduct({
   );
   const [accessoriesImage, setAccessoriesImage] = useState<File | null>(null);
 
+  const [typeOfPlugImage, setTypeOfPlugImage] = useState<File | null>(null);
+
   const [existingMainImage, setExistingMainImage] = useState("");
   const [existingRawImage, setExistingRawImage] = useState("");
   const [existingGalleryImages, setExistingGalleryImages] = useState<string[]>(
@@ -400,6 +411,7 @@ export default function AddNewProduct({
   const [existingTerminalLayoutImage, setExistingTerminalLayoutImage] =
     useState("");
   const [existingAccessoriesImage, setExistingAccessoriesImage] = useState("");
+  const [existingTypeOfPlugImage, setExistingTypeOfPlugImage] = useState("");
 
   const [mediaOpen, setMediaOpen] = useState(true);
   const [techDrawingsOpen, setTechDrawingsOpen] = useState(false);
@@ -446,7 +458,7 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Firestore listeners ───────────────────────────────────────────────────
+  // ── Firestore listeners for cats / brands / apps ──────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -500,41 +512,57 @@ export default function AddNewProduct({
     };
   }, []);
 
-  // ── Filter families by selected productUsage ──────────────────────────────
-  const filteredCats = useMemo(() => {
-    if (productUsage.length === 0) return availableCats;
-    return availableCats.filter((cat) => {
-      if (cat.isTemp) return true;
+  // ── Split families: matched usage first, others still accessible ─────────
+  const { matchedCats, otherCats } = useMemo(() => {
+    if (productUsage.length === 0)
+      return { matchedCats: availableCats, otherCats: [] as MasterItem[] };
+    const matched: MasterItem[] = [];
+    const other: MasterItem[] = [];
+    for (const cat of availableCats) {
+      if (cat.isTemp) {
+        matched.push(cat);
+        continue;
+      }
       const catUsage: string[] = cat.productUsage ?? [];
-      if (catUsage.length === 0) return true;
-      return productUsage.some((u) => catUsage.includes(u));
-    });
+      const fits =
+        catUsage.length === 0 || productUsage.some((u) => catUsage.includes(u));
+      (fits ? matched : other).push(cat);
+    }
+    return { matchedCats: matched, otherCats: other };
   }, [availableCats, productUsage]);
 
-  // ── Specs listener ────────────────────────────────────────────────────────
+  // ── Specs listener — real-time, bidirectional ─────────────────────────────
+  //
+  // We listen to the productfamily doc via onSnapshot (not getDoc) so that any
+  // edit made in the ProductFamilies admin page is immediately reflected here.
+  // The inner specs listener also re-derives whenever the family doc changes.
   useEffect(() => {
     if (!selectedCatId) {
       setTdsHasSpecs(false);
       setTdsStatus("idle");
       setAvailableSpecs([]);
       setSpecsLoading(false);
-      // Reset spec editing state when family changes
       setPendingNewSpecs([]);
       setGroupNameEdits({});
       setNewSpecInputs({});
       setEditingGroupId(null);
+      savedGroupNamesRef.current = {};
+      setEditingFamilyTitle(false);
+      setFamilyTitleDraft("");
       return;
     }
+
     let cancelled = false;
+    // Inner listener for the specs collection — replaced each time family changes
     let unsubSpecs: (() => void) | null = null;
     setSpecsLoading(true);
 
-    (async () => {
-      try {
-        const familySnap = await getDoc(
-          doc(db, "productfamilies", selectedCatId),
-        );
+    // Outer listener: productfamily doc — fires immediately and on any edit
+    const unsubFamily = onSnapshot(
+      doc(db, "productfamilies", selectedCatId),
+      (familySnap) => {
         if (cancelled) return;
+
         const familyData = familySnap.exists()
           ? (familySnap.data() as any)
           : null;
@@ -563,6 +591,7 @@ export default function AddNewProduct({
           return;
         }
 
+        // Build the allowed-labels map from the family's specItems arrays
         const allowedLabelsByGroup = new Map<string, Set<string>>();
         familySpecs.forEach((g) => {
           if (!g.specGroupId || !Array.isArray(g.specItems)) return;
@@ -573,7 +602,12 @@ export default function AddNewProduct({
           if (set.size > 0) allowedLabelsByGroup.set(g.specGroupId, set);
         });
 
+        // Tear down the previous inner listener before creating a new one
+        unsubSpecs?.();
+
+        // Inner listener: specs collection
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
+          if (cancelled) return;
           const items: SpecItem[] = [];
           specsSnap.docs
             .filter((d) => specIds.has(d.id))
@@ -595,26 +629,28 @@ export default function AddNewProduct({
                 });
               });
             });
-          if (!cancelled) {
-            setAvailableSpecs(items);
-            setTdsHasSpecs(items.length > 0);
-            setTdsStatus(items.length > 0 ? "idle" : "no-specs");
-            setSpecsLoading(false);
-          }
+
+          setAvailableSpecs(items);
+          setTdsHasSpecs(items.length > 0);
+          setTdsStatus(items.length > 0 ? "idle" : "no-specs");
+          setSpecsLoading(false);
         });
-      } catch (e) {
-        console.error("[AddNewProduct]", e);
+      },
+      (err) => {
+        console.error("[AddNewProduct] family listener error:", err);
         if (!cancelled) {
           setTdsHasSpecs(false);
           setTdsStatus("no-specs");
           setAvailableSpecs([]);
           setSpecsLoading(false);
         }
-      }
-    })();
+      },
+    );
+
     return () => {
       cancelled = true;
       unsubSpecs?.();
+      unsubFamily();
     };
   }, [selectedCatId]);
 
@@ -656,6 +692,7 @@ export default function AddNewProduct({
     setExistingWiringLayoutImage(editData.wiringLayoutImage || "");
     setExistingTerminalLayoutImage(editData.terminalLayoutImage || "");
     setExistingAccessoriesImage(editData.accessoriesImage || "");
+    setExistingTypeOfPlugImage(editData.typeOfPlugImage || "");
   }, [editData]);
 
   useEffect(() => {
@@ -698,33 +735,153 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
-  // ── Add new spec item helper ───────────────────────────────────────────────
+  // ── Immediate cross-save: new spec item ───────────────────────────────────
+  //
+  // Writes to specs/{specGroupId} AND productfamilies/{selectedCatId} right
+  // away, then marks the entry as saved.  The onSnapshot listeners above will
+  // automatically update availableSpecs, so the "NEW" badge in the UI is the
+  // only reason we still keep the pendingNewSpecs entry around.
   const addNewSpecItem = useCallback(
-    (specGroupId: string, specGroup: string) => {
+    async (specGroupId: string, specGroup: string) => {
       const label = (newSpecInputs[specGroupId] || "").trim().toUpperCase();
       if (!label) return;
-      const exists =
+
+      const alreadyExists =
         availableSpecs.some(
           (s) => s.specGroupId === specGroupId && s.label === label,
         ) ||
         pendingNewSpecs.some(
           (s) => s.specGroupId === specGroupId && s.label === label,
         );
-      if (exists) {
+      if (alreadyExists) {
         toast.error("Spec item already exists in this group");
         return;
       }
+
       const tempId = `new-${specGroupId}-${label}-${Date.now()}`;
+
+      // Optimistically add to UI first
       setPendingNewSpecs((p) => [
         ...p,
-        { specGroupId, specGroup, label, tempId },
+        { specGroupId, specGroup, label, tempId, saved: false },
       ]);
       setNewSpecInputs((p) => ({ ...p, [specGroupId]: "" }));
+
+      // Immediately persist to Firestore (fire-and-forget with error toast)
+      try {
+        // 1. specs/{specGroupId}
+        const specRef = doc(db, "specs", specGroupId);
+        const specSnap = await getDoc(specRef);
+        if (specSnap.exists()) {
+          const existingItems: any[] = specSnap.data().items || [];
+          const alreadyInFirestore = existingItems.some(
+            (i) =>
+              String(i.label || "")
+                .toUpperCase()
+                .trim() === label,
+          );
+          if (!alreadyInFirestore) {
+            await updateDoc(specRef, {
+              items: [...existingItems, { label }],
+            });
+          }
+        }
+
+        // 2. productfamilies/{selectedCatId}
+        if (selectedCatId) {
+          const famRef = doc(db, "productfamilies", selectedCatId);
+          const famSnap = await getDoc(famRef);
+          if (famSnap.exists()) {
+            const famData = famSnap.data() as any;
+            const famSpecs: any[] = Array.isArray(famData.specs)
+              ? [...famData.specs]
+              : [];
+            const groupIdx = famSpecs.findIndex(
+              (g: any) => g.specGroupId === specGroupId,
+            );
+            if (groupIdx >= 0) {
+              const existingSpecItems: any[] =
+                famSpecs[groupIdx].specItems || [];
+              const itemId = `${specGroupId}-${label}`;
+              const alreadyInFamily = existingSpecItems.some(
+                (i) =>
+                  String(i.name || "")
+                    .toUpperCase()
+                    .trim() === label,
+              );
+              if (!alreadyInFamily) {
+                famSpecs[groupIdx] = {
+                  ...famSpecs[groupIdx],
+                  specItems: [
+                    ...existingSpecItems,
+                    { id: itemId, name: label },
+                  ],
+                };
+                await updateDoc(famRef, { specs: famSpecs });
+              }
+            }
+          }
+        }
+
+        // Mark as saved in state
+        setPendingNewSpecs((p) =>
+          p.map((s) => (s.tempId === tempId ? { ...s, saved: true } : s)),
+        );
+      } catch (err) {
+        console.error("[AddNewProduct] cross-save spec item failed:", err);
+        toast.error("Failed to save new spec item — will retry on publish");
+        // Keep in pendingNewSpecs (saved: false) so publish picks it up
+      }
     },
-    [newSpecInputs, availableSpecs, pendingNewSpecs],
+    [newSpecInputs, availableSpecs, pendingNewSpecs, selectedCatId],
   );
 
-  // ── Publish ───────────────────────────────────────────────────────────────
+  // ── Immediate cross-save: group rename ────────────────────────────────────
+  //
+  // Called when the user finishes editing a group name (blur / Enter / Escape).
+  // Writes the new name to specs/{specGroupId} straight away.
+  const saveGroupRename = useCallback(
+    async (specGroupId: string) => {
+      const newName = (groupNameEdits[specGroupId] || "").trim();
+      if (!newName) return;
+      // Skip if already saved with this exact name
+      if (savedGroupNamesRef.current[specGroupId] === newName) return;
+
+      try {
+        await updateDoc(doc(db, "specs", specGroupId), { name: newName });
+        savedGroupNamesRef.current[specGroupId] = newName;
+      } catch (err) {
+        console.error("[AddNewProduct] group rename save failed:", err);
+        toast.error("Failed to save group rename — will retry on publish");
+      }
+    },
+    [groupNameEdits],
+  );
+
+  // ── Immediate cross-save: product family title rename ────────────────────
+  //
+  // Writes the new title to productfamilies/{selectedCatId} immediately.
+  // The onSnapshot listener on availableCats will automatically refresh
+  // selectedCatName and the combobox display, so no manual state update needed.
+  const saveFamilyTitle = useCallback(async () => {
+    const newTitle = familyTitleDraft.trim().toUpperCase();
+    if (!newTitle || !selectedCatId) {
+      setEditingFamilyTitle(false);
+      return;
+    }
+    // Optimistically close the editor
+    setEditingFamilyTitle(false);
+
+    try {
+      await updateDoc(doc(db, "productfamilies", selectedCatId), {
+        title: newTitle,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("[AddNewProduct] family title save failed:", err);
+      toast.error("Failed to rename product family");
+    }
+  }, [familyTitleDraft, selectedCatId]);
   const handlePublish = async () => {
     if (!itemDescription)
       return toast.error("Please enter an item description!");
@@ -824,15 +981,17 @@ export default function AddNewProduct({
       const accessoriesUrl = accessoriesImage
         ? await uploadToCloudinary(accessoriesImage)
         : existingAccessoriesImage;
+      const typeOfPlugUrl = typeOfPlugImage
+        ? await uploadToCloudinary(typeOfPlugImage)
+        : existingTypeOfPlugImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
-      // Build technicalSpecs — includes existing + newly added specs
+      // Build technicalSpecs
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
 
       Object.entries(specValues).forEach(([key, value]) => {
         if (!value.trim()) return;
-        // Check existing specs
         const s = availableSpecs.find(
           (sp) =>
             `${sp.specGroupId}-${sp.label}` === key ||
@@ -849,7 +1008,6 @@ export default function AddNewProduct({
           });
           return;
         }
-        // Check pending new specs (keyed by tempId)
         const ns = pendingNewSpecs.find((sp) => sp.tempId === key);
         if (ns) {
           const resolvedGroupName =
@@ -863,13 +1021,11 @@ export default function AddNewProduct({
         }
       });
 
-      // Also capture pending new spec values that may be keyed by tempId separately
       pendingNewSpecs.forEach((spec) => {
         const value = specValues[spec.tempId];
         if (!value?.trim()) return;
         const resolvedGroupName =
           groupNameEdits[spec.specGroupId] || spec.specGroup;
-        // Avoid duplicates — already handled above if key matched
         if (
           !specsGrouped[resolvedGroupName]?.some((s) => s.name === spec.label)
         ) {
@@ -920,6 +1076,7 @@ export default function AddNewProduct({
         wiringLayoutImage: wiringLayoutUrl,
         terminalLayoutImage: terminalLayoutUrl,
         accessoriesImage: accessoriesUrl,
+        typeOfPlugImage: typeOfPlugUrl,
         galleryImages: [...existingGalleryImages, ...gallery],
         website: selectedWebs,
         websites: selectedWebs,
@@ -973,12 +1130,12 @@ export default function AddNewProduct({
         });
       }
 
-      // ── Cross-save: new spec items → specs collection + productfamilies ───
-      if (pendingNewSpecs.length > 0 && selectedCatId) {
+      // ── Safety-net cross-save: any items not yet saved (e.g. network blip) ─
+      const unsavedSpecs = pendingNewSpecs.filter((s) => !s.saved);
+      if (unsavedSpecs.length > 0 && selectedCatId) {
         toast.loading("Syncing spec updates…", { id: tid });
 
-        // Group pending new specs by specGroupId
-        const byGroup = pendingNewSpecs.reduce(
+        const byGroup = unsavedSpecs.reduce(
           (acc, spec) => {
             if (!acc[spec.specGroupId]) acc[spec.specGroupId] = [];
             acc[spec.specGroupId].push(spec.label);
@@ -987,7 +1144,6 @@ export default function AddNewProduct({
           {} as Record<string, string[]>,
         );
 
-        // Load productfamily doc once for batch update
         const familyRef = doc(db, "productfamilies", selectedCatId);
         const familySnap = await getDoc(familyRef);
         const familyData = familySnap.exists()
@@ -998,7 +1154,6 @@ export default function AddNewProduct({
           : [];
 
         for (const [specGroupId, labels] of Object.entries(byGroup)) {
-          // 1. Add new items to specs/{specGroupId} collection
           const specRef = doc(db, "specs", specGroupId);
           const specSnap = await getDoc(specRef);
           if (specSnap.exists()) {
@@ -1021,7 +1176,6 @@ export default function AddNewProduct({
             }
           }
 
-          // 2. Patch productfamilies.specs[groupIdx].specItems
           const groupIdx = familySpecsArr.findIndex(
             (g: any) => g.specGroupId === specGroupId,
           );
@@ -1048,28 +1202,29 @@ export default function AddNewProduct({
           }
         }
 
-        // Write updated family specs
         if (familySnap.exists()) {
           await updateDoc(familyRef, { specs: familySpecsArr });
         }
-
-        // Clear pending after successful save
-        setPendingNewSpecs([]);
-        setNewSpecInputs({});
       }
 
-      // ── Cross-save: renamed spec groups → specs collection ────────────────
-      const changedGroupNames = Object.entries(groupNameEdits).filter(
-        ([, name]) => name.trim(),
+      // ── Safety-net: group renames not yet persisted ─────────────────────
+      const unpersistedRenames = Object.entries(groupNameEdits).filter(
+        ([specGroupId, name]) =>
+          name.trim() &&
+          savedGroupNamesRef.current[specGroupId] !== name.trim(),
       );
-      if (changedGroupNames.length > 0) {
-        for (const [specGroupId, newName] of changedGroupNames) {
-          await updateDoc(doc(db, "specs", specGroupId), {
-            name: newName.trim(),
-          });
-        }
-        setGroupNameEdits({});
+      for (const [specGroupId, newName] of unpersistedRenames) {
+        await updateDoc(doc(db, "specs", specGroupId), {
+          name: newName.trim(),
+        });
+        savedGroupNamesRef.current[specGroupId] = newName.trim();
       }
+
+      // ── Clear pending state ────────────────────────────────────────────────
+      setPendingNewSpecs([]);
+      setNewSpecInputs({});
+      setGroupNameEdits({});
+      savedGroupNamesRef.current = {};
 
       // ── Generate TDS PDF ──────────────────────────────────────────────────
       if (tdsHasSpecs && technicalSpecs.length > 0) {
@@ -1093,6 +1248,7 @@ export default function AddNewProduct({
             wiringLayoutUrl: wiringLayoutUrl || undefined,
             terminalLayoutUrl: terminalLayoutUrl || undefined,
             accessoriesImageUrl: accessoriesUrl || undefined,
+            typeOfPlugUrl: typeOfPlugUrl || undefined,
           });
 
           const filename = `${itemDescription}_TDS.pdf`;
@@ -1171,6 +1327,9 @@ export default function AddNewProduct({
   const onDropAccessories = useCallback((f: File[]) => {
     if (f[0]) setAccessoriesImage(f[0]);
   }, []);
+  const onDropTypePlug = useCallback((f: File[]) => {
+    if (f[0]) setTypeOfPlugImage(f[0]);
+  }, []);
 
   const { getRootProps: mainRoot, getInputProps: mainInput } = useDropzone({
     onDrop: onDropMain,
@@ -1208,6 +1367,8 @@ export default function AddNewProduct({
     useDropzone({ onDrop: onDropTermLay, maxFiles: 1 });
   const { getRootProps: accessoriesRoot2, getInputProps: accessoriesInput2 } =
     useDropzone({ onDrop: onDropAccessories, maxFiles: 1 });
+  const { getRootProps: typeOfPlugRoot, getInputProps: typeOfPlugInput } =
+    useDropzone({ onDrop: onDropTypePlug, maxFiles: 1 });
 
   const toggleWebsite = (web: string) =>
     setSelectedWebs((p) =>
@@ -1540,7 +1701,6 @@ export default function AddNewProduct({
                       )}
                     </p>
                     <div className="flex items-center gap-2">
-                      {/* Badge showing how many tech drawings are filled */}
                       {(() => {
                         const filledCount = [
                           dimensionDrawingImage ||
@@ -1698,6 +1858,20 @@ export default function AddNewProduct({
                           },
                           icon: <ShoppingBag className="h-3 w-3" />,
                           label: "Accessories",
+                        })}                       
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {renderSimpleDropzone({
+                          rootProps: typeOfPlugRoot,
+                          inputProps: typeOfPlugInput,
+                          file: typeOfPlugImage,
+                          existingUrl: existingTypeOfPlugImage,
+                          onClear: () => {
+                            setTypeOfPlugImage(null);
+                            setExistingTypeOfPlugImage("");
+                          },
+                          icon: <Zap className="h-3 w-3" />,
+                          label: "Type of Plug",
                         })}
                       </div>
                     </div>
@@ -1825,7 +1999,7 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* ── Technical Specs (with inline editing) ── */}
+              {/* ── Technical Specs ── */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
                   <div className="flex items-center gap-2 mb-4">
@@ -1841,9 +2015,11 @@ export default function AddNewProduct({
                     {(pendingNewSpecs.length > 0 ||
                       Object.keys(groupNameEdits).length > 0) && (
                       <span className="ml-auto text-[10px] font-semibold text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                        {pendingNewSpecs.length > 0
-                          ? `${pendingNewSpecs.length} new item${pendingNewSpecs.length > 1 ? "s" : ""} · will cross-save on publish`
-                          : "Group rename · will cross-save on publish"}
+                        {pendingNewSpecs.filter((s) => !s.saved).length > 0
+                          ? `${pendingNewSpecs.filter((s) => !s.saved).length} item(s) saving…`
+                          : Object.keys(groupNameEdits).length > 0
+                            ? "Group rename · synced"
+                            : "All changes synced"}
                       </span>
                     )}
                   </div>
@@ -1899,18 +2075,24 @@ export default function AddNewProduct({
                                             e.target.value.toUpperCase(),
                                         }))
                                       }
-                                      onBlur={() => setEditingGroupId(null)}
+                                      onBlur={() => {
+                                        setEditingGroupId(null);
+                                        // Immediately persist the rename
+                                        saveGroupRename(specGroupId);
+                                      }}
                                       onKeyDown={(e) => {
                                         if (
                                           e.key === "Enter" ||
                                           e.key === "Escape"
-                                        )
+                                        ) {
                                           setEditingGroupId(null);
+                                          saveGroupRename(specGroupId);
+                                        }
                                       }}
                                     />
                                     {groupNameEdits[specGroupId] && (
-                                      <span className="text-[9px] text-amber-600 font-semibold shrink-0">
-                                        renamed
+                                      <span className="text-[9px] text-emerald-600 font-semibold shrink-0">
+                                        syncing…
                                       </span>
                                     )}
                                   </div>
@@ -1920,8 +2102,8 @@ export default function AddNewProduct({
                                       <Zap className="h-3 w-3" />
                                       {displayGroupName.toUpperCase()}
                                       {groupNameEdits[specGroupId] && (
-                                        <span className="text-[9px] text-amber-600 font-normal ml-1">
-                                          (renamed)
+                                        <span className="text-[9px] text-emerald-600 font-normal ml-1">
+                                          (synced)
                                         </span>
                                       )}
                                     </h4>
@@ -1967,17 +2149,36 @@ export default function AddNewProduct({
                                   );
                                 })}
 
-                                {/* Newly added spec items (pending, not yet saved) */}
+                                {/* Newly added spec items */}
                                 {groupPendingSpecs.map((spec) => (
                                   <div
                                     key={spec.tempId}
-                                    className="space-y-1.5 p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20"
+                                    className={cn(
+                                      "space-y-1.5 p-3 rounded-lg border",
+                                      spec.saved
+                                        ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
+                                        : "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20",
+                                    )}
                                   >
                                     <div className="flex items-center justify-between">
-                                      <Label className="text-xs font-medium uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                      <Label
+                                        className={cn(
+                                          "text-xs font-medium uppercase flex items-center gap-1.5",
+                                          spec.saved
+                                            ? "text-emerald-700 dark:text-emerald-400"
+                                            : "text-amber-700 dark:text-amber-400",
+                                        )}
+                                      >
                                         {spec.label}
-                                        <span className="text-[9px] font-bold bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 px-1.5 py-0.5 rounded-sm">
-                                          NEW
+                                        <span
+                                          className={cn(
+                                            "text-[9px] font-bold px-1.5 py-0.5 rounded-sm",
+                                            spec.saved
+                                              ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200"
+                                              : "bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200",
+                                          )}
+                                        >
+                                          {spec.saved ? "SAVED" : "SAVING…"}
                                         </span>
                                       </Label>
                                       <button
@@ -1996,7 +2197,7 @@ export default function AddNewProduct({
                                     </div>
                                     <Input
                                       placeholder={`Enter ${spec.label}…`}
-                                      className="h-9 text-sm uppercase border-amber-200 dark:border-amber-800 focus-visible:ring-amber-400"
+                                      className="h-9 text-sm uppercase"
                                       value={specValues[spec.tempId] || ""}
                                       onChange={(e) =>
                                         setSpecValues((p) => ({
@@ -2265,11 +2466,12 @@ export default function AddNewProduct({
                         <CommandSeparator />
                         <CommandEmpty>No family found.</CommandEmpty>
 
+                        {/* Matched families */}
                         <CommandGroup
                           heading={
                             productUsage.length > 0
-                              ? `Filtered by ${productUsage.join(", ")}`
-                              : "Existing families"
+                              ? `Matching ${productUsage.join(", ")}`
+                              : "All families"
                           }
                         >
                           {selectedCatId && (
@@ -2280,11 +2482,10 @@ export default function AddNewProduct({
                               }}
                               className="text-xs text-muted-foreground italic"
                             >
-                              <X className="mr-2 h-3 w-3" />
-                              Clear selection
+                              <X className="mr-2 h-3 w-3" /> Clear selection
                             </CommandItem>
                           )}
-                          {filteredCats.map((cat) => (
+                          {matchedCats.map((cat) => (
                             <CommandItem
                               key={cat.id}
                               value={cat.name}
@@ -2337,12 +2538,129 @@ export default function AddNewProduct({
                             </CommandItem>
                           ))}
                         </CommandGroup>
+
+                        {/* Other families — always selectable */}
+                        {otherCats.length > 0 && (
+                          <>
+                            <CommandSeparator />
+                            <CommandGroup heading="Other families">
+                              {otherCats.map((cat) => (
+                                <CommandItem
+                                  key={cat.id}
+                                  value={cat.name}
+                                  onSelect={() => {
+                                    setSelectedCatId(cat.id);
+                                    setCatOpen(false);
+                                  }}
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-3 w-3",
+                                      selectedCatId === cat.id
+                                        ? "opacity-100 text-primary"
+                                        : "opacity-0",
+                                    )}
+                                  />
+                                  <span className="flex-1 truncate">
+                                    {cat.name}
+                                  </span>
+                                  {cat.productUsage &&
+                                    cat.productUsage.length > 0 && (
+                                      <span className="ml-2 flex gap-1 shrink-0">
+                                        {(cat.productUsage as string[]).map(
+                                          (u) => (
+                                            <span
+                                              key={u}
+                                              className={cn(
+                                                "text-[7px] font-bold uppercase px-1 py-0.5 rounded-sm border opacity-50",
+                                                u === "INDOOR" &&
+                                                  "border-blue-200 bg-blue-50 text-blue-600",
+                                                u === "OUTDOOR" &&
+                                                  "border-emerald-200 bg-emerald-50 text-emerald-600",
+                                                u === "SOLAR" &&
+                                                  "border-amber-200 bg-amber-50 text-amber-600",
+                                              )}
+                                            >
+                                              {u}
+                                            </span>
+                                          ),
+                                        )}
+                                      </span>
+                                    )}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </>
+                        )}
                       </CommandList>
                     </Command>
                   </PopoverContent>
                 </Popover>
 
-                {selectedCatId && <TdsBadge tdsStatus={tdsStatus} />}
+                {selectedCatId && (
+                  <div className="space-y-1.5">
+                    {/* ── Inline family title editor ── */}
+                    {editingFamilyTitle ? (
+                      <div className="flex items-center gap-1.5 border border-primary/40 rounded-md px-2.5 py-1.5 bg-primary/5">
+                        <Input
+                          autoFocus
+                          value={familyTitleDraft}
+                          onChange={(e) =>
+                            setFamilyTitleDraft(e.target.value.toUpperCase())
+                          }
+                          onBlur={saveFamilyTitle}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveFamilyTitle();
+                            if (e.key === "Escape") {
+                              setEditingFamilyTitle(false);
+                              setFamilyTitleDraft("");
+                            }
+                          }}
+                          className="h-6 text-[11px] font-bold uppercase border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none flex-1"
+                          placeholder="FAMILY TITLE…"
+                        />
+                        <button
+                          type="button"
+                          onClick={saveFamilyTitle}
+                          className="shrink-0 text-primary hover:text-primary/70 transition-colors"
+                          title="Save"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingFamilyTitle(false);
+                            setFamilyTitleDraft("");
+                          }}
+                          className="shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Cancel"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-foreground/10 bg-muted/30 group">
+                        <span className="text-[11px] font-bold uppercase truncate flex-1 text-foreground/80">
+                          {selectedCatName}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFamilyTitleDraft(selectedCatName);
+                            setEditingFamilyTitle(true);
+                          }}
+                          className="shrink-0 text-muted-foreground hover:text-primary transition-colors opacity-0 group-hover:opacity-100"
+                          title="Rename product family"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                    <TdsBadge tdsStatus={tdsStatus} />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
