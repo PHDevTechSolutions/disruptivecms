@@ -276,6 +276,7 @@ async function parseWorkbook(file: File): Promise<{
       warnings.push(`Row ${rowIdx + 3}: skipped — missing Item Description`);
       continue;
     }
+
     if (!ecoItemCode) {
       warnings.push(
         `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing ECO Item Code`,
@@ -758,11 +759,21 @@ async function normalizeShopifyProduct(
 
 // ─── Duplicate check ──────────────────────────────────────────────────────────
 
+function isNaValue(code: string): boolean {
+  return !code || code.trim().toUpperCase() === "N/A";
+}
+
 async function checkJarisDuplicate(
   ecoItemCode: string,
   litItemCode: string,
 ): Promise<{ isDuplicate: boolean; reason: string }> {
-  if (ecoItemCode) {
+  // If both codes are N/A or empty, bypass duplicate check entirely
+  if (isNaValue(ecoItemCode) && isNaValue(litItemCode)) {
+    return { isDuplicate: false, reason: "" };
+  }
+
+  // Only check ecoItemCode if it has a real (non-N/A) value
+  if (ecoItemCode && !isNaValue(ecoItemCode)) {
     const snap = await getDocs(
       query(
         collection(db, "products"),
@@ -772,7 +783,9 @@ async function checkJarisDuplicate(
     if (!snap.empty)
       return { isDuplicate: true, reason: `ecoItemCode "${ecoItemCode}"` };
   }
-  if (litItemCode) {
+
+  // Only check litItemCode if it has a real (non-N/A) value
+  if (litItemCode && !isNaValue(litItemCode)) {
     const snap = await getDocs(
       query(
         collection(db, "products"),
@@ -782,6 +795,7 @@ async function checkJarisDuplicate(
     if (!snap.empty)
       return { isDuplicate: true, reason: `litItemCode "${litItemCode}"` };
   }
+
   return { isDuplicate: false, reason: "" };
 }
 
