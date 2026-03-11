@@ -52,9 +52,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Plus,
-  FolderPlus,
   Info,
   Pencil,
+  Download,
+  ExternalLink,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,13 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
@@ -87,6 +95,127 @@ import {
   CreateProductFamilyDialog,
   type CreatedFamily,
 } from "./CreateProductFamilyDialog";
+
+// ─── Download helper ──────────────────────────────────────────────────────────
+async function downloadPdf(url: string, filename: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
+
+// ─── TdsPreviewDialog ─────────────────────────────────────────────────────────
+function TdsPreviewDialog({
+  open,
+  onOpenChange,
+  tdsUrl,
+  litItemCode,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  tdsUrl: string;
+  litItemCode: string;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const filename = `${litItemCode}_TDS.pdf`;
+
+  const handleDownload = async () => {
+    if (!tdsUrl) return;
+    setDownloading(true);
+    try {
+      await downloadPdf(tdsUrl, filename);
+      toast.success(`${filename} downloaded.`);
+    } catch (err) {
+      console.error("TDS download failed:", err);
+      toast.error("Download failed — try the View button to open it directly.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl w-full h-[90vh] flex flex-col p-0 gap-0">
+        <DialogHeader className="px-5 py-4 border-b shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+              <FileText className="w-4 h-4 text-red-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="text-sm font-semibold truncate">
+                {filename}
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5 truncate">
+                Technical Data Sheet · Auto-generated
+              </DialogDescription>
+            </div>
+            {tdsUrl && (
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={tdsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-xs h-8"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </Button>
+                </a>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5 text-xs h-8"
+                  onClick={handleDownload}
+                  disabled={downloading}
+                >
+                  {downloading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  {downloading ? "Downloading…" : "Download PDF"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </DialogHeader>
+        <div className="flex-1 overflow-hidden bg-muted/30">
+          {tdsUrl ? (
+            <iframe
+              src={`${tdsUrl}#toolbar=1&navpanes=0`}
+              className="w-full h-full border-0"
+              title={`${litItemCode} TDS`}
+            />
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center gap-4 text-muted-foreground p-8">
+              <div className="w-16 h-16 rounded-2xl bg-muted border-2 border-dashed flex items-center justify-center">
+                <FileText className="w-7 h-7 text-muted-foreground/40" />
+              </div>
+              <div className="text-center space-y-1">
+                <p className="text-sm font-semibold">No TDS file available</p>
+                <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
+                  Save the product to generate a TDS PDF automatically.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,7 +251,6 @@ interface PendingNewSpec {
   specGroup: string;
   label: string;
   tempId: string;
-  /** true once the item has been written to Firestore */
   saved?: boolean;
 }
 
@@ -305,6 +433,7 @@ export default function AddNewProduct({
   const [tdsHasSpecs, setTdsHasSpecs] = useState(false);
   const [tdsStatus, setTdsStatus] = useState<TdsStatus>("idle");
   const [tdsUrl, setTdsUrl] = useState<string>(editData?.tdsFileUrl || "");
+  const [tdsPreviewOpen, setTdsPreviewOpen] = useState(false);
 
   const [createFamilyOpen, setCreateFamilyOpen] = useState(false);
 
@@ -329,7 +458,6 @@ export default function AddNewProduct({
   const [catOpen, setCatOpen] = useState(false);
   const pendingItemsRef = useRef<PendingItem[]>([]);
 
-  // ── Spec editing state ─────────────────────────────────────────────────────
   const [pendingNewSpecs, setPendingNewSpecs] = useState<PendingNewSpec[]>([]);
   const [newSpecInputs, setNewSpecInputs] = useState<Record<string, string>>(
     {},
@@ -339,11 +467,9 @@ export default function AddNewProduct({
   );
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
-  // Inline edit for the selected product family's title
   const [editingFamilyTitle, setEditingFamilyTitle] = useState(false);
   const [familyTitleDraft, setFamilyTitleDraft] = useState("");
 
-  // Tracks which group names have already been synced to Firestore
   const savedGroupNamesRef = useRef<Record<string, string>>({});
 
   const [selectedWebs, setSelectedWebs] = useState<string[]>([]);
@@ -354,7 +480,6 @@ export default function AddNewProduct({
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
   );
-  const [usageOpen, setUsageOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
@@ -389,7 +514,6 @@ export default function AddNewProduct({
     [],
   );
   const [existingQrImage, setExistingQrImage] = useState("");
-  // ── Drawing images — field names match bulk-uploader exactly ──────────────
   const [existingDimensionalDrawingImage, setExistingDimensionalDrawingImage] =
     useState("");
   const [
@@ -459,7 +583,7 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Firestore listeners for cats / brands / apps ──────────────────────────
+  // ── Firestore listeners ───────────────────────────────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -513,7 +637,7 @@ export default function AddNewProduct({
     };
   }, []);
 
-  // ── Split families: matched usage first, others still accessible ─────────
+  // ── Split families ────────────────────────────────────────────────────────
   const { matchedCats, otherCats } = useMemo(() => {
     if (productUsage.length === 0)
       return { matchedCats: availableCats, otherCats: [] as MasterItem[] };
@@ -532,7 +656,7 @@ export default function AddNewProduct({
     return { matchedCats: matched, otherCats: other };
   }, [availableCats, productUsage]);
 
-  // ── Specs listener — real-time, bidirectional ─────────────────────────────
+  // ── Specs listener ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!selectedCatId) {
       setTdsHasSpecs(false);
@@ -557,11 +681,9 @@ export default function AddNewProduct({
       doc(db, "productfamilies", selectedCatId),
       (familySnap) => {
         if (cancelled) return;
-
         const familyData = familySnap.exists()
           ? (familySnap.data() as any)
           : null;
-
         const specIds = new Set<string>();
         const familySpecs: {
           specGroupId: string;
@@ -597,7 +719,6 @@ export default function AddNewProduct({
         });
 
         unsubSpecs?.();
-
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           if (cancelled) return;
           const items: SpecItem[] = [];
@@ -621,7 +742,6 @@ export default function AddNewProduct({
                 });
               });
             });
-
           setAvailableSpecs(items);
           setTdsHasSpecs(items.length > 0);
           setTdsStatus(items.length > 0 ? "idle" : "no-specs");
@@ -672,7 +792,6 @@ export default function AddNewProduct({
     setExistingRawImage(editData.rawImage || "");
     setExistingGalleryImages(editData.galleryImages || []);
     setExistingQrImage(editData.qrCodeImage || "");
-    // ── Drawing images — field names unified with bulk-uploader ─────────────
     setExistingDimensionalDrawingImage(editData.dimensionalDrawingImage || "");
     setExistingRecommendedMountingHeightImage(
       editData.recommendedMountingHeightImage || "",
@@ -718,7 +837,7 @@ export default function AddNewProduct({
     }
   }, [editData, availableCats]);
 
-  // ── Cloudinary image helper ───────────────────────────────────────────────
+  // ── Cloudinary helper ─────────────────────────────────────────────────────
   const uploadToCloudinary = async (file: File): Promise<string> => {
     const fd = new FormData();
     fd.append("file", file);
@@ -730,12 +849,11 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
-  // ── Immediate cross-save: new spec item ───────────────────────────────────
+  // ── Add new spec item ─────────────────────────────────────────────────────
   const addNewSpecItem = useCallback(
     async (specGroupId: string, specGroup: string) => {
       const label = (newSpecInputs[specGroupId] || "").trim().toUpperCase();
       if (!label) return;
-
       const alreadyExists =
         availableSpecs.some(
           (s) => s.specGroupId === specGroupId && s.label === label,
@@ -749,7 +867,6 @@ export default function AddNewProduct({
       }
 
       const tempId = `new-${specGroupId}-${label}-${Date.now()}`;
-
       setPendingNewSpecs((p) => [
         ...p,
         { specGroupId, specGroup, label, tempId, saved: false },
@@ -768,12 +885,9 @@ export default function AddNewProduct({
                 .trim() === label,
           );
           if (!alreadyInFirestore) {
-            await updateDoc(specRef, {
-              items: [...existingItems, { label }],
-            });
+            await updateDoc(specRef, { items: [...existingItems, { label }] });
           }
         }
-
         if (selectedCatId) {
           const famRef = doc(db, "productfamilies", selectedCatId);
           const famSnap = await getDoc(famRef);
@@ -808,7 +922,6 @@ export default function AddNewProduct({
             }
           }
         }
-
         setPendingNewSpecs((p) =>
           p.map((s) => (s.tempId === tempId ? { ...s, saved: true } : s)),
         );
@@ -820,13 +933,12 @@ export default function AddNewProduct({
     [newSpecInputs, availableSpecs, pendingNewSpecs, selectedCatId],
   );
 
-  // ── Immediate cross-save: group rename ────────────────────────────────────
+  // ── Group rename ──────────────────────────────────────────────────────────
   const saveGroupRename = useCallback(
     async (specGroupId: string) => {
       const newName = (groupNameEdits[specGroupId] || "").trim();
       if (!newName) return;
       if (savedGroupNamesRef.current[specGroupId] === newName) return;
-
       try {
         await updateDoc(doc(db, "specs", specGroupId), { name: newName });
         savedGroupNamesRef.current[specGroupId] = newName;
@@ -838,7 +950,7 @@ export default function AddNewProduct({
     [groupNameEdits],
   );
 
-  // ── Immediate cross-save: product family title rename ────────────────────
+  // ── Family title rename ───────────────────────────────────────────────────
   const saveFamilyTitle = useCallback(async () => {
     const newTitle = familyTitleDraft.trim().toUpperCase();
     if (!newTitle || !selectedCatId) {
@@ -846,7 +958,6 @@ export default function AddNewProduct({
       return;
     }
     setEditingFamilyTitle(false);
-
     try {
       await updateDoc(doc(db, "productfamilies", selectedCatId), {
         title: newTitle,
@@ -858,13 +969,13 @@ export default function AddNewProduct({
     }
   }, [familyTitleDraft, selectedCatId]);
 
+  // ── handlePublish ─────────────────────────────────────────────────────────
   const handlePublish = async () => {
     if (!itemDescription)
       return toast.error("Please enter an item description!");
     setIsPublishing(true);
     const tid = toast.loading("Validating...");
     try {
-      // Duplicate check
       if (!editData || editData.itemDescription !== itemDescription) {
         const dupSnap = await getDocs(
           query(
@@ -888,7 +999,6 @@ export default function AddNewProduct({
         }
       }
 
-      // Save pending tags
       const pendingIdMap: Record<string, string> = {};
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: tid });
@@ -916,7 +1026,6 @@ export default function AddNewProduct({
         pendingItemsRef.current = [];
       }
 
-      // Upload images
       toast.loading("Uploading images...", { id: tid });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -927,7 +1036,6 @@ export default function AddNewProduct({
       const qrUrl = qrImage
         ? await uploadToCloudinary(qrImage)
         : existingQrImage;
-      // ── Drawing images — use bulk-uploader field names in all uploads ──────
       const dimensionalDrawingUrl = dimensionalDrawingImage
         ? await uploadToCloudinary(dimensionalDrawingImage)
         : existingDimensionalDrawingImage;
@@ -963,10 +1071,8 @@ export default function AddNewProduct({
         : existingTypeOfPlugImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
-      // Build technicalSpecs
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
-
       Object.entries(specValues).forEach(([key, value]) => {
         if (!value.trim()) return;
         const s = availableSpecs.find(
@@ -997,7 +1103,6 @@ export default function AddNewProduct({
           });
         }
       });
-
       pendingNewSpecs.forEach((spec) => {
         const value = specValues[spec.tempId];
         if (!value?.trim()) return;
@@ -1043,7 +1148,6 @@ export default function AddNewProduct({
         mainImage: mainUrl,
         rawImage: rawUrl,
         qrCodeImage: qrUrl,
-        // ── Drawing images — field names unified with bulk-uploader ──────────
         dimensionalDrawingImage: dimensionalDrawingUrl,
         recommendedMountingHeightImage: recommendedMountingHeightUrl,
         driverCompatibilityImage: driverCompatibilityUrl,
@@ -1074,7 +1178,6 @@ export default function AddNewProduct({
         updatedAt: serverTimestamp(),
       };
 
-      // Save product to Firestore
       let savedDocId: string = editData?.id ?? "";
       if (editData?.id) {
         await updateDoc(doc(db, "products", editData.id), payload);
@@ -1108,11 +1211,9 @@ export default function AddNewProduct({
         });
       }
 
-      // ── Safety-net cross-save: any items not yet saved ────────────────────
       const unsavedSpecs = pendingNewSpecs.filter((s) => !s.saved);
       if (unsavedSpecs.length > 0 && selectedCatId) {
         toast.loading("Syncing spec updates…", { id: tid });
-
         const byGroup = unsavedSpecs.reduce(
           (acc, spec) => {
             if (!acc[spec.specGroupId]) acc[spec.specGroupId] = [];
@@ -1147,13 +1248,11 @@ export default function AddNewProduct({
                   ),
               )
               .map((l) => ({ label: l }));
-            if (dedupedNew.length > 0) {
+            if (dedupedNew.length > 0)
               await updateDoc(specRef, {
                 items: [...existingItems, ...dedupedNew],
               });
-            }
           }
-
           const groupIdx = familySpecsArr.findIndex(
             (g: any) => g.specGroupId === specGroupId,
           );
@@ -1179,13 +1278,10 @@ export default function AddNewProduct({
             }
           }
         }
-
-        if (familySnap.exists()) {
+        if (familySnap.exists())
           await updateDoc(familyRef, { specs: familySpecsArr });
-        }
       }
 
-      // ── Safety-net: group renames not yet persisted ───────────────────────
       const unpersistedRenames = Object.entries(groupNameEdits).filter(
         ([specGroupId, name]) =>
           name.trim() &&
@@ -1198,18 +1294,15 @@ export default function AddNewProduct({
         savedGroupNamesRef.current[specGroupId] = newName.trim();
       }
 
-      // ── Clear pending state ───────────────────────────────────────────────
       setPendingNewSpecs([]);
       setNewSpecInputs({});
       setGroupNameEdits({});
       savedGroupNamesRef.current = {};
 
-      // ── Generate TDS PDF ──────────────────────────────────────────────────
       if (tdsHasSpecs && technicalSpecs.length > 0) {
         try {
           toast.loading("Generating TDS PDF...", { id: tid });
           setTdsStatus("generating");
-
           const blob = await generateTdsPdf({
             itemDescription,
             litItemCode,
@@ -1229,7 +1322,6 @@ export default function AddNewProduct({
             accessoriesImageUrl: accessoriesUrl || undefined,
             typeOfPlugUrl: typeOfPlugUrl || undefined,
           });
-
           const filename = `${litItemCode}_TDS.pdf`;
           const generatedTdsUrl = await uploadTdsPdf(
             blob,
@@ -1237,7 +1329,6 @@ export default function AddNewProduct({
             CLOUDINARY_CLOUD_NAME,
             CLOUDINARY_UPLOAD_PRESET,
           );
-
           if (savedDocId && generatedTdsUrl.startsWith("http")) {
             await updateDoc(doc(db, "products", savedDocId), {
               tdsFileUrl: generatedTdsUrl,
@@ -1327,10 +1418,7 @@ export default function AddNewProduct({
   const {
     getRootProps: recommendedMountingHeightRoot,
     getInputProps: recommendedMountingHeightInput,
-  } = useDropzone({
-    onDrop: onDropRecommendedMountingHeight,
-    maxFiles: 1,
-  });
+  } = useDropzone({ onDrop: onDropRecommendedMountingHeight, maxFiles: 1 });
   const { getRootProps: driverCompRoot, getInputProps: driverCompInput } =
     useDropzone({ onDrop: onDropDriverComp, maxFiles: 1 });
   const { getRootProps: baseRoot2, getInputProps: baseInput2 } = useDropzone({
@@ -1456,7 +1544,7 @@ export default function AddNewProduct({
       p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
     );
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <>
       <CreateProductFamilyDialog
@@ -1481,10 +1569,18 @@ export default function AddNewProduct({
         }}
       />
 
+      {/* ── TDS Preview Dialog ── */}
+      <TdsPreviewDialog
+        open={tdsPreviewOpen}
+        onOpenChange={setTdsPreviewOpen}
+        tdsUrl={tdsUrl}
+        litItemCode={litItemCode || editData?.litItemCode || "PRODUCT"}
+      />
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 min-h-screen">
-        {/* ══════════════ MAIN COLUMN ════════════════════════════════════════ */}
+        {/* ══ MAIN COLUMN ══════════════════════════════════════════════════ */}
         <div className="md:col-span-2 space-y-6">
-          {/* ── TDS note ── */}
+          {/* TDS note */}
           {tdsHasSpecs && (
             <Card className="border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20">
               <CardContent className="pt-6">
@@ -1505,7 +1601,7 @@ export default function AddNewProduct({
             </Card>
           )}
 
-          {/* ── Media Assets ── */}
+          {/* Media Assets */}
           <Card>
             <CardHeader
               className="cursor-pointer select-none"
@@ -1922,7 +2018,7 @@ export default function AddNewProduct({
             )}
           </Card>
 
-          {/* ── General Information ── */}
+          {/* General Information */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1984,7 +2080,7 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* ── Technical Specs ── */}
+              {/* Technical Specs */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
                   <div className="flex items-center gap-2 mb-4">
@@ -2044,7 +2140,6 @@ export default function AddNewProduct({
 
                           return (
                             <div key={groupName} className="space-y-3">
-                              {/* Group header with inline rename */}
                               <div className="flex items-center gap-2">
                                 {editingGroupId === specGroupId ? (
                                   <div className="flex items-center gap-2 flex-1">
@@ -2105,7 +2200,6 @@ export default function AddNewProduct({
                                 )}
                               </div>
 
-                              {/* Existing spec items */}
                               <div className="space-y-3 pl-5">
                                 {uniqueSpecs.map((spec) => {
                                   const specKey = `${spec.specGroupId}-${spec.label}`;
@@ -2133,7 +2227,6 @@ export default function AddNewProduct({
                                   );
                                 })}
 
-                                {/* Newly added spec items */}
                                 {groupPendingSpecs.map((spec) => (
                                   <div
                                     key={spec.tempId}
@@ -2194,7 +2287,6 @@ export default function AddNewProduct({
                                   </div>
                                 ))}
 
-                                {/* Add new spec item row */}
                                 <div className="flex gap-2 pt-1">
                                   <Input
                                     placeholder="Add spec item (e.g. COLOR TEMP)…"
@@ -2244,7 +2336,7 @@ export default function AddNewProduct({
             </CardContent>
           </Card>
 
-          {/* ── Product Status ── */}
+          {/* Product Status */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2305,30 +2397,24 @@ export default function AddNewProduct({
                       </p>
                     </div>
                   </div>
-                  <a
-                    href={tdsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0"
-                    download={`${litItemCode || editData?.litItemCode}_TDS.pdf`}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/40 gap-1.5"
+                    onClick={() => setTdsPreviewOpen(true)}
                   >
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/40"
-                    >
-                      View / Download PDF
-                    </Button>
-                  </a>
+                    <Eye className="h-3.5 w-3.5" />
+                    View / Download PDF
+                  </Button>
                 </div>
               </CardContent>
             </Card>
           )}
         </div>
 
-        {/* ══════════════ SIDEBAR ════════════════════════════════════════════ */}
+        {/* ══ SIDEBAR ══════════════════════════════════════════════════════ */}
         <div className="space-y-6">
-          {/* ── Usage & Product Family card ── */}
+          {/* Usage & Product Family */}
           <Card className="border-primary/20 bg-primary/2">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -2337,7 +2423,6 @@ export default function AddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Product Usage pills */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -2376,7 +2461,6 @@ export default function AddNewProduct({
                 </div>
               </div>
 
-              {/* Product Family combobox */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Tag className="h-3 w-3 text-primary" />
@@ -2443,11 +2527,8 @@ export default function AddNewProduct({
                             Create new product family…
                           </CommandItem>
                         </CommandGroup>
-
                         <CommandSeparator />
                         <CommandEmpty>No family found.</CommandEmpty>
-
-                        {/* Matched families */}
                         <CommandGroup
                           heading={
                             productUsage.length > 0
@@ -2519,8 +2600,6 @@ export default function AddNewProduct({
                             </CommandItem>
                           ))}
                         </CommandGroup>
-
-                        {/* Other families — always selectable */}
                         {otherCats.length > 0 && (
                           <>
                             <CommandSeparator />
@@ -2581,7 +2660,6 @@ export default function AddNewProduct({
 
                 {selectedCatId && (
                   <div className="space-y-1.5">
-                    {/* ── Inline family title editor ── */}
                     {editingFamilyTitle ? (
                       <div className="flex items-center gap-1.5 border border-primary/40 rounded-md px-2.5 py-1.5 bg-primary/5">
                         <Input
@@ -2721,7 +2799,6 @@ export default function AddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Brand */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <Factory className="h-3 w-3" />
@@ -2794,7 +2871,6 @@ export default function AddNewProduct({
                 </Popover>
               </div>
 
-              {/* Applications */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <Zap className="h-3 w-3" />
