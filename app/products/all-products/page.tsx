@@ -44,6 +44,9 @@ import {
   Clock,
   ArrowUp,
   ArrowDown,
+  Sun,
+  Trees,
+  Home,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -150,6 +153,7 @@ export type Product = {
   dynamicSpecs?: { title: string; value: string }[];
   dimensionDrawingUrl?: string;
   mountingHeightUrl?: string;
+  productUsage?: string[];
   createdAt: any;
 };
 
@@ -363,6 +367,89 @@ function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
       <Package className="w-2.5 h-2.5 mr-1" />
       Standard
     </Badge>
+  );
+}
+
+// ─── Product-usage badge ──────────────────────────────────────────────────────
+
+function ProductUsageBadge({
+  value,
+}: {
+  value: string[] | string | undefined;
+}) {
+  // Normalise to an array of uppercase strings
+  const usages: string[] = Array.isArray(value)
+    ? value.map((v) => v.toUpperCase())
+    : value
+      ? [String(value).toUpperCase()]
+      : [];
+
+  if (usages.length === 0)
+    return <span className="text-xs text-muted-foreground/50">—</span>;
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {usages.map((u) => {
+        if (u === "OUTDOOR")
+          return (
+            <Badge
+              key={u}
+              className="gap-1 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100 text-[10px] font-semibold"
+            >
+              <Trees className="w-2.5 h-2.5" />
+              Outdoor
+            </Badge>
+          );
+        if (u === "INDOOR")
+          return (
+            <Badge
+              key={u}
+              className="gap-1 bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-100 text-[10px] font-semibold"
+            >
+              <Home className="w-2.5 h-2.5" />
+              Indoor
+            </Badge>
+          );
+        if (u === "SOLAR")
+          return (
+            <Badge
+              key={u}
+              className="gap-1 bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100 text-[10px] font-semibold"
+            >
+              <Sun className="w-2.5 h-2.5" />
+              Solar
+            </Badge>
+          );
+        return (
+          <Badge key={u} variant="outline" className="text-[10px]">
+            {u}
+          </Badge>
+        );
+      })}
+    </div>
+  );
+}
+
+function CountPill({
+  count,
+  variant = "default",
+}: {
+  count: number;
+  variant?: "default" | "violet" | "amber" | "green" | "sky";
+}) {
+  const styles = {
+    default: "text-muted-foreground bg-muted",
+    violet: "text-violet-700 bg-violet-50 border border-violet-200",
+    amber: "text-amber-700 bg-amber-50 border border-amber-200",
+    green: "text-green-700 bg-green-50 border border-green-200",
+    sky: "text-sky-700 bg-sky-50 border border-sky-200",
+  };
+  return (
+    <span
+      className={`ml-auto shrink-0 text-[11px] font-semibold tabular-nums px-1.5 py-0.5 rounded-md ${styles[variant]}`}
+    >
+      {count.toLocaleString()}
+    </span>
   );
 }
 
@@ -1768,6 +1855,24 @@ export default function AllProductsPage() {
       },
     },
     {
+      accessorKey: "productUsage",
+      header: () => <div className="text-xs font-medium">Usage</div>,
+      cell: ({ row }) => (
+        <ProductUsageBadge value={row.original.productUsage} />
+      ),
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        const usages: string[] = Array.isArray(row.original.productUsage)
+          ? row.original.productUsage
+          : row.original.productUsage
+            ? [row.original.productUsage as string]
+            : [];
+        return usages.some(
+          (u) => u.toUpperCase() === String(filterValue).toUpperCase(),
+        );
+      },
+    },
+    {
       id: "details",
       accessorFn: (row) => {
         const brand = Array.isArray(row.brands)
@@ -1913,6 +2018,93 @@ export default function AllProductsPage() {
     return Array.from(s).sort();
   }, [data]);
 
+  // ── Usage counts ──────────────────────────────────────────────────────────
+  const brandCounts = React.useMemo(() => {
+    const m = new Map<string, number>();
+    data.forEach((p) => {
+      const brands = Array.isArray(p.brands)
+        ? p.brands
+        : p.brand
+          ? [p.brand as string]
+          : [];
+      brands.forEach((b) => m.set(b, (m.get(b) ?? 0) + 1));
+    });
+    return m;
+  }, [data]);
+
+  const websiteCounts = React.useMemo(() => {
+    const m = new Map<string, number>();
+    data.forEach((p) => {
+      const websites = Array.isArray(p.websites)
+        ? p.websites
+        : p.website
+          ? [p.website as string]
+          : [];
+      websites.forEach((w) => m.set(w, (m.get(w) ?? 0) + 1));
+    });
+    return m;
+  }, [data]);
+
+  const productFamilyCounts = React.useMemo(() => {
+    const m = new Map<string, number>();
+    data.forEach((p) => {
+      const fam = p.productFamily || (p.categories as string);
+      if (fam) m.set(fam, (m.get(fam) ?? 0) + 1);
+    });
+    return m;
+  }, [data]);
+
+  const productClassCounts = React.useMemo(() => {
+    const m = new Map<string, number>([
+      ["spf", 0],
+      ["standard", 0],
+      ["", 0],
+    ]);
+    data.forEach((p) => {
+      const cls = p.productClass ?? "";
+      m.set(cls, (m.get(cls) ?? 0) + 1);
+    });
+    return m;
+  }, [data]);
+
+  const productUsageCounts = React.useMemo(() => {
+    const m = new Map<string, number>([
+      ["OUTDOOR", 0],
+      ["INDOOR", 0],
+      ["SOLAR", 0],
+      ["", 0],
+    ]);
+    data.forEach((p) => {
+      const usages: string[] = Array.isArray(p.productUsage)
+        ? p.productUsage
+        : p.productUsage
+          ? [p.productUsage as string]
+          : [];
+      if (usages.length === 0) {
+        m.set("", (m.get("") ?? 0) + 1);
+      } else {
+        usages.forEach((u) => {
+          const key = u.toUpperCase();
+          m.set(key, (m.get(key) ?? 0) + 1);
+        });
+      }
+    });
+    return m;
+  }, [data]);
+
+  const noWebsiteCount = React.useMemo(
+    () =>
+      data.filter((p) => {
+        const websites = Array.isArray(p.websites)
+          ? p.websites
+          : p.website
+            ? [p.website as string]
+            : [];
+        return websites.length === 0;
+      }).length,
+    [data],
+  );
+
   // ── Sorted data ───────────────────────────────────────────────────────────
   const sortedData = React.useMemo(() => {
     const d = [...data];
@@ -1968,6 +2160,9 @@ export default function AllProductsPage() {
 
   const activeFamilyFilter =
     (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
+
+  const activeUsageFilter =
+    (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
 
   const [familySearch, setFamilySearch] = React.useState("");
 
@@ -2210,41 +2405,183 @@ export default function AllProductsPage() {
           )}
         </div>
 
-        {/* Product Class filter */}
+        {/* ── Product Class filter ──────────────────────────────────────── */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
               Product Class <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem
               onClick={() =>
                 table.getColumn("productClass")?.setFilterValue("")
               }
+              className="flex items-center justify-between"
             >
-              All Classes
+              <span>All Classes</span>
+              <CountPill count={data.length} />
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() =>
                 table.getColumn("productClass")?.setFilterValue("spf")
               }
+              className="flex items-center justify-between"
             >
-              <Sparkles className="w-3.5 h-3.5 mr-2 text-violet-500" /> SPF
-              Items
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                SPF Items
+              </span>
+              <CountPill
+                count={productClassCounts.get("spf") ?? 0}
+                variant="violet"
+              />
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() =>
                 table.getColumn("productClass")?.setFilterValue("standard")
               }
+              className="flex items-center justify-between"
             >
-              <Package className="w-3.5 h-3.5 mr-2" /> Standard Items
+              <span className="flex items-center gap-2">
+                <Package className="w-3.5 h-3.5" />
+                Standard Items
+              </span>
+              <CountPill count={productClassCounts.get("standard") ?? 0} />
             </DropdownMenuItem>
+            {(productClassCounts.get("") ?? 0) > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-3 py-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Unclassified
+                  </span>
+                  <CountPill
+                    count={productClassCounts.get("") ?? 0}
+                    variant="amber"
+                  />
+                </div>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Product Family filter */}
+        {/* ── Product Usage filter ──────────────────────────────────────── */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeUsageFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              {activeUsageFilter === "OUTDOOR" ? (
+                <Trees className="h-4 w-4 text-emerald-600" />
+              ) : activeUsageFilter === "INDOOR" ? (
+                <Home className="h-4 w-4 text-sky-600" />
+              ) : activeUsageFilter === "SOLAR" ? (
+                <Sun className="h-4 w-4 text-amber-500" />
+              ) : (
+                <Sun className="h-4 w-4" />
+              )}
+              {activeUsageFilter
+                ? activeUsageFilter.charAt(0).toUpperCase() +
+                  activeUsageFilter.slice(1).toLowerCase()
+                : "Usage"}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("")
+              }
+              className="flex items-center justify-between"
+            >
+              <span>All Usage</span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={data.length} />
+                {!activeUsageFilter && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("OUTDOOR")
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Trees className="w-3.5 h-3.5 text-emerald-600" />
+                Outdoor
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productUsageCounts.get("OUTDOOR") ?? 0}
+                  variant="green"
+                />
+                {activeUsageFilter === "OUTDOOR" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("INDOOR")
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Home className="w-3.5 h-3.5 text-sky-600" />
+                Indoor
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productUsageCounts.get("INDOOR") ?? 0}
+                  variant="sky"
+                />
+                {activeUsageFilter === "INDOOR" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("SOLAR")
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Sun className="w-3.5 h-3.5 text-amber-500" />
+                Solar
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productUsageCounts.get("SOLAR") ?? 0}
+                  variant="amber"
+                />
+                {activeUsageFilter === "SOLAR" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            {(productUsageCounts.get("") ?? 0) > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-3 py-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Unassigned
+                  </span>
+                  <CountPill
+                    count={productUsageCounts.get("") ?? 0}
+                    variant="amber"
+                  />
+                </div>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DropdownMenu
           onOpenChange={(open) => {
             if (!open) setFamilySearch("");
@@ -2293,13 +2630,17 @@ export default function AllProductsPage() {
                 onClick={() =>
                   table.getColumn("productFamilyFilter")?.setFilterValue("")
                 }
+                className="flex items-center justify-between"
               >
                 <span className="text-muted-foreground italic">
                   All Families
                 </span>
-                {!activeFamilyFilter && (
-                  <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                )}
+                <div className="flex items-center gap-1.5">
+                  <CountPill count={data.length} />
+                  {!activeFamilyFilter && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </div>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {(() => {
@@ -2327,9 +2668,12 @@ export default function AllProductsPage() {
                     <span className="truncate text-sm flex-1 min-w-0">
                       {family}
                     </span>
-                    {activeFamilyFilter === family && (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <CountPill count={productFamilyCounts.get(family) ?? 0} />
+                      {activeFamilyFilter === family && (
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      )}
+                    </div>
                   </DropdownMenuItem>
                 ));
               })()}
@@ -2345,7 +2689,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Brands filter */}
+        {/* ── Brands filter ─────────────────────────────────────────────── */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2354,12 +2698,14 @@ export default function AllProductsPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            className="w-48 max-h-60 overflow-y-auto"
+            className="w-56 max-h-60 overflow-y-auto"
           >
             <DropdownMenuItem
               onClick={() => table.getColumn("details")?.setFilterValue("")}
+              className="flex items-center justify-between"
             >
-              All Brands
+              <span>All Brands</span>
+              <CountPill count={data.length} />
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {uniqueBrands.map((brand) => (
@@ -2368,14 +2714,16 @@ export default function AllProductsPage() {
                 onClick={() =>
                   table.getColumn("details")?.setFilterValue(brand)
                 }
+                className="flex items-center justify-between"
               >
-                {brand}
+                <span className="truncate flex-1">{brand}</span>
+                <CountPill count={brandCounts.get(brand) ?? 0} />
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Websites filter */}
+        {/* ── Websites filter ───────────────────────────────────────────── */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2384,25 +2732,51 @@ export default function AllProductsPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            className="w-48 max-h-60 overflow-y-auto"
+            className="w-60 max-h-60 overflow-y-auto"
           >
             <DropdownMenuItem
               onClick={() => table.getColumn("details")?.setFilterValue("")}
+              className="flex items-center justify-between"
             >
-              All Websites
+              <span>All Websites</span>
+              <CountPill count={data.length} />
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {uniqueWebsites.map((web) => (
               <DropdownMenuItem
                 key={web}
                 onClick={() => table.getColumn("details")?.setFilterValue(web)}
+                className="flex items-center justify-between"
               >
-                {web === "Shopify" && (
-                  <ShoppingBag className="w-3.5 h-3.5 mr-2 text-green-500" />
-                )}
-                {web}
+                <span className="flex items-center gap-2 flex-1 truncate">
+                  {web === "Shopify" && (
+                    <ShoppingBag className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                  )}
+                  {web}
+                </span>
+                <CountPill
+                  count={websiteCounts.get(web) ?? 0}
+                  variant={
+                    web === "Shopify"
+                      ? "green"
+                      : web === "Taskflow"
+                        ? "violet"
+                        : "default"
+                  }
+                />
               </DropdownMenuItem>
             ))}
+            {noWebsiteCount > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-3 py-1.5 flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Unassigned
+                  </span>
+                  <CountPill count={noWebsiteCount} variant="amber" />
+                </div>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -2512,7 +2886,9 @@ export default function AllProductsPage() {
       </div>
 
       {/* Active filters row */}
-      {(activeFamilyFilter || (sortOption && sortOption !== "newest")) && (
+      {(activeFamilyFilter ||
+        activeUsageFilter ||
+        (sortOption && sortOption !== "newest")) && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Active:</span>
 
@@ -2526,6 +2902,37 @@ export default function AllProductsPage() {
                   table.getColumn("productFamilyFilter")?.setFilterValue("")
                 }
                 className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+
+          {activeUsageFilter && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${
+                activeUsageFilter === "OUTDOOR"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  : activeUsageFilter === "INDOOR"
+                    ? "bg-sky-50 border-sky-200 text-sky-700"
+                    : "bg-amber-50 border-amber-200 text-amber-700"
+              }`}
+            >
+              {activeUsageFilter === "OUTDOOR" ? (
+                <Trees className="h-3 w-3" />
+              ) : activeUsageFilter === "INDOOR" ? (
+                <Home className="h-3 w-3" />
+              ) : (
+                <Sun className="h-3 w-3" />
+              )}
+              {activeUsageFilter.charAt(0).toUpperCase() +
+                activeUsageFilter.slice(1).toLowerCase()}
+              <button
+                type="button"
+                onClick={() =>
+                  table.getColumn("productUsage")?.setFilterValue("")
+                }
+                className="ml-0.5 hover:opacity-60 transition-opacity"
               >
                 <X className="h-3 w-3" />
               </button>
