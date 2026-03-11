@@ -2299,7 +2299,6 @@ export default function AddNewProduct({
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-foreground truncate">
                         {litItemCode || editData?.litItemCode}_TDS.pdf
-                        _TDS.pdf
                       </p>
                       <p className="text-[10px] text-muted-foreground">
                         Auto-generated · Stored on Cloudinary
@@ -2311,7 +2310,7 @@ export default function AddNewProduct({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0"
-                    download={`${itemDescription || "Product"}_TDS.pdf`}
+                    download={`${litItemCode || editData?.litItemCode}_TDS.pdf`}
                   >
                     <Button
                       variant="outline"
