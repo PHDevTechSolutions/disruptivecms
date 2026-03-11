@@ -17,9 +17,9 @@
  *      are given a realistic budget without hogging all the space.
  *   2. Run the font-shrink loop against that budget (min readable: 6.5 pt).
  *   3. After the table renders, measure the ACTUAL tableEndY and divide the
- *      remaining vertical space across all drawing rows — clamped to
- *      [MIN_DRAWING_IMG_H, DRAWING_IMG_H].  Images always fill available
- *      room without ever spilling onto a second page.
+ *      remaining vertical space across all drawing rows — strictly bounded
+ *      above FOOTER_RESERVE_H so drawings never bleed into the footer.
+ *      Images always fill available room without ever spilling onto a second page.
  */
 
 import jsPDF from "jspdf";
@@ -56,7 +56,7 @@ export interface GenerateTdsInput {
   wiringLayoutUrl?: string;
   terminalLayoutUrl?: string;
   accessoriesImageUrl?: string;
-  typeOfPlugUrl?: string; // ← NEW
+  typeOfPlugUrl?: string;
 }
 
 /** Input for a blank template TDS (saved against a productFamily) */
@@ -78,8 +78,32 @@ interface DrawingSlot {
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
 
+/**
+ * Sanitise text for jsPDF's built-in Latin-1 fonts.
+ *
+ * jsPDF's Helvetica only covers Latin-1 (ISO-8859-1, codepoints 0x00–0xFF).
+ * Any character outside that range is silently rendered as a '#', a blank, or
+ * — worse — causes extra letter-spacing on the entire line.  This function:
+ *
+ *  • Replaces ⌀ (U+2300 DIAMETER SIGN) with Ø (U+00D8), which IS in Latin-1
+ *    and is visually indistinguishable in engineering contexts.
+ *  • Normalises typographic quotes and dashes to plain ASCII so they never
+ *    trigger jsPDF's fallback spacing / glyph-substitution path.
+ *  • Strips any remaining non-Latin-1 characters rather than letting them
+ *    corrupt the rendered line.
+ */
+function sanitize(s?: string | null): string {
+  return (s ?? "")
+    .replace(/⌀/g, "\u00D8") // ⌀ DIAMETER SIGN  → Ø  (Latin-1)
+    .replace(/\u2013/g, "-") // en-dash           → hyphen
+    .replace(/\u2014/g, "-") // em-dash           → hyphen
+    .replace(/[\u2018\u2019]/g, "'") // curly single quotes → apostrophe
+    .replace(/[\u201C\u201D]/g, '"') // curly double quotes → straight quote
+    .replace(/[^\x00-\xFF]/g, ""); // strip remaining non-Latin-1
+}
+
 function caps(s?: string | null): string {
-  return (s ?? "").toUpperCase().trim();
+  return sanitize(s).toUpperCase().trim();
 }
 
 function isExcludedSpecValue(value?: string | null): boolean {
@@ -134,8 +158,9 @@ const DRAWINGS_PER_ROW = 3;
 const DRAWING_IMG_H = 165;
 
 /**
- * Absolute minimum image height — still legible at this size.
- * Used as a hard floor when the spec table is very tall.
+ * Absolute minimum image height used in the BUDGET phase (before the table is
+ * rendered).  After the table renders we use the actual remaining space, so
+ * this value only affects how much room the font-shrink loop reserves.
  */
 const MIN_DRAWING_IMG_H = 60;
 
@@ -226,6 +251,9 @@ function probeTableHeight(
       fontSize,
       cellPadding: cellPaddingForFontSize(fontSize),
       overflow: "linebreak",
+      // Explicit left-align prevents jsPDF from applying inter-letter spacing
+      // on wrapped lines (visible as characters spread across the cell width).
+      halign: "left",
     },
     columnStyles: {
       0: { cellWidth: colLabel },
@@ -358,6 +386,9 @@ async function buildTdsPdf(
       lineWidth: 0.4,
       textColor: [30, 30, 30],
       valign: "middle",
+      // Explicit left-align prevents jsPDF's inter-letter-spacing artefact
+      // that appears on wrapped lines when no halign is specified.
+      halign: "left",
     },
     columnStyles: {
       0: { cellWidth: COL_LABEL, fontStyle: "bold", fontSize },
@@ -388,22 +419,32 @@ async function buildTdsPdf(
     body: tableRows as any[],
   });
 
-  // Drawings section
+  // ── Drawings section ──────────────────────────────────────────────────────
   if (activeSlots.length > 0) {
     const tableEndY = (pdf as any).lastAutoTable.finalY as number;
 
-    // Compute remaining space between table bottom and footer, then divide
-    // evenly across drawing rows to get the adaptive image height.
+    // Compute how much vertical space remains between the table bottom and the
+    // footer reserve zone.  Divide evenly across drawing rows to get the
+    // adaptive image height.
+    //
+    // Key constraint: effectiveImgH must be chosen so that the entire drawings
+    // section fits strictly within [tableEndY + DRAWING_SECTION_TOP_GAP,
+    // PH - FOOTER_RESERVE_H].  We achieve this by deriving effectiveImgH
+    // directly from the available space rather than using a hard minimum that
+    // could push images past the footer.
+    //
+    // A floor of 25 pt is kept so images remain legible.  In extreme edge
+    // cases (very tall spec table + many drawing rows) images will be small
+    // thumbnails; this is preferable to bleeding into the footer band.
     const remainingH =
       PH - FOOTER_RESERVE_H - tableEndY - DRAWING_SECTION_TOP_GAP;
     const perRowBudget = numDrawingRows > 0 ? remainingH / numDrawingRows : 0;
     const rawImgH = perRowBudget - DRAWING_LABEL_H - DRAWING_ROW_GAP;
 
-    // Clamp: never smaller than MIN (still legible), never larger than the ideal max
-    const effectiveImgH = Math.max(
-      MIN_DRAWING_IMG_H,
-      Math.min(DRAWING_IMG_H, rawImgH),
-    );
+    // Clamp between a small legible floor and the ideal maximum.
+    // Unlike the previous MIN_DRAWING_IMG_H = 60 floor, we use 25 pt here
+    // so that strict footer bounding takes priority over a fixed minimum.
+    const effectiveImgH = Math.max(25, Math.min(DRAWING_IMG_H, rawImgH));
 
     const rowBlockH = DRAWING_LABEL_H + effectiveImgH + DRAWING_ROW_GAP;
     let curY = tableEndY + DRAWING_SECTION_TOP_GAP;
@@ -459,7 +500,7 @@ async function buildTdsPdf(
     }
   }
 
-  // Footer
+  // Footer — rendered last so it always sits on top of any edge-case overflow
   const footerB64 = await urlToBase64(`${origin}/templates/lit-footer.png`);
   if (footerB64) {
     const { w: fw, h: fh } = await getImageDimensions(footerB64);
@@ -476,6 +517,8 @@ async function buildTdsPdf(
 /**
  * Builds the ordered list of drawing slots from a GenerateTdsInput.
  * Only slots with a non-empty URL survive.
+ * The order here is fixed and intentional — it must never change so that
+ * bulk-uploaded and manually-added products produce identical slot ordering.
  */
 function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
   return [
@@ -492,7 +535,7 @@ function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
     { label: "Wiring Layout", url: input.wiringLayoutUrl ?? "" },
     { label: "Terminal Layout", url: input.terminalLayoutUrl ?? "" },
     { label: "Accessories", url: input.accessoriesImageUrl ?? "" },
-    { label: "Type of Plug", url: input.typeOfPlugUrl ?? "" }, // ← NEW
+    { label: "Type of Plug", url: input.typeOfPlugUrl ?? "" },
   ].filter((s) => !!s.url.trim());
 }
 

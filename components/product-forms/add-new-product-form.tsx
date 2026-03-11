@@ -363,11 +363,10 @@ export default function AddNewProduct({
   const [rawImage, setRawImage] = useState<File | null>(null);
   const [galleryImages, setGalleryImages] = useState<File[]>([]);
   const [qrImage, setQrImage] = useState<File | null>(null);
-  const [dimensionDrawingImage, setDimensionDrawingImage] =
+  const [dimensionalDrawingImage, setDimensionalDrawingImage] =
     useState<File | null>(null);
-  const [mountingHeightImage, setMountingHeightImage] = useState<File | null>(
-    null,
-  );
+  const [recommendedMountingHeightImage, setRecommendedMountingHeightImage] =
+    useState<File | null>(null);
   const [driverCompatibilityImage, setDriverCompatibilityImage] =
     useState<File | null>(null);
   const [baseImage, setBaseImage] = useState<File | null>(null);
@@ -382,7 +381,6 @@ export default function AddNewProduct({
     null,
   );
   const [accessoriesImage, setAccessoriesImage] = useState<File | null>(null);
-
   const [typeOfPlugImage, setTypeOfPlugImage] = useState<File | null>(null);
 
   const [existingMainImage, setExistingMainImage] = useState("");
@@ -391,10 +389,13 @@ export default function AddNewProduct({
     [],
   );
   const [existingQrImage, setExistingQrImage] = useState("");
-  const [existingDimensionDrawingImage, setExistingDimensionDrawingImage] =
+  // ── Drawing images — field names match bulk-uploader exactly ──────────────
+  const [existingDimensionalDrawingImage, setExistingDimensionalDrawingImage] =
     useState("");
-  const [existingMountingHeightImage, setExistingMountingHeightImage] =
-    useState("");
+  const [
+    existingRecommendedMountingHeightImage,
+    setExistingRecommendedMountingHeightImage,
+  ] = useState("");
   const [
     existingDriverCompatibilityImage,
     setExistingDriverCompatibilityImage,
@@ -432,8 +433,8 @@ export default function AddNewProduct({
   useEffect(() => {
     if (!editData) return;
     const hasTechDrawings = [
-      editData.dimensionDrawingImage,
-      editData.mountingHeightImage,
+      editData.dimensionalDrawingImage,
+      editData.recommendedMountingHeightImage,
       editData.driverCompatibilityImage,
       editData.baseImage,
       editData.illuminanceLevelImage,
@@ -532,10 +533,6 @@ export default function AddNewProduct({
   }, [availableCats, productUsage]);
 
   // ── Specs listener — real-time, bidirectional ─────────────────────────────
-  //
-  // We listen to the productfamily doc via onSnapshot (not getDoc) so that any
-  // edit made in the ProductFamilies admin page is immediately reflected here.
-  // The inner specs listener also re-derives whenever the family doc changes.
   useEffect(() => {
     if (!selectedCatId) {
       setTdsHasSpecs(false);
@@ -553,11 +550,9 @@ export default function AddNewProduct({
     }
 
     let cancelled = false;
-    // Inner listener for the specs collection — replaced each time family changes
     let unsubSpecs: (() => void) | null = null;
     setSpecsLoading(true);
 
-    // Outer listener: productfamily doc — fires immediately and on any edit
     const unsubFamily = onSnapshot(
       doc(db, "productfamilies", selectedCatId),
       (familySnap) => {
@@ -591,7 +586,6 @@ export default function AddNewProduct({
           return;
         }
 
-        // Build the allowed-labels map from the family's specItems arrays
         const allowedLabelsByGroup = new Map<string, Set<string>>();
         familySpecs.forEach((g) => {
           if (!g.specGroupId || !Array.isArray(g.specItems)) return;
@@ -602,10 +596,8 @@ export default function AddNewProduct({
           if (set.size > 0) allowedLabelsByGroup.set(g.specGroupId, set);
         });
 
-        // Tear down the previous inner listener before creating a new one
         unsubSpecs?.();
 
-        // Inner listener: specs collection
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           if (cancelled) return;
           const items: SpecItem[] = [];
@@ -680,8 +672,11 @@ export default function AddNewProduct({
     setExistingRawImage(editData.rawImage || "");
     setExistingGalleryImages(editData.galleryImages || []);
     setExistingQrImage(editData.qrCodeImage || "");
-    setExistingDimensionDrawingImage(editData.dimensionDrawingImage || "");
-    setExistingMountingHeightImage(editData.mountingHeightImage || "");
+    // ── Drawing images — field names unified with bulk-uploader ─────────────
+    setExistingDimensionalDrawingImage(editData.dimensionalDrawingImage || "");
+    setExistingRecommendedMountingHeightImage(
+      editData.recommendedMountingHeightImage || "",
+    );
     setExistingDriverCompatibilityImage(
       editData.driverCompatibilityImage || "",
     );
@@ -736,11 +731,6 @@ export default function AddNewProduct({
   };
 
   // ── Immediate cross-save: new spec item ───────────────────────────────────
-  //
-  // Writes to specs/{specGroupId} AND productfamilies/{selectedCatId} right
-  // away, then marks the entry as saved.  The onSnapshot listeners above will
-  // automatically update availableSpecs, so the "NEW" badge in the UI is the
-  // only reason we still keep the pendingNewSpecs entry around.
   const addNewSpecItem = useCallback(
     async (specGroupId: string, specGroup: string) => {
       const label = (newSpecInputs[specGroupId] || "").trim().toUpperCase();
@@ -760,16 +750,13 @@ export default function AddNewProduct({
 
       const tempId = `new-${specGroupId}-${label}-${Date.now()}`;
 
-      // Optimistically add to UI first
       setPendingNewSpecs((p) => [
         ...p,
         { specGroupId, specGroup, label, tempId, saved: false },
       ]);
       setNewSpecInputs((p) => ({ ...p, [specGroupId]: "" }));
 
-      // Immediately persist to Firestore (fire-and-forget with error toast)
       try {
-        // 1. specs/{specGroupId}
         const specRef = doc(db, "specs", specGroupId);
         const specSnap = await getDoc(specRef);
         if (specSnap.exists()) {
@@ -787,7 +774,6 @@ export default function AddNewProduct({
           }
         }
 
-        // 2. productfamilies/{selectedCatId}
         if (selectedCatId) {
           const famRef = doc(db, "productfamilies", selectedCatId);
           const famSnap = await getDoc(famRef);
@@ -823,28 +809,22 @@ export default function AddNewProduct({
           }
         }
 
-        // Mark as saved in state
         setPendingNewSpecs((p) =>
           p.map((s) => (s.tempId === tempId ? { ...s, saved: true } : s)),
         );
       } catch (err) {
         console.error("[AddNewProduct] cross-save spec item failed:", err);
         toast.error("Failed to save new spec item — will retry on publish");
-        // Keep in pendingNewSpecs (saved: false) so publish picks it up
       }
     },
     [newSpecInputs, availableSpecs, pendingNewSpecs, selectedCatId],
   );
 
   // ── Immediate cross-save: group rename ────────────────────────────────────
-  //
-  // Called when the user finishes editing a group name (blur / Enter / Escape).
-  // Writes the new name to specs/{specGroupId} straight away.
   const saveGroupRename = useCallback(
     async (specGroupId: string) => {
       const newName = (groupNameEdits[specGroupId] || "").trim();
       if (!newName) return;
-      // Skip if already saved with this exact name
       if (savedGroupNamesRef.current[specGroupId] === newName) return;
 
       try {
@@ -859,17 +839,12 @@ export default function AddNewProduct({
   );
 
   // ── Immediate cross-save: product family title rename ────────────────────
-  //
-  // Writes the new title to productfamilies/{selectedCatId} immediately.
-  // The onSnapshot listener on availableCats will automatically refresh
-  // selectedCatName and the combobox display, so no manual state update needed.
   const saveFamilyTitle = useCallback(async () => {
     const newTitle = familyTitleDraft.trim().toUpperCase();
     if (!newTitle || !selectedCatId) {
       setEditingFamilyTitle(false);
       return;
     }
-    // Optimistically close the editor
     setEditingFamilyTitle(false);
 
     try {
@@ -882,6 +857,7 @@ export default function AddNewProduct({
       toast.error("Failed to rename product family");
     }
   }, [familyTitleDraft, selectedCatId]);
+
   const handlePublish = async () => {
     if (!itemDescription)
       return toast.error("Please enter an item description!");
@@ -951,12 +927,13 @@ export default function AddNewProduct({
       const qrUrl = qrImage
         ? await uploadToCloudinary(qrImage)
         : existingQrImage;
-      const dimensionDrawingUrl = dimensionDrawingImage
-        ? await uploadToCloudinary(dimensionDrawingImage)
-        : existingDimensionDrawingImage;
-      const mountingHeightUrl = mountingHeightImage
-        ? await uploadToCloudinary(mountingHeightImage)
-        : existingMountingHeightImage;
+      // ── Drawing images — use bulk-uploader field names in all uploads ──────
+      const dimensionalDrawingUrl = dimensionalDrawingImage
+        ? await uploadToCloudinary(dimensionalDrawingImage)
+        : existingDimensionalDrawingImage;
+      const recommendedMountingHeightUrl = recommendedMountingHeightImage
+        ? await uploadToCloudinary(recommendedMountingHeightImage)
+        : existingRecommendedMountingHeightImage;
       const driverCompatibilityUrl = driverCompatibilityImage
         ? await uploadToCloudinary(driverCompatibilityImage)
         : existingDriverCompatibilityImage;
@@ -1066,8 +1043,9 @@ export default function AddNewProduct({
         mainImage: mainUrl,
         rawImage: rawUrl,
         qrCodeImage: qrUrl,
-        dimensionDrawingImage: dimensionDrawingUrl,
-        mountingHeightImage: mountingHeightUrl,
+        // ── Drawing images — field names unified with bulk-uploader ──────────
+        dimensionalDrawingImage: dimensionalDrawingUrl,
+        recommendedMountingHeightImage: recommendedMountingHeightUrl,
         driverCompatibilityImage: driverCompatibilityUrl,
         baseImage: baseUrl,
         illuminanceLevelImage: illuminanceLevelUrl,
@@ -1130,7 +1108,7 @@ export default function AddNewProduct({
         });
       }
 
-      // ── Safety-net cross-save: any items not yet saved (e.g. network blip) ─
+      // ── Safety-net cross-save: any items not yet saved ────────────────────
       const unsavedSpecs = pendingNewSpecs.filter((s) => !s.saved);
       if (unsavedSpecs.length > 0 && selectedCatId) {
         toast.loading("Syncing spec updates…", { id: tid });
@@ -1207,7 +1185,7 @@ export default function AddNewProduct({
         }
       }
 
-      // ── Safety-net: group renames not yet persisted ─────────────────────
+      // ── Safety-net: group renames not yet persisted ───────────────────────
       const unpersistedRenames = Object.entries(groupNameEdits).filter(
         ([specGroupId, name]) =>
           name.trim() &&
@@ -1220,7 +1198,7 @@ export default function AddNewProduct({
         savedGroupNamesRef.current[specGroupId] = newName.trim();
       }
 
-      // ── Clear pending state ────────────────────────────────────────────────
+      // ── Clear pending state ───────────────────────────────────────────────
       setPendingNewSpecs([]);
       setNewSpecInputs({});
       setGroupNameEdits({});
@@ -1238,8 +1216,9 @@ export default function AddNewProduct({
             technicalSpecs,
             mainImageUrl: mainUrl || undefined,
             rawImageUrl: rawUrl || undefined,
-            dimensionalDrawingUrl: dimensionDrawingUrl || undefined,
-            recommendedMountingHeightUrl: mountingHeightUrl || undefined,
+            dimensionalDrawingUrl: dimensionalDrawingUrl || undefined,
+            recommendedMountingHeightUrl:
+              recommendedMountingHeightUrl || undefined,
             driverCompatibilityUrl: driverCompatibilityUrl || undefined,
             baseImageUrl: baseUrl || undefined,
             illuminanceLevelUrl: illuminanceLevelUrl || undefined,
@@ -1297,11 +1276,11 @@ export default function AddNewProduct({
     (f: File[]) => setGalleryImages((p) => [...p, ...f]),
     [],
   );
-  const onDropDimDraw = useCallback((f: File[]) => {
-    if (f[0]) setDimensionDrawingImage(f[0]);
+  const onDropDimensionalDrawing = useCallback((f: File[]) => {
+    if (f[0]) setDimensionalDrawingImage(f[0]);
   }, []);
-  const onDropMountH = useCallback((f: File[]) => {
-    if (f[0]) setMountingHeightImage(f[0]);
+  const onDropRecommendedMountingHeight = useCallback((f: File[]) => {
+    if (f[0]) setRecommendedMountingHeightImage(f[0]);
   }, []);
   const onDropDriverComp = useCallback((f: File[]) => {
     if (f[0]) setDriverCompatibilityImage(f[0]);
@@ -1341,10 +1320,15 @@ export default function AddNewProduct({
   });
   const { getRootProps: galleryRoot, getInputProps: galleryInput } =
     useDropzone({ onDrop: onDropGallery });
-  const { getRootProps: dimensionDrawRoot, getInputProps: dimensionDrawInput } =
-    useDropzone({ onDrop: onDropDimDraw, maxFiles: 1 });
-  const { getRootProps: mountHRoot, getInputProps: mountHInput } = useDropzone({
-    onDrop: onDropMountH,
+  const {
+    getRootProps: dimensionalDrawingRoot,
+    getInputProps: dimensionalDrawingInput,
+  } = useDropzone({ onDrop: onDropDimensionalDrawing, maxFiles: 1 });
+  const {
+    getRootProps: recommendedMountingHeightRoot,
+    getInputProps: recommendedMountingHeightInput,
+  } = useDropzone({
+    onDrop: onDropRecommendedMountingHeight,
     maxFiles: 1,
   });
   const { getRootProps: driverCompRoot, getInputProps: driverCompInput } =
@@ -1703,9 +1687,10 @@ export default function AddNewProduct({
                     <div className="flex items-center gap-2">
                       {(() => {
                         const filledCount = [
-                          dimensionDrawingImage ||
-                            existingDimensionDrawingImage,
-                          mountingHeightImage || existingMountingHeightImage,
+                          dimensionalDrawingImage ||
+                            existingDimensionalDrawingImage,
+                          recommendedMountingHeightImage ||
+                            existingRecommendedMountingHeightImage,
                           driverCompatibilityImage ||
                             existingDriverCompatibilityImage,
                           baseImage || existingBaseImage,
@@ -1732,25 +1717,25 @@ export default function AddNewProduct({
                     <div className="space-y-4 mt-3">
                       <div className="grid grid-cols-2 gap-4">
                         {renderSimpleDropzone({
-                          rootProps: dimensionDrawRoot,
-                          inputProps: dimensionDrawInput,
-                          file: dimensionDrawingImage,
-                          existingUrl: existingDimensionDrawingImage,
+                          rootProps: dimensionalDrawingRoot,
+                          inputProps: dimensionalDrawingInput,
+                          file: dimensionalDrawingImage,
+                          existingUrl: existingDimensionalDrawingImage,
                           onClear: () => {
-                            setDimensionDrawingImage(null);
-                            setExistingDimensionDrawingImage("");
+                            setDimensionalDrawingImage(null);
+                            setExistingDimensionalDrawingImage("");
                           },
                           icon: <Ruler className="h-3 w-3" />,
-                          label: "Dimension Drawing",
+                          label: "Dimensional Drawing",
                         })}
                         {renderSimpleDropzone({
-                          rootProps: mountHRoot,
-                          inputProps: mountHInput,
-                          file: mountingHeightImage,
-                          existingUrl: existingMountingHeightImage,
+                          rootProps: recommendedMountingHeightRoot,
+                          inputProps: recommendedMountingHeightInput,
+                          file: recommendedMountingHeightImage,
+                          existingUrl: existingRecommendedMountingHeightImage,
                           onClear: () => {
-                            setMountingHeightImage(null);
-                            setExistingMountingHeightImage("");
+                            setRecommendedMountingHeightImage(null);
+                            setExistingRecommendedMountingHeightImage("");
                           },
                           icon: <ArrowUpDown className="h-3 w-3" />,
                           label: "Mounting Height",
@@ -1858,7 +1843,7 @@ export default function AddNewProduct({
                           },
                           icon: <ShoppingBag className="h-3 w-3" />,
                           label: "Accessories",
-                        })}                       
+                        })}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         {renderSimpleDropzone({
@@ -2077,7 +2062,6 @@ export default function AddNewProduct({
                                       }
                                       onBlur={() => {
                                         setEditingGroupId(null);
-                                        // Immediately persist the rename
                                         saveGroupRename(specGroupId);
                                       }}
                                       onKeyDown={(e) => {
