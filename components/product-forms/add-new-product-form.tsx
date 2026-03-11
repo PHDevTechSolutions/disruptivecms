@@ -56,6 +56,7 @@ import {
   Pencil,
   Download,
   ExternalLink,
+  FolderPlus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
@@ -217,6 +221,534 @@ function TdsPreviewDialog({
   );
 }
 
+// ─── AddSpecGroupDialog ───────────────────────────────────────────────────────
+
+interface AllSpecGroup {
+  id: string;
+  name: string;
+  items: { label: string }[];
+}
+
+function AddSpecGroupDialog({
+  open,
+  onOpenChange,
+  allSpecGroups,
+  alreadyLinkedGroupIds,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  allSpecGroups: AllSpecGroup[];
+  alreadyLinkedGroupIds: string[];
+  onConfirm: (payload: {
+    mode: "existing" | "new";
+    existingGroupId?: string;
+    newGroupName?: string;
+    selectedItemLabels: string[];
+    extraNewItemLabels: string[];
+  }) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<"existing" | "new">("existing");
+  const [groupSearch, setGroupSearch] = useState("");
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [itemSearch, setItemSearch] = useState("");
+  const [extraItems, setExtraItems] = useState<string[]>([]);
+  const [extraItemInput, setExtraItemInput] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Reset on open
+  useEffect(() => {
+    if (open) {
+      setMode("existing");
+      setGroupSearch("");
+      setSelectedGroupId("");
+      setNewGroupName("");
+      setSelectedItems(new Set());
+      setItemSearch("");
+      setExtraItems([]);
+      setExtraItemInput("");
+    }
+  }, [open]);
+
+  // Available groups = all minus already linked
+  const availableGroups = useMemo(
+    () => allSpecGroups.filter((g) => !alreadyLinkedGroupIds.includes(g.id)),
+    [allSpecGroups, alreadyLinkedGroupIds],
+  );
+
+  const filteredGroups = useMemo(
+    () =>
+      availableGroups.filter((g) =>
+        g.name.toLowerCase().includes(groupSearch.toLowerCase()),
+      ),
+    [availableGroups, groupSearch],
+  );
+
+  const selectedGroup = useMemo(
+    () => allSpecGroups.find((g) => g.id === selectedGroupId) ?? null,
+    [allSpecGroups, selectedGroupId],
+  );
+
+  const existingItemLabels = useMemo(() => {
+    const src = mode === "existing" ? (selectedGroup?.items ?? []) : [];
+    return Array.from(
+      new Set(
+        src
+          .map((i) =>
+            String(i.label || "")
+              .toUpperCase()
+              .trim(),
+          )
+          .filter(Boolean),
+      ),
+    );
+  }, [selectedGroup, mode]);
+
+  const filteredItems = useMemo(
+    () =>
+      existingItemLabels.filter((l) =>
+        l.toLowerCase().includes(itemSearch.toLowerCase()),
+      ),
+    [existingItemLabels, itemSearch],
+  );
+
+  const toggleItem = (label: string) => {
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedItems(new Set(existingItemLabels));
+  const clearAll = () => setSelectedItems(new Set());
+
+  const addExtraItem = () => {
+    const label = extraItemInput.trim().toUpperCase();
+    if (!label) return;
+    if (extraItems.includes(label) || existingItemLabels.includes(label)) {
+      toast.error("Item already exists");
+      return;
+    }
+    setExtraItems((p) => [...p, label]);
+    setExtraItemInput("");
+  };
+
+  const removeExtraItem = (label: string) =>
+    setExtraItems((p) => p.filter((l) => l !== label));
+
+  const canConfirm = (() => {
+    if (mode === "existing") {
+      if (!selectedGroupId) return false;
+      return selectedItems.size > 0 || extraItems.length > 0;
+    }
+    if (!newGroupName.trim()) return false;
+    return selectedItems.size > 0 || extraItems.length > 0;
+  })();
+
+  const totalSelected = selectedItems.size + extraItems.length;
+
+  const handleConfirm = async () => {
+    if (!canConfirm) return;
+    setIsSaving(true);
+    try {
+      await onConfirm({
+        mode,
+        existingGroupId: mode === "existing" ? selectedGroupId : undefined,
+        newGroupName:
+          mode === "new" ? newGroupName.trim().toUpperCase() : undefined,
+        selectedItemLabels: Array.from(selectedItems),
+        extraNewItemLabels: extraItems,
+      });
+      onOpenChange(false);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-190 h-[88vh] flex flex-col p-0 overflow-hidden">
+        {/* Header */}
+        <DialogHeader className="px-5 py-4 border-b shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+              <Layers className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <DialogTitle className="text-sm font-semibold">
+                Add Spec Group
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                Link an existing group or create a new one — changes sync to the
+                product family.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* Mode toggle */}
+        <div className="px-5 pt-4 shrink-0">
+          <div className="flex gap-1 p-1 bg-muted rounded-lg">
+            <button
+              type="button"
+              onClick={() => {
+                setMode("existing");
+                setSelectedItems(new Set());
+              }}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all",
+                mode === "existing"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Search className="h-3.5 w-3.5" />
+              Use Existing Group
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("new");
+                setSelectedGroupId("");
+                setSelectedItems(new Set());
+              }}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all",
+                mode === "new"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              Create New Group
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-5 py-4 space-y-5">
+            {/* ── EXISTING MODE ── */}
+            {/* ── EXISTING MODE ── */}
+            {mode === "existing" && (
+              <div className="flex gap-4 min-h-0">
+                {/* Left: group list */}
+                <div className="flex-1 min-w-0 space-y-2">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Select Spec Group
+                  </Label>
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="px-3 py-2 border-b bg-muted/30">
+                      <div className="flex items-center gap-2">
+                        <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <input
+                          className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                          placeholder="Search spec groups…"
+                          value={groupSearch}
+                          onChange={(e) => setGroupSearch(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      {filteredGroups.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          {availableGroups.length === 0
+                            ? "All spec groups are already linked."
+                            : "No groups match your search."}
+                        </p>
+                      ) : (
+                        filteredGroups.map((g) => (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedGroupId(g.id);
+                              setSelectedItems(new Set());
+                              setItemSearch("");
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-accent/50 transition-colors border-b last:border-b-0",
+                              selectedGroupId === g.id && "bg-primary/5",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-4 w-4 border rounded-full flex items-center justify-center shrink-0",
+                                selectedGroupId === g.id
+                                  ? "bg-primary border-primary"
+                                  : "border-muted-foreground/30",
+                              )}
+                            >
+                              {selectedGroupId === g.id && (
+                                <span className="h-2 w-2 rounded-full bg-white" />
+                              )}
+                            </span>
+                            <div className="min-w-0">
+                              <p
+                                className={cn(
+                                  "text-xs font-semibold uppercase truncate",
+                                  selectedGroupId === g.id
+                                    ? "text-primary"
+                                    : "text-foreground",
+                                )}
+                              >
+                                {g.name}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {g.items.length} item
+                                {g.items.length !== 1 ? "s" : ""}
+                              </p>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: items picker */}
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Select Items
+                    </Label>
+                    {selectedGroupId && (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={selectAll}
+                          className="text-[10px] font-semibold text-primary hover:underline"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-muted-foreground text-[10px]">
+                          ·
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearAll}
+                          className="text-[10px] font-semibold text-muted-foreground hover:text-destructive"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="border rounded-lg overflow-hidden">
+                    {!selectedGroupId ? (
+                      <div className="max-h-64 flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground/50">
+                        <Layers className="h-6 w-6" />
+                        <p className="text-xs font-medium">Select a group</p>
+                      </div>
+                    ) : (
+                      <>
+                        {existingItemLabels.length > 0 && (
+                          <div className="px-3 py-2 border-b bg-muted/30">
+                            <div className="flex items-center gap-2">
+                              <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <input
+                                className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                                placeholder="Filter items…"
+                                value={itemSearch}
+                                onChange={(e) => setItemSearch(e.target.value)}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <div className="max-h-64 overflow-y-auto">
+                          {existingItemLabels.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-6">
+                              No items yet. Add below.
+                            </p>
+                          ) : filteredItems.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-6">
+                              No items match your search.
+                            </p>
+                          ) : (
+                            filteredItems.map((label) => {
+                              const checked = selectedItems.has(label);
+                              return (
+                                <button
+                                  key={label}
+                                  type="button"
+                                  onClick={() => toggleItem(label)}
+                                  className={cn(
+                                    "w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-accent/50 transition-colors border-b last:border-b-0",
+                                    checked && "bg-primary/5",
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      "h-4 w-4 border rounded flex items-center justify-center shrink-0",
+                                      checked
+                                        ? "bg-primary border-primary text-primary-foreground"
+                                        : "border-muted-foreground/30",
+                                    )}
+                                  >
+                                    {checked && <Check className="h-3 w-3" />}
+                                  </span>
+                                  <span className="text-xs font-medium uppercase">
+                                    {label}
+                                  </span>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── NEW MODE ── */}
+            {mode === "new" && (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Group Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={newGroupName}
+                  onChange={(e) =>
+                    setNewGroupName(e.target.value.toUpperCase())
+                  }
+                  placeholder="E.G. ELECTRICAL SPECIFICATIONS"
+                  className="h-10 text-xs uppercase font-semibold"
+                />
+              </div>
+            )}
+
+            {/* ── ADD NEW ITEMS (shared) ── */}
+            {(mode === "new" || selectedGroupId) && (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {mode === "existing"
+                    ? "Add New Items to This Group"
+                    : "Spec Items"}{" "}
+                  <span className="text-destructive">*</span>
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={extraItemInput}
+                    onChange={(e) =>
+                      setExtraItemInput(e.target.value.toUpperCase())
+                    }
+                    placeholder="E.G. WATTAGE, COLOR TEMP…"
+                    className="h-9 text-xs uppercase flex-1"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addExtraItem();
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-9 px-3 shrink-0 border-dashed"
+                    onClick={addExtraItem}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    Add
+                  </Button>
+                </div>
+                {extraItems.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {extraItems.map((label) => (
+                      <span
+                        key={label}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold uppercase"
+                      >
+                        {label}
+                        <button
+                          type="button"
+                          onClick={() => removeExtraItem(label)}
+                          className="hover:text-destructive transition-colors"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── SUMMARY ── */}
+            {totalSelected > 0 && (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 space-y-1.5">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-primary">
+                  {totalSelected} item{totalSelected !== 1 ? "s" : ""} will be
+                  added
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Array.from(selectedItems).map((label) => (
+                    <Badge
+                      key={label}
+                      variant="outline"
+                      className="text-[9px] font-bold uppercase rounded-full border-primary/30 text-primary bg-primary/10 px-2 h-4"
+                    >
+                      {label}
+                    </Badge>
+                  ))}
+                  {extraItems.map((label) => (
+                    <Badge
+                      key={`extra-${label}`}
+                      variant="outline"
+                      className="text-[9px] font-bold uppercase rounded-full border-emerald-300 text-emerald-700 bg-emerald-50 px-2 h-4"
+                    >
+                      {label} <span className="opacity-60 ml-0.5">new</span>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t shrink-0 flex items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 text-xs"
+            onClick={() => onOpenChange(false)}
+            disabled={isSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 text-xs font-semibold gap-2 min-w-32"
+            onClick={handleConfirm}
+            disabled={!canConfirm || isSaving}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                Add Spec Group
+              </>
+            )}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MasterItem {
@@ -255,7 +787,6 @@ interface PendingNewSpec {
 }
 
 type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
-
 type ProductClass = "spf" | "standard" | "";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -265,11 +796,7 @@ const PRODUCT_CLASS_OPTIONS: {
   label: string;
   icon: React.ReactNode;
 }[] = [
-  {
-    value: "spf",
-    label: "SPF Items",
-    icon: <Sparkles className="w-4 h-4" />,
-  },
+  { value: "spf", label: "SPF Items", icon: <Sparkles className="w-4 h-4" /> },
   {
     value: "standard",
     label: "Standard Items",
@@ -378,10 +905,7 @@ function QrDropzone({
   onDrop: (files: File[]) => void;
   onRemove: () => void;
 }) {
-  const { getRootProps, getInputProps } = useDropzone({
-    onDrop,
-    maxFiles: 1,
-  });
+  const { getRootProps, getInputProps } = useDropzone({ onDrop, maxFiles: 1 });
   return (
     <div
       {...getRootProps()}
@@ -436,6 +960,10 @@ export default function AddNewProduct({
   const [tdsPreviewOpen, setTdsPreviewOpen] = useState(false);
 
   const [createFamilyOpen, setCreateFamilyOpen] = useState(false);
+
+  // ── ADD SPEC GROUP dialog state ───────────────────────────────────────────
+  const [addSpecGroupOpen, setAddSpecGroupOpen] = useState(false);
+  const [allSpecGroups, setAllSpecGroups] = useState<AllSpecGroup[]>([]);
 
   const [productClass, setProductClass] = useState<ProductClass>(
     editData?.productClass || "",
@@ -583,7 +1111,7 @@ export default function AddNewProduct({
     );
   }, [selectedWebs, seoData.slug]);
 
-  // ── Firestore listeners ───────────────────────────────────────────────────
+  // ── Firestore listeners: master data ──────────────────────────────────────
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -635,6 +1163,22 @@ export default function AddNewProduct({
       unsubBrands();
       unsubApps();
     };
+  }, []);
+
+  // ── Firestore listener: ALL spec groups (for AddSpecGroupDialog) ──────────
+  useEffect(() => {
+    return onSnapshot(
+      query(collection(db, "specs"), orderBy("name")),
+      (snap) => {
+        setAllSpecGroups(
+          snap.docs.map((d) => ({
+            id: d.id,
+            name: d.data().name || "Unnamed",
+            items: d.data().items || [],
+          })),
+        );
+      },
+    );
   }, []);
 
   // ── Split families ────────────────────────────────────────────────────────
@@ -849,7 +1393,7 @@ export default function AddNewProduct({
     return (await res.json()).secure_url as string;
   };
 
-  // ── Add new spec item ─────────────────────────────────────────────────────
+  // ── Add new spec item (inline, within existing group) ─────────────────────
   const addNewSpecItem = useCallback(
     async (specGroupId: string, specGroup: string) => {
       const label = (newSpecInputs[specGroupId] || "").trim().toUpperCase();
@@ -931,6 +1475,151 @@ export default function AddNewProduct({
       }
     },
     [newSpecInputs, availableSpecs, pendingNewSpecs, selectedCatId],
+  );
+
+  // ── Add Spec Group (new dialog action) ───────────────────────────────────
+  /**
+   * Cross-saves to:
+   *   1. `specs/{id}` — creates new doc (new mode) or adds items to existing
+   *   2. `productfamilies/{selectedCatId}.specs` — links the group + items
+   *
+   * The existing `onSnapshot` on the family will automatically re-load
+   * `availableSpecs` so the spec fields appear instantly.
+   */
+  const handleAddSpecGroup = useCallback(
+    async (payload: {
+      mode: "existing" | "new";
+      existingGroupId?: string;
+      newGroupName?: string;
+      selectedItemLabels: string[];
+      extraNewItemLabels: string[];
+    }) => {
+      if (!selectedCatId) {
+        toast.error("Select a product family first");
+        return;
+      }
+
+      const allItemLabels = [
+        ...payload.selectedItemLabels,
+        ...payload.extraNewItemLabels,
+      ]
+        .map((l) => l.toUpperCase().trim())
+        .filter(Boolean);
+
+      if (allItemLabels.length === 0) {
+        toast.error("Add at least one spec item");
+        return;
+      }
+
+      let specGroupId: string;
+      let specGroupName: string;
+
+      try {
+        if (payload.mode === "new") {
+          // ── Create brand-new spec group in `specs` ──────────────────────
+          const newRef = await addDoc(collection(db, "specs"), {
+            name: payload.newGroupName!,
+            items: allItemLabels.map((l) => ({ label: l })),
+            isActive: true,
+            createdAt: serverTimestamp(),
+          });
+          specGroupId = newRef.id;
+          specGroupName = payload.newGroupName!;
+        } else {
+          specGroupId = payload.existingGroupId!;
+          const existing = allSpecGroups.find((g) => g.id === specGroupId);
+          specGroupName = existing?.name ?? specGroupId;
+
+          // ── Merge extraNewItemLabels into existing `specs` doc ──────────
+          if (payload.extraNewItemLabels.length > 0) {
+            const specRef = doc(db, "specs", specGroupId);
+            const specSnap = await getDoc(specRef);
+            if (specSnap.exists()) {
+              const currentItems: any[] = specSnap.data().items || [];
+              const toAdd = payload.extraNewItemLabels
+                .map((l) => l.toUpperCase().trim())
+                .filter(
+                  (l) =>
+                    !currentItems.some(
+                      (i) =>
+                        String(i.label || "")
+                          .toUpperCase()
+                          .trim() === l,
+                    ),
+                )
+                .map((l) => ({ label: l }));
+              if (toAdd.length > 0) {
+                await updateDoc(specRef, {
+                  items: [...currentItems, ...toAdd],
+                });
+              }
+            }
+          }
+        }
+
+        // ── Cross-save to productfamilies ─────────────────────────────────
+        const famRef = doc(db, "productfamilies", selectedCatId);
+        const famSnap = await getDoc(famRef);
+        if (!famSnap.exists()) {
+          toast.error("Product family not found");
+          return;
+        }
+
+        const famData = famSnap.data() as any;
+        const famSpecs: any[] = Array.isArray(famData.specs)
+          ? [...famData.specs]
+          : [];
+        const newSpecItems = allItemLabels.map((label) => ({
+          id: `${specGroupId}:${label}`,
+          name: label,
+        }));
+
+        const existingGroupIdx = famSpecs.findIndex(
+          (g: any) => g.specGroupId === specGroupId,
+        );
+
+        if (existingGroupIdx >= 0) {
+          // Group already linked — merge items
+          const existingSpecItems: any[] =
+            famSpecs[existingGroupIdx].specItems || [];
+          const merged = [...existingSpecItems];
+          for (const item of newSpecItems) {
+            const alreadyThere = merged.some(
+              (i) =>
+                String(i.name || "")
+                  .toUpperCase()
+                  .trim() === item.name,
+            );
+            if (!alreadyThere) merged.push(item);
+          }
+          famSpecs[existingGroupIdx] = {
+            ...famSpecs[existingGroupIdx],
+            specItems: merged,
+          };
+        } else {
+          famSpecs.push({ specGroupId, specItems: newSpecItems });
+        }
+
+        await updateDoc(famRef, {
+          specs: famSpecs,
+          updatedAt: serverTimestamp(),
+        });
+        toast.success(
+          `${payload.mode === "new" ? "Created" : "Linked"} "${specGroupName}" with ${allItemLabels.length} item${allItemLabels.length !== 1 ? "s" : ""}`,
+        );
+      } catch (err) {
+        console.error("[AddNewProduct] handleAddSpecGroup failed:", err);
+        toast.error("Failed to add spec group");
+        throw err; // re-throw so dialog knows to stay open
+      }
+    },
+    [selectedCatId, allSpecGroups],
+  );
+
+  // ── IDs of spec groups already linked to the selected family ─────────────
+  const linkedSpecGroupIds = useMemo(
+    () => Array.from(new Set(availableSpecs.map((s) => s.specGroupId))),
+    [availableSpecs],
   );
 
   // ── Group rename ──────────────────────────────────────────────────────────
@@ -1569,12 +2258,20 @@ export default function AddNewProduct({
         }}
       />
 
-      {/* ── TDS Preview Dialog ── */}
       <TdsPreviewDialog
         open={tdsPreviewOpen}
         onOpenChange={setTdsPreviewOpen}
         tdsUrl={tdsUrl}
         litItemCode={litItemCode || editData?.litItemCode || "PRODUCT"}
+      />
+
+      {/* ── Add Spec Group Dialog ── */}
+      <AddSpecGroupDialog
+        open={addSpecGroupOpen}
+        onOpenChange={setAddSpecGroupOpen}
+        allSpecGroups={allSpecGroups}
+        alreadyLinkedGroupIds={linkedSpecGroupIds}
+        onConfirm={handleAddSpecGroup}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 min-h-screen">
@@ -2080,9 +2777,10 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* Technical Specs */}
+              {/* ── Technical Specs ── */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
+                  {/* Header row */}
                   <div className="flex items-center gap-2 mb-4">
                     <Zap className="h-4 w-4 text-primary" />
                     <Label className="text-sm font-medium">
@@ -2103,6 +2801,18 @@ export default function AddNewProduct({
                             : "All changes synced"}
                       </span>
                     )}
+
+                    {/* ── ADD SPEC GROUP BUTTON ── */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto h-8 text-xs font-semibold gap-1.5 border-dashed border-primary/40 text-primary hover:bg-primary/5 hover:border-primary"
+                      onClick={() => setAddSpecGroupOpen(true)}
+                    >
+                      <FolderPlus className="h-3.5 w-3.5" />
+                      Add Spec Group
+                    </Button>
                   </div>
 
                   {specsLoading ? (
@@ -2114,10 +2824,26 @@ export default function AddNewProduct({
                     </div>
                   ) : availableSpecs.length === 0 &&
                     pendingNewSpecs.length === 0 ? (
-                    <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed">
-                      <p className="text-xs font-medium text-muted-foreground">
-                        No specs attached to this product family
-                      </p>
+                    /* Empty state with a more prominent Add CTA */
+                    <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed space-y-3">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Layers className="h-5 w-5 text-primary/60" />
+                        </div>
+                        <p className="text-xs font-medium text-muted-foreground">
+                          No specs attached to this product family
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs font-semibold gap-1.5 border-dashed border-primary/40 text-primary hover:bg-primary/5"
+                          onClick={() => setAddSpecGroupOpen(true)}
+                        >
+                          <FolderPlus className="h-3.5 w-3.5" />
+                          Add a Spec Group
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-6">
@@ -2287,6 +3013,7 @@ export default function AddNewProduct({
                                   </div>
                                 ))}
 
+                                {/* Inline add spec item */}
                                 <div className="flex gap-2 pt-1">
                                   <Input
                                     placeholder="Add spec item (e.g. COLOR TEMP)…"
@@ -2329,6 +3056,16 @@ export default function AddNewProduct({
                           );
                         },
                       )}
+
+                      {/* Bottom "Add another spec group" link */}
+                      <button
+                        type="button"
+                        onClick={() => setAddSpecGroupOpen(true)}
+                        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-foreground/10 rounded-lg text-xs font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all"
+                      >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                        Add another spec group
+                      </button>
                     </div>
                   )}
                 </div>
