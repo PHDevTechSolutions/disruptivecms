@@ -1230,7 +1230,7 @@ export default function AddNewProduct({
             typeOfPlugUrl: typeOfPlugUrl || undefined,
           });
 
-          const filename = `${itemDescription}_TDS.pdf`;
+          const filename = `${litItemCode}_TDS.pdf`;
           const generatedTdsUrl = await uploadTdsPdf(
             blob,
             filename,
@@ -2298,9 +2298,7 @@ export default function AddNewProduct({
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-foreground truncate">
-                        {itemDescription ||
-                          editData?.itemDescription ||
-                          "Product"}
+                        {litItemCode || editData?.litItemCode}_TDS.pdf
                         _TDS.pdf
                       </p>
                       <p className="text-[10px] text-muted-foreground">

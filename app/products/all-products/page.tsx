@@ -469,7 +469,7 @@ function TdsPreviewDialog({
   if (!product) return null;
 
   const tdsUrl = product.tdsFileUrl;
-  const productName = product.itemDescription || product.name || "Product";
+  const productName = product.litItemCode;
   const filename = `${productName}_TDS.pdf`;
 
   const handleDownload = async () => {
@@ -1640,7 +1640,7 @@ export default function AllProductsPage() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        const filename = `${itemDescription}_TDS.pdf`;
+        const filename = `${product.litItemCode}_TDS.pdf`;
         const tdsUrl = await uploadTdsPdf(
           tdsBlob,
           filename,
