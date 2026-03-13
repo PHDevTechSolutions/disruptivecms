@@ -6,9 +6,11 @@
  * - generateTdsTemplatePdf() → blank template with placeholders (for productFamily saves)
  * - uploadTdsPdf()           → uploads a PDF Blob to Cloudinary raw endpoint
  *
- * Always uses the LIT brand.
- * Header  : /public/templates/lit-header.png
- * Footer  : /public/templates/lit-footer.png
+ * Supports two brands: LIT (default) and ECOSHIFT.
+ * Header  : /public/templates/lit-header.png       (LIT brand)
+ *           /public/templates/ecoshift-header.png  (ECOSHIFT brand)
+ * Footer  : /public/templates/lit-footer.png       (LIT brand)
+ *           /public/templates/ecoshift-footer.png  (ECOSHIFT brand)
  * All text is normalised to ALL CAPS.
  * A4 portrait. Output filename: {itemDescription}_TDS.pdf
  *
@@ -24,6 +26,10 @@
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+
+// ─── Brand type ───────────────────────────────────────────────────────────────
+
+export type TdsBrand = "LIT" | "ECOSHIFT";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -42,6 +48,8 @@ export interface GenerateTdsInput {
   itemDescription: string;
   litItemCode: string;
   technicalSpecs: TdsTechnicalSpec[];
+  /** Brand determines which header/footer images are used. Defaults to "LIT". */
+  brand?: TdsBrand;
   // ── Product image ─────────────────────────────────────────────────────────
   mainImageUrl?: string;
   rawImageUrl?: string;
@@ -67,6 +75,8 @@ export interface TdsTemplateSpecGroup {
 
 export interface GenerateTdsTemplateInput {
   specGroups: TdsTemplateSpecGroup[];
+  /** Brand determines which header/footer images are used. Defaults to "LIT". */
+  brand?: TdsBrand;
 }
 
 // ─── Drawing slot definition ──────────────────────────────────────────────────
@@ -74,6 +84,28 @@ export interface GenerateTdsTemplateInput {
 interface DrawingSlot {
   label: string;
   url: string;
+}
+
+// ─── Brand asset resolver ─────────────────────────────────────────────────────
+
+/**
+ * Returns the header and footer template paths for a given brand.
+ * Paths are relative to /public/templates/.
+ */
+function brandAssets(brand: TdsBrand): { header: string; footer: string } {
+  switch (brand) {
+    case "ECOSHIFT":
+      return {
+        header: "/templates/ecoshift-header.png",
+        footer: "/templates/ecoshift-footer.png",
+      };
+    case "LIT":
+    default:
+      return {
+        header: "/templates/lit-header.png",
+        footer: "/templates/lit-footer.png",
+      };
+  }
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
@@ -272,6 +304,7 @@ async function buildTdsPdf(
   displayName: string,
   litItemCode: string,
   tableRows: unknown[],
+  brand: TdsBrand = "LIT",
   mainImageUrl?: string,
   drawingSlots: DrawingSlot[] = [],
 ): Promise<Blob> {
@@ -285,6 +318,9 @@ async function buildTdsPdf(
   const PW = pdf.internal.pageSize.getWidth();
   const PH = pdf.internal.pageSize.getHeight();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  // Resolve brand-specific asset paths
+  const assets = brandAssets(brand);
 
   const TABLE_W = PW - MARGIN_L - MARGIN_R;
   const COL_LABEL = 210;
@@ -318,8 +354,8 @@ async function buildTdsPdf(
   }
   fontSize = Math.max(fontSize, MIN_FONT_SIZE);
 
-  // Header
-  const headerB64 = await urlToBase64(`${origin}/templates/lit-header.png`);
+  // Header — brand-specific
+  const headerB64 = await urlToBase64(`${origin}${assets.header}`);
   if (headerB64) {
     pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
   }
@@ -500,8 +536,9 @@ async function buildTdsPdf(
     }
   }
 
-  // Footer — rendered last so it always sits on top of any edge-case overflow
-  const footerB64 = await urlToBase64(`${origin}/templates/lit-footer.png`);
+  // Footer — brand-specific, rendered last so it always sits on top of any
+  // edge-case overflow
+  const footerB64 = await urlToBase64(`${origin}${assets.footer}`);
   if (footerB64) {
     const { w: fw, h: fh } = await getImageDimensions(footerB64);
     const ratio = PW / fw;
@@ -540,12 +577,23 @@ function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
 }
 
 /**
+ * Normalise and validate a raw brand string to a TdsBrand.
+ * Returns "LIT" for any unrecognised or empty value.
+ */
+export function normaliseBrand(raw?: string | null): TdsBrand {
+  const upper = (raw ?? "").trim().toUpperCase();
+  if (upper === "ECOSHIFT") return "ECOSHIFT";
+  return "LIT";
+}
+
+/**
  * Generate a filled product TDS PDF.
  */
 export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
+  const brand = normaliseBrand(input.brand);
   const rows: unknown[] = [];
 
-  rows.push(["BRAND :", { content: "LIT", styles: { fontStyle: "bold" } }]);
+  rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
   rows.push(["ITEM CODE :", caps(input.litItemCode)]);
 
   (input.technicalSpecs ?? []).forEach((group) => {
@@ -579,6 +627,7 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
     input.itemDescription,
     input.litItemCode,
     rows,
+    brand,
     effectiveImageUrl,
     buildDrawingSlots(input),
   );
@@ -590,9 +639,10 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
 export async function generateTdsTemplatePdf(
   input: GenerateTdsTemplateInput,
 ): Promise<Blob> {
+  const brand = normaliseBrand(input.brand);
   const rows: unknown[] = [];
 
-  rows.push(["BRAND :", { content: "LIT", styles: { fontStyle: "bold" } }]);
+  rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
   rows.push(["MODEL NO. :", ""]);
 
   (input.specGroups ?? []).forEach((group) => {
@@ -613,7 +663,7 @@ export async function generateTdsTemplatePdf(
     });
   });
 
-  return buildTdsPdf('"PRODUCT NAME"', "", rows, undefined, []);
+  return buildTdsPdf('"PRODUCT NAME"', "", rows, brand, undefined, []);
 }
 
 /**

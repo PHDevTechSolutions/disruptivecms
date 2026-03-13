@@ -340,6 +340,31 @@ const PRODUCT_CLASS_OPTIONS: {
   },
 ];
 
+// ─── TDS Brand options ────────────────────────────────────────────────────────
+
+const TDS_BRAND_OPTIONS: {
+  value: "LIT" | "ECOSHIFT";
+  label: string;
+  description: string;
+  activeColor: string;
+  dot: string;
+}[] = [
+  {
+    value: "LIT",
+    label: "LIT",
+    description: "LIT brand header & footer",
+    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+    dot: "bg-slate-500",
+  },
+  {
+    value: "ECOSHIFT",
+    label: "Ecoshift",
+    description: "Ecoshift brand header & footer",
+    activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
+    dot: "bg-emerald-500",
+  },
+];
+
 // ─── Custom filter ────────────────────────────────────────────────────────────
 
 const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
@@ -377,7 +402,6 @@ function ProductUsageBadge({
 }: {
   value: string[] | string | undefined;
 }) {
-  // Normalise to an array of uppercase strings
   const usages: string[] = Array.isArray(value)
     ? value.map((v) => v.toUpperCase())
     : value
@@ -578,9 +602,18 @@ function BulkGenerateTdsDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   jobs: TdsJob[];
-  onStart: () => void;
+  onStart: (brand: "LIT" | "ECOSHIFT") => void;
   isRunning: boolean;
 }) {
+  const [selectedBrand, setSelectedBrand] = React.useState<
+    "LIT" | "ECOSHIFT" | null
+  >(null);
+
+  // Reset brand selection each time the dialog reopens
+  React.useEffect(() => {
+    if (open) setSelectedBrand(null);
+  }, [open]);
+
   const total = jobs.length;
   const done = jobs.filter((j) => j.status === "done").length;
   const errors = jobs.filter((j) => j.status === "error").length;
@@ -619,6 +652,59 @@ function BulkGenerateTdsDialog({
           </div>
         </DialogHeader>
 
+        {/* ── Brand selector — only visible before generation starts ── */}
+        {!isRunning && !isComplete && (
+          <div className="space-y-2.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Select Brand
+            </p>
+            {TDS_BRAND_OPTIONS.map((opt) => {
+              const isSelected = selectedBrand === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSelectedBrand(opt.value)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150 ${
+                    isSelected
+                      ? `${opt.activeColor} shadow-sm`
+                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isSelected ? opt.dot : "bg-muted-foreground/30"
+                    }`}
+                  />
+                  <span className="flex flex-col flex-1">
+                    <span className="text-sm font-semibold">{opt.label}</span>
+                    <span
+                      className={`text-[11px] ${
+                        isSelected ? "opacity-70" : "text-muted-foreground"
+                      }`}
+                    >
+                      {opt.description}
+                    </span>
+                  </span>
+                  <span
+                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${
+                      isSelected ? "opacity-100" : "opacity-0"
+                    }`}
+                  >
+                    <Check className="w-3 h-3" />
+                  </span>
+                </button>
+              );
+            })}
+            {!selectedBrand && (
+              <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                A brand must be selected before generating TDS PDFs.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── Progress bar — shown while running or after complete ── */}
         {(isRunning || isComplete) && (
           <div className="space-y-1.5">
             <Progress value={progressPct} className="h-2" />
@@ -652,7 +738,13 @@ function BulkGenerateTdsDialog({
                 )}
               </span>
               <span
-                className={`flex-1 truncate text-xs ${job.status === "error" ? "text-destructive" : job.status === "done" ? "text-muted-foreground" : "text-foreground"}`}
+                className={`flex-1 truncate text-xs ${
+                  job.status === "error"
+                    ? "text-destructive"
+                    : job.status === "done"
+                      ? "text-muted-foreground"
+                      : "text-foreground"
+                }`}
               >
                 {job.productName}
               </span>
@@ -668,7 +760,11 @@ function BulkGenerateTdsDialog({
 
         {isComplete && (
           <div
-            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${errors === 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
+            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${
+              errors === 0
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-amber-50 border-amber-200 text-amber-700"
+            }`}
           >
             <p className="font-semibold">
               {errors === 0
@@ -696,8 +792,8 @@ function BulkGenerateTdsDialog({
                 Cancel
               </Button>
               <Button
-                onClick={onStart}
-                disabled={isRunning || total === 0}
+                onClick={() => selectedBrand && onStart(selectedBrand)}
+                disabled={isRunning || total === 0 || !selectedBrand}
                 className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
               >
                 {isRunning ? (
@@ -1578,7 +1674,8 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
-  const handleStartBulkTds = async () => {
+  // ── Updated: accepts brand chosen in the dialog ───────────────────────────
+  const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
     setIsTdsRunning(true);
 
     const productMap = new Map<string, Product>(
@@ -1618,6 +1715,7 @@ export default function AllProductsPage() {
           itemDescription,
           litItemCode: product.litItemCode,
           technicalSpecs,
+          brand, // ← forwarded from the dialog selection
           mainImageUrl:
             product.mainImage ||
             (Array.isArray(product.rawImage)
@@ -1690,6 +1788,7 @@ export default function AllProductsPage() {
         bulk: true,
       },
       metadata: {
+        brand,
         total: tdsJobs.length,
         productIds: tdsJobs.map((j) => j.productId),
       },

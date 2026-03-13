@@ -93,7 +93,7 @@ import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 
 // ─── TDS lib ──────────────────────────────────────────────────────────────────
-import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
+import { generateTdsPdf, uploadTdsPdf, normaliseBrand } from "@/lib/tdsGenerator";
 
 import {
   CreateProductFamilyDialog,
@@ -1702,7 +1702,7 @@ export default function AddNewProduct({
             p.isActive = true;
             p.imageUrl = "";
             p.description = "";
-          }
+          } 
           if (item.type === "category") {
             p.isActive = true;
             p.imageUrl = "";
@@ -1819,8 +1819,7 @@ export default function AddNewProduct({
       const productFamilyTitle = selectedCatId
         ? availableCats.find((c) => c.id === selectedCatId)?.name || ""
         : "";
-      const brandName =
-        availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
+      const brandName = availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
       const resolveApps = (ids: string[]) =>
         ids.map((id) => pendingIdMap[id] || id);
 
@@ -1996,6 +1995,7 @@ export default function AddNewProduct({
             itemDescription,
             litItemCode,
             technicalSpecs,
+            brand: normaliseBrand(brandName),
             mainImageUrl: mainUrl || undefined,
             rawImageUrl: rawUrl || undefined,
             dimensionalDrawingUrl: dimensionalDrawingUrl || undefined,

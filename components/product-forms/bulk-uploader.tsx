@@ -18,7 +18,13 @@ import ExcelJS from "exceljs";
 // ─── TDS lib ──────────────────────────────────────────────────────────────────
 // generateTdsPdf  → builds a filled product TDS PDF from scratch (no template needed)
 // uploadTdsPdf    → uploads the resulting Blob to Cloudinary as a raw PDF
-import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
+// normaliseBrand  → converts a raw brand string to a valid TdsBrand ("LIT" | "ECOSHIFT")
+import {
+  generateTdsPdf,
+  uploadTdsPdf,
+  normaliseBrand,
+  type TdsBrand,
+} from "@/lib/tdsGenerator";
 
 import {
   Dialog,
@@ -54,6 +60,7 @@ import {
   ShoppingBag,
   ImageOff,
   Info,
+  Stamp,
 } from "lucide-react";
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
@@ -76,6 +83,11 @@ interface ParsedProduct {
   productFamily: string;
   productClass: string;
   productUsage: string[];
+  /**
+   * Brand parsed from the optional "BRAND" column in the Excel file.
+   * Defaults to "LIT" when the column is absent or the value is unrecognised.
+   */
+  brand: TdsBrand;
   mainImageUrl: string;
   rawImageUrl: string;
   galleryImageUrls: string[];
@@ -221,6 +233,7 @@ async function parseWorkbook(file: File): Promise<{
   sheetName: string;
   products: ParsedProduct[];
   warnings: string[];
+  hasBrandColumn: boolean;
 }> {
   const buffer = await file.arrayBuffer();
   const wb = new ExcelJS.Workbook();
@@ -255,6 +268,24 @@ async function parseWorkbook(file: File): Promise<{
   const groupRow = allRows[1];
   const dataRows = allRows.slice(2);
 
+  // ── Step 0: detect optional BRAND column ────────────────────────────────────
+  // The "BRAND" column header is case-insensitive and can appear anywhere in
+  // row 1.  It is NOT an image field and NOT a spec field — it sits outside
+  // the identity block as a standalone metadata column.
+  let brandColIndex = -1;
+  headerRow.forEach((h, i) => {
+    if (!h) return;
+    if (
+      h
+        .replace(/[\r\n\t]+/g, " ")
+        .trim()
+        .toUpperCase() === "BRAND"
+    ) {
+      brandColIndex = i;
+    }
+  });
+  const hasBrandColumn = brandColIndex >= 0;
+
   // ── Step 1: scan ALL header columns for image fields by name ────────────────
   // imgColMap  : col index → ParsedProduct image field
   // imgColSet  : set of col indices that are image cols (excluded from specs)
@@ -263,6 +294,8 @@ async function parseWorkbook(file: File): Promise<{
 
   headerRow.forEach((h, i) => {
     if (!h) return;
+    // Skip the brand column — it is neither an image field nor a spec
+    if (i === brandColIndex) return;
     const upper = h
       .replace(/[\r\n\t]+/g, " ")
       .trim()
@@ -281,6 +314,7 @@ async function parseWorkbook(file: File): Promise<{
   const specLabelMap: Record<number, string> = {};
   headerRow.forEach((h, i) => {
     if (i < IDENTITY_COL_COUNT) return; // fixed identity block
+    if (i === brandColIndex) return; // brand metadata column
     if (imgColSet.has(i)) return; // image column — never a spec
     if (!h || !groupMap[i]) return; // no group header → not a spec column
     specLabelMap[i] = h.replace(/[\r\n\t]+/g, " ").trim();
@@ -329,6 +363,13 @@ async function parseWorkbook(file: File): Promise<{
       continue;
     }
 
+    // ── Brand — read from BRAND column if present; default to "LIT" ─────────
+    const rowBrandRaw =
+      hasBrandColumn && brandColIndex >= 0
+        ? (row[brandColIndex]?.trim() ?? "")
+        : "";
+    const brand = normaliseBrand(rowBrandRaw);
+
     // ── Specs ────────────────────────────────────────────────────────────────
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
     for (const [colStr, label] of Object.entries(specLabelMap)) {
@@ -355,6 +396,7 @@ async function parseWorkbook(file: File): Promise<{
       productFamily: g(1).toUpperCase() || "UNCATEGORISED",
       productClass: normaliseProductClass(g(2)),
       productUsage: parseProductUsage(g(0)),
+      brand,
       // Image fields — all resolved by header name, never by hard-coded index
       mainImageUrl: imgVals.mainImageUrl ?? "",
       rawImageUrl: imgVals.rawImageUrl ?? "",
@@ -374,7 +416,7 @@ async function parseWorkbook(file: File): Promise<{
     });
   }
 
-  return { sheetName: ws.name, products, warnings };
+  return { sheetName: ws.name, products, warnings, hasBrandColumn };
 }
 
 // ─── Cloudinary helpers ───────────────────────────────────────────────────────
@@ -843,6 +885,28 @@ async function checkJarisDuplicate(
   return { isDuplicate: false, reason: "" };
 }
 
+// ─── Brand badge helper ───────────────────────────────────────────────────────
+
+function BrandBadge({ brand }: { brand: TdsBrand }) {
+  return brand === "ECOSHIFT" ? (
+    <Badge
+      variant="outline"
+      className="text-[10px] gap-1 border-green-400 text-green-600 dark:border-green-600 dark:text-green-400"
+    >
+      <Stamp className="w-2.5 h-2.5" />
+      ECOSHIFT
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="text-[10px] gap-1 border-blue-400 text-blue-600 dark:border-blue-600 dark:text-blue-400"
+    >
+      <Stamp className="w-2.5 h-2.5" />
+      LIT
+    </Badge>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function TabBtn({
@@ -887,6 +951,8 @@ function FilesPanel({
     productCount: number;
     families: Set<string>;
     warnings: string[];
+    hasBrandColumn: boolean;
+    brandCounts: Record<TdsBrand, number>;
   }[];
 }) {
   return (
@@ -904,6 +970,32 @@ function FilesPanel({
               {file.productCount} products
             </Badge>
           </div>
+
+          {/* Brand column detected notice */}
+          {file.hasBrandColumn ? (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {(Object.entries(file.brandCounts) as [TdsBrand, number][])
+                .filter(([, count]) => count > 0)
+                .map(([brand, count]) => (
+                  <div key={brand} className="flex items-center gap-1">
+                    <BrandBadge brand={brand} />
+                    <span className="text-[10px] text-muted-foreground">
+                      {count}
+                    </span>
+                  </div>
+                ))}
+              <span className="text-[10px] text-muted-foreground self-center ml-1">
+                — from BRAND column
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 mb-2 text-[10px] text-muted-foreground">
+              <Info className="w-2.5 h-2.5 shrink-0" />
+              No BRAND column — TDS will use <BrandBadge brand="LIT" /> by
+              default
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-1 mb-2">
             {Array.from(file.families).map((f) => (
               <Badge
@@ -982,10 +1074,11 @@ function ExcelProductsPanel({
 }) {
   return (
     <div className="h-full flex flex-col rounded-lg border overflow-hidden">
-      <div className="grid grid-cols-[1fr_120px_90px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
+      <div className="grid grid-cols-[1fr_100px_90px_56px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
         <span>Item Description</span>
         <span>Family</span>
         <span>ECO / LIT Code</span>
+        <span>Brand</span>
         <span className="text-center">Img</span>
       </div>
       <div className="flex-1 overflow-y-auto divide-y">
@@ -993,7 +1086,7 @@ function ExcelProductsPanel({
           file.products.map((p, prodIdx) => (
             <div
               key={`${fileIdx}-${prodIdx}`}
-              className="grid grid-cols-[1fr_120px_90px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
+              className="grid grid-cols-[1fr_100px_90px_56px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
             >
               <div className="min-w-0 pr-2">
                 <p className="font-medium truncate">{p.itemDescription}</p>
@@ -1016,6 +1109,9 @@ function ExcelProductsPanel({
                   </p>
                 )}
               </div>
+              <span>
+                <BrandBadge brand={p.brand} />
+              </span>
               <span className="flex justify-center">
                 {p.mainImageUrl ? (
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
@@ -1136,6 +1232,7 @@ export default function BulkUploader({
       sheetName: string;
       products: ParsedProduct[];
       warnings: string[];
+      hasBrandColumn: boolean;
     }[]
   >([]);
   const [shopifyMode, setShopifyMode] = useState<ShopifyMode>("draft");
@@ -1166,9 +1263,22 @@ export default function BulkUploader({
     const parsed: typeof uploadedFiles = [];
     for (const file of files) {
       try {
-        const { sheetName, products, warnings } = await parseWorkbook(file);
-        parsed.push({ name: file.name, sheetName, products, warnings });
-        addLog("info", `  ✅ ${file.name}: ${products.length} products`);
+        const { sheetName, products, warnings, hasBrandColumn } =
+          await parseWorkbook(file);
+        parsed.push({
+          name: file.name,
+          sheetName,
+          products,
+          warnings,
+          hasBrandColumn,
+        });
+        const brandNote = hasBrandColumn
+          ? ` — BRAND column detected`
+          : ` — no BRAND column (defaulting to LIT)`;
+        addLog(
+          "info",
+          `  ✅ ${file.name}: ${products.length} products${brandNote}`,
+        );
         warnings.forEach((w) => addLog("warn", `  ⚠️  ${w}`));
       } catch (err: any) {
         addLog("err", `  ❌ ${file.name}: ${err.message}`);
@@ -1381,7 +1491,7 @@ export default function BulkUploader({
           wiringLayoutImage,
           terminalLayoutImage,
           accessoriesImage,
-          typeOfPlugImage,          // ← NEW
+          typeOfPlugImage,
           ...galleryUploaded
         ] = await uploadManyUrls(
           [
@@ -1397,7 +1507,7 @@ export default function BulkUploader({
             p.wiringLayoutUrl,
             p.terminalLayoutUrl,
             p.accessoriesImageUrl,
-            p.typeOfPlugUrl,         // ← NEW
+            p.typeOfPlugUrl,
             ...p.galleryImageUrls,
           ],
           (m) => addLog("info", m),
@@ -1452,9 +1562,9 @@ export default function BulkUploader({
           terminalLayoutImage: terminalLayoutImage || "",
           accessoriesImage: accessoriesImage || "",
           typeOfPlugImage: typeOfPlugImage || "",
+          brand: p.brand,
           productFamily: p.productFamily,
           productUsage: p.productUsage,
-          brand: "",
           applications: [],
           website: [],
           websites: [],
@@ -1477,17 +1587,20 @@ export default function BulkUploader({
         // ── TDS PDF generation ─────────────────────────────────────────────────
         // technicalSpecs already has N/A filtered out above.
         // tdsGenerator also independently filters N/A as a safety net.
+        // Brand is read from the parsed product (per-row from the BRAND column,
+        // or "LIT" if the column was absent).
         if (technicalSpecs.length > 0) {
           try {
             addLog(
               "info",
-              `  → Generating TDS PDF for "${p.itemDescription}"...`,
+              `  → Generating TDS PDF [${p.brand}] for "${p.itemDescription}"...`,
             );
 
             const tdsBlob = await generateTdsPdf({
               itemDescription: p.itemDescription,
               litItemCode: p.litItemCode,
               technicalSpecs,
+              brand: p.brand,
               mainImageUrl: mainImage || undefined,
               rawImageUrl: rawImageUploaded || undefined,
               dimensionalDrawingUrl: dimensionalDrawingImage || undefined,
@@ -1516,7 +1629,10 @@ export default function BulkUploader({
                 tdsFileUrl,
                 updatedAt: serverTimestamp(),
               });
-              addLog("ok", `  ✅ TDS PDF generated for "${p.itemDescription}"`);
+              addLog(
+                "ok",
+                `  ✅ TDS PDF [${p.brand}] generated for "${p.itemDescription}"`,
+              );
             }
           } catch (tdsErr: any) {
             addLog(
@@ -1545,6 +1661,7 @@ export default function BulkUploader({
             ecoItemCode: p.ecoItemCode || null,
             litItemCode: p.litItemCode || null,
             productFamily: p.productFamily,
+            brand: p.brand,
           },
         });
 
@@ -1685,13 +1802,24 @@ export default function BulkUploader({
     },
     {},
   );
-  const fileSummary = uploadedFiles.map((file) => ({
-    name: file.name,
-    sheetName: file.sheetName,
-    productCount: file.products.length,
-    families: new Set(file.products.map((p) => p.productFamily)),
-    warnings: file.warnings,
-  }));
+
+  // Per-file brand distribution counts for the Files panel
+  const fileSummary = uploadedFiles.map((file) => {
+    const brandCounts: Record<TdsBrand, number> = { LIT: 0, ECOSHIFT: 0 };
+    file.products.forEach((p) => {
+      brandCounts[p.brand] = (brandCounts[p.brand] ?? 0) + 1;
+    });
+    return {
+      name: file.name,
+      sheetName: file.sheetName,
+      productCount: file.products.length,
+      families: new Set(file.products.map((p) => p.productFamily)),
+      warnings: file.warnings,
+      hasBrandColumn: file.hasBrandColumn,
+      brandCounts,
+    };
+  });
+
   const shopifyCategorySummary = shopifyProducts.reduce<Record<string, number>>(
     (acc, p) => {
       const fam = (p.product_type?.trim() || "UNCATEGORISED").toUpperCase();
@@ -1712,6 +1840,17 @@ export default function BulkUploader({
     (s, f) => s + f.warnings.length,
     0,
   );
+
+  // Brand distribution across all parsed Excel products
+  const excelBrandCounts = excelAllProducts.reduce<Record<TdsBrand, number>>(
+    (acc, p) => {
+      acc[p.brand] = (acc[p.brand] ?? 0) + 1;
+      return acc;
+    },
+    { LIT: 0, ECOSHIFT: 0 },
+  );
+  const hasMultipleBrands =
+    excelBrandCounts.LIT > 0 && excelBrandCounts.ECOSHIFT > 0;
 
   const logColor = (type: string) => {
     if (type === "ok") return "text-emerald-400";
@@ -1945,6 +2084,7 @@ export default function BulkUploader({
                           "I — Gallery URLs (comma-sep)",
                           "J–S — Technical Drawing URLs",
                           "T+ — Spec values (grouped by Row 2)",
+                          "BRAND — TDS brand header (optional, LIT or ECOSHIFT)",
                         ].map((c) => (
                           <div key={c} className="flex items-start gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0 mt-1" />
@@ -1967,6 +2107,7 @@ export default function BulkUploader({
                           "N/A spec values excluded from TDS and storage",
                           "Raw image falls back to main image if missing",
                           "Duplicate check: ecoItemCode AND litItemCode",
+                          "BRAND column sets TDS header/footer per row (defaults to LIT)",
                         ].map((c) => (
                           <div key={c} className="flex items-start gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1" />
@@ -1977,7 +2118,8 @@ export default function BulkUploader({
                           <p className="text-[10px] text-blue-700 dark:text-blue-400 flex items-start gap-1">
                             <Info className="w-3 h-3 shrink-0 mt-0.5" />
                             Row 2 defines spec group names (e.g. LAMP DETAILS,
-                            ELECTRICAL SPECIFICATION)
+                            ELECTRICAL SPECIFICATION). The BRAND column can be
+                            placed anywhere in Row 1.
                           </p>
                         </div>
                       </div>
@@ -2182,6 +2324,25 @@ export default function BulkUploader({
                     <EyeOff className="w-2.5 h-2.5" />
                     Saving as Draft
                   </Badge>
+                  {/* Brand summary for Excel imports */}
+                  {importSource === "excel" && (
+                    <>
+                      {hasMultipleBrands ? (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] gap-1 ml-1 border-purple-400 text-purple-600"
+                        >
+                          <Stamp className="w-2.5 h-2.5" />
+                          Mixed brands ({excelBrandCounts.LIT} LIT ·{" "}
+                          {excelBrandCounts.ECOSHIFT} ECOSHIFT)
+                        </Badge>
+                      ) : excelBrandCounts.ECOSHIFT > 0 ? (
+                        <BrandBadge brand="ECOSHIFT" />
+                      ) : (
+                        <BrandBadge brand="LIT" />
+                      )}
+                    </>
+                  )}
                   {totalWarnings > 0 && (
                     <Badge
                       variant="outline"
