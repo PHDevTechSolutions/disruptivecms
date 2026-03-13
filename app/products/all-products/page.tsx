@@ -493,7 +493,7 @@ function TdsPreviewDialog({
   if (!product) return null;
 
   const tdsUrl = product.tdsFileUrl;
-  const productName = product.litItemCode;
+  const productName = product.litItemCode || product.ecoItemCode || product.id;
   const filename = `${productName}_TDS.pdf`;
 
   const handleDownload = async () => {
@@ -1286,6 +1286,9 @@ export default function AllProductsPage() {
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
 
+  // ── NEW: ZIP download state ───────────────────────────────────────────────
+  const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
+
   // ── Sort state ────────────────────────────────────────────────────────────
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
 
@@ -1661,7 +1664,7 @@ export default function AllProductsPage() {
     }
   };
 
-  // ── Bulk TDS ──────────────────────────────────────────────────────────────
+  // ── Bulk TDS generate ─────────────────────────────────────────────────────
   const handleOpenBulkTds = () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
@@ -1715,7 +1718,7 @@ export default function AllProductsPage() {
           itemDescription,
           litItemCode: product.litItemCode,
           technicalSpecs,
-          brand, // ← forwarded from the dialog selection
+          brand,
           mainImageUrl:
             product.mainImage ||
             (Array.isArray(product.rawImage)
@@ -1738,7 +1741,7 @@ export default function AllProductsPage() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        const filename = `${product.litItemCode}_TDS.pdf`;
+        const filename = `${product.litItemCode || product.ecoItemCode || product.id}_TDS.pdf`;
         const tdsUrl = await uploadTdsPdf(
           tdsBlob,
           filename,
@@ -1793,6 +1796,178 @@ export default function AllProductsPage() {
         productIds: tdsJobs.map((j) => j.productId),
       },
     }).catch(console.warn);
+  };
+
+  // ── Bulk Download TDS ZIP ─────────────────────────────────────────────────
+  // ── Bulk Download TDS ZIP ─────────────────────────────────────────────────
+  const handleBulkDownloadTds = async () => {
+    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
+
+    if (withTds.length === 0) {
+      toast.error("None of the selected products have a TDS file.");
+      return;
+    }
+
+    setIsTdsDownloading(true);
+    const noTdsCount = selectedRows.length - withTds.length;
+    const loadingToast = toast.loading(
+      `Preparing ${withTds.length} TDS file${withTds.length !== 1 ? "s" : ""}…`,
+    );
+
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      const litFolder = zip.folder("LIT")!;
+      const ecoshiftFolder = zip.folder("ECOSHIFT")!;
+
+      // ── Brand detection ──────────────────────────────────────────────────
+      const detectFolder = (product: Product) => {
+        const brands: string[] = Array.isArray(product.brands)
+          ? product.brands
+          : product.brand
+            ? [product.brand as string]
+            : [];
+        const brandStr = brands.join(" ").toLowerCase();
+
+        if (brandStr.includes("ecoshift")) return ecoshiftFolder;
+        if (brandStr.includes("lit")) return litFolder;
+
+        // Fallback: which item code is populated
+        if (product.litItemCode && !product.ecoItemCode) return litFolder;
+        if (product.ecoItemCode && !product.litItemCode) return ecoshiftFolder;
+        if (product.litItemCode) return litFolder;
+        if (product.ecoItemCode) return ecoshiftFolder;
+
+        return litFolder;
+      };
+
+      // ── Treats blank or "N/A" as missing ────────────────────────────────
+      const isBlank = (v?: string) =>
+        !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
+
+      // ── Safe, unique filename ────────────────────────────────────────────
+      // Falls back litItemCode → ecoItemCode → id, skipping blank/"N/A" values.
+      // Appends a counter if two products share the same resolved code.
+      const usedFilenames = new Map<string, number>();
+      const safeFilename = (product: Product): string => {
+        const raw =
+          (!isBlank(product.litItemCode) ? product.litItemCode : null) ??
+          (!isBlank(product.ecoItemCode) ? product.ecoItemCode : null) ??
+          product.id ??
+          "UNKNOWN";
+
+        const sanitized = raw.replace(/[/\\:*?"<>|]/g, "-").trim();
+        const base = `${sanitized}_TDS`;
+
+        const count = usedFilenames.get(base) ?? 0;
+        usedFilenames.set(base, count + 1);
+        return count === 0 ? `${base}.pdf` : `${base}_(${count}).pdf`;
+      };
+
+      // ── Fetch with retry (up to 3 attempts, exponential backoff) ────────
+      const fetchWithRetry = async (
+        url: string,
+        retries = 3,
+      ): Promise<Blob> => {
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.blob();
+          } catch (err) {
+            lastError = err;
+            if (attempt < retries) {
+              await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+          }
+        }
+        throw lastError;
+      };
+
+      // ── Batched fetches (8 at a time) with 300ms pause between batches ──
+      const BATCH = 8;
+      const BATCH_DELAY_MS = 300;
+      let succeeded = 0;
+      let failed = 0;
+      const failedNames: string[] = [];
+
+      for (let i = 0; i < withTds.length; i += BATCH) {
+        const chunk = withTds.slice(i, i + BATCH);
+        const fetched = Math.min(i + BATCH, withTds.length);
+
+        toast.loading(
+          `Fetching ${fetched} / ${withTds.length} (${succeeded} saved, ${failed} failed)…`,
+          { id: loadingToast },
+        );
+
+        const results = await Promise.allSettled(
+          chunk.map(async ({ original: product }) => {
+            const blob = await fetchWithRetry(product.tdsFileUrl!);
+            const folder = detectFolder(product);
+            folder.file(safeFilename(product), blob);
+          }),
+        );
+
+        results.forEach((r, idx) => {
+          if (r.status === "fulfilled") {
+            succeeded++;
+          } else {
+            failed++;
+            const p = chunk[idx].original;
+            const label =
+              (!isBlank(p.litItemCode) ? p.litItemCode : null) ??
+              (!isBlank(p.ecoItemCode) ? p.ecoItemCode : null) ??
+              p.id;
+            failedNames.push(label);
+            console.error(
+              `TDS fetch failed for "${label}" (${p.id}):`,
+              (r as PromiseRejectedResult).reason,
+            );
+          }
+        });
+
+        if (i + BATCH < withTds.length) {
+          await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+        }
+      }
+
+      toast.loading("Compressing ZIP…", { id: loadingToast });
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Generated TDS.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (failedNames.length > 0) {
+        console.warn("Failed TDS downloads:", failedNames);
+      }
+
+      toast.success(
+        [
+          `${succeeded} TDS file${succeeded !== 1 ? "s" : ""} downloaded`,
+          failed > 0 ? `${failed} failed (see console)` : null,
+          noTdsCount > 0 ? `${noTdsCount} skipped (no TDS)` : null,
+          "→ Organised into LIT / ECOSHIFT folders",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        { id: loadingToast },
+      );
+    } catch (err) {
+      console.error("TDS ZIP download failed:", err);
+      toast.error("Failed to create TDS ZIP. Check console for details.", {
+        id: loadingToast,
+      });
+    } finally {
+      setIsTdsDownloading(false);
+    }
   };
 
   const handleEdit = (product: Product) => {
@@ -2400,6 +2575,21 @@ export default function AllProductsPage() {
             >
               <FilePlus2 className="h-4 w-4" />
               Generate TDS
+            </Button>
+            {/* ── NEW: Download TDS ZIP ── */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50"
+              disabled={isTdsDownloading}
+              onClick={handleBulkDownloadTds}
+            >
+              {isTdsDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {isTdsDownloading ? "Zipping…" : "Download TDS ZIP"}
             </Button>
             <Button
               variant="destructive"
