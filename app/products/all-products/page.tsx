@@ -207,13 +207,13 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
   );
 
   const isBlankCode = (v?: string) =>
-  !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
+    !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
 
-const itemCode =
-  (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
-  (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
-  (!isBlankCode(product.itemCode) ? product.itemCode : null) ??
-  "";
+  const itemCode =
+    (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
+    (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
+    (!isBlankCode(product.itemCode) ? product.itemCode : null) ??
+    "";
   const name = product.itemDescription || product.name || "";
   const brand = Array.isArray(product.brands)
     ? (product.brands[0] ?? "")
@@ -499,7 +499,12 @@ function TdsPreviewDialog({
   if (!product) return null;
 
   const tdsUrl = product.tdsFileUrl;
-  const productName = product.litItemCode || product.ecoItemCode || product.id;
+  const isBlankCode = (v?: string) =>
+    !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
+  const productName =
+    (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
+    (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
+    product.id;
   const filename = `${productName}_TDS.pdf`;
 
   const handleDownload = async () => {
