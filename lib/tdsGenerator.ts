@@ -46,7 +46,10 @@ export interface TdsTechnicalSpec {
 /** Input for a filled product TDS */
 export interface GenerateTdsInput {
   itemDescription: string;
-  litItemCode: string;
+  /** Primary item code. If blank or "N/A", ecoItemCode is used instead. */
+  litItemCode?: string;
+  /** Fallback item code used when litItemCode is blank or "N/A". */
+  ecoItemCode?: string;
   technicalSpecs: TdsTechnicalSpec[];
   /** Brand determines which header/footer images are used. Defaults to "LIT". */
   brand?: TdsBrand;
@@ -141,6 +144,14 @@ function caps(s?: string | null): string {
 function isExcludedSpecValue(value?: string | null): boolean {
   const trimmed = (value ?? "").trim();
   return !trimmed || trimmed.toUpperCase() === "N/A";
+}
+
+/**
+ * Returns true if a code field should be treated as missing.
+ * Catches empty strings, whitespace-only, and any casing of "N/A".
+ */
+function isBlankCode(v?: string | null): boolean {
+  return !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
 }
 
 async function urlToBase64(url: string): Promise<string | null> {
@@ -302,7 +313,7 @@ function probeTableHeight(
 
 async function buildTdsPdf(
   displayName: string,
-  litItemCode: string,
+  resolvedItemCode: string,
   tableRows: unknown[],
   brand: TdsBrand = "LIT",
   mainImageUrl?: string,
@@ -588,13 +599,25 @@ export function normaliseBrand(raw?: string | null): TdsBrand {
 
 /**
  * Generate a filled product TDS PDF.
+ *
+ * Item code resolution order (skips blank / "N/A" values):
+ *   1. litItemCode
+ *   2. ecoItemCode
+ *   3. empty string (graceful fallback)
  */
 export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
   const brand = normaliseBrand(input.brand);
+
+  // ── Resolve the best available item code ─────────────────────────────────
+  const resolvedItemCode =
+    (!isBlankCode(input.litItemCode) ? input.litItemCode : null) ??
+    (!isBlankCode(input.ecoItemCode) ? input.ecoItemCode : null) ??
+    "";
+
   const rows: unknown[] = [];
 
   rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
-  rows.push(["ITEM CODE :", caps(input.litItemCode)]);
+  rows.push(["ITEM CODE :", caps(resolvedItemCode)]);
 
   (input.technicalSpecs ?? []).forEach((group) => {
     const validSpecs = (group.specs ?? []).filter(
@@ -625,7 +648,7 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
 
   return buildTdsPdf(
     input.itemDescription,
-    input.litItemCode,
+    resolvedItemCode,
     rows,
     brand,
     effectiveImageUrl,

@@ -206,8 +206,14 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     new Set([...existingWebsites, ...newWebsites]),
   );
 
-  const itemCode =
-    product.litItemCode || product.itemCode || product.ecoItemCode || "";
+  const isBlankCode = (v?: string) =>
+  !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
+
+const itemCode =
+  (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
+  (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
+  (!isBlankCode(product.itemCode) ? product.itemCode : null) ??
+  "";
   const name = product.itemDescription || product.name || "";
   const brand = Array.isArray(product.brands)
     ? (product.brands[0] ?? "")
@@ -1717,6 +1723,7 @@ export default function AllProductsPage() {
         const tdsBlob = await generateTdsPdf({
           itemDescription,
           litItemCode: product.litItemCode,
+          ecoItemCode: product.ecoItemCode,
           technicalSpecs,
           brand,
           mainImageUrl:
@@ -1741,7 +1748,13 @@ export default function AllProductsPage() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        const filename = `${product.litItemCode || product.ecoItemCode || product.id}_TDS.pdf`;
+        const isBlankCode = (v?: string) =>
+          !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
+        const resolvedCode =
+          (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
+          (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
+          product.id;
+        const filename = `${resolvedCode}_TDS.pdf`;
         const tdsUrl = await uploadTdsPdf(
           tdsBlob,
           filename,
