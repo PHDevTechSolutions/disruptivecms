@@ -99,6 +99,7 @@ import {
   CreateProductFamilyDialog,
   type CreatedFamily,
 } from "./CreateProductFamilyDialog";
+import { useProductWorkflow } from "@/lib/useProductWorkflow";
 
 // ─── Download helper ──────────────────────────────────────────────────────────
 async function downloadPdf(url: string, filename: string): Promise<void> {
@@ -1004,6 +1005,8 @@ export default function AddNewProduct({
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
+  const { submitProductUpdate } = useProductWorkflow();
+
 
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
@@ -1616,6 +1619,8 @@ export default function AddNewProduct({
     [selectedCatId, allSpecGroups],
   );
 
+  
+
   // ── IDs of spec groups already linked to the selected family ─────────────
   const linkedSpecGroupIds = useMemo(
     () => Array.from(new Set(availableSpecs.map((s) => s.specGroupId))),
@@ -1867,18 +1872,14 @@ export default function AddNewProduct({
       };
 
       let savedDocId: string = editData?.id ?? "";
-      if (editData?.id) {
-        await updateDoc(doc(db, "products", editData.id), payload);
-        await logAuditEvent({
-          action: "update",
-          entityType: "product",
-          entityId: editData.id,
-          entityName: itemDescription || editData.itemDescription || "",
-          context: {
-            page: "/products/all-products",
-            source: "add-new-product-form",
-            collection: "products",
-          },
+       if (editData?.id) {
+        const result = await submitProductUpdate({
+          productId: editData.id,
+          before: editData,
+          after: payload,
+          productName: itemDescription || editData.itemDescription || editData.id,
+          source: "add-new-product-form",
+          page: "/products/all-products",
         });
       } else {
         const docRef = await addDoc(collection(db, "products"), {
@@ -2044,6 +2045,7 @@ export default function AddNewProduct({
       setIsPublishing(false);
     }
   };
+
 
   // ── Dropzone callbacks ────────────────────────────────────────────────────
   const onDropMain = useCallback((f: File[]) => {

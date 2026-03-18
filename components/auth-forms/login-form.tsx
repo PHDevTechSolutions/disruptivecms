@@ -41,17 +41,20 @@ import { useSearchParams } from "next/navigation";
 const LOGIN_MARKER_KEY = "disruptive_last_login_at";
 
 /**
- * All roles that are permitted to log in to the CMS.
- * Keep in sync with lib/roleAccess.ts → UserRole.
+ * All roles permitted to log into the CMS.
+ * Keep in sync with lib/roleAccess.ts → UserRole union.
  */
 const VALID_ROLES = new Set([
   "superadmin",
   "admin",
   "director",
+  // ── PD roles (added with RBAC implementation) ─────
   "pd_manager",
   "pd_engineer",
-  "pd", // legacy
+  "pd", // legacy alias
   "project_sales",
+  "office_sales",
+  // ── Other staff roles ─────────────────────────────
   "warehouse",
   "staff",
   "inventory",
@@ -73,9 +76,6 @@ export function LoginForm({
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-
-  // No automatic redirects from /auth/login.
-  // Redirect happens only after a successful login submit.
 
   /* =========================
       SHARED CMS AUTH CHECK
@@ -99,22 +99,23 @@ export function LoginForm({
       throw new Error("account_disabled");
     }
 
+    // Role gate — covers all existing AND new RBAC roles
     if (!VALID_ROLES.has(role)) {
       throw new Error("unauthorized_role");
     }
 
-    // ── RBAC: resolve scopeAccess ──────────────────────────────────────────
-    // Prefer the value stored in Firestore (set at account creation / edit).
-    // Fall back to computing from role for accounts created before this field.
+    // ── RBAC: resolve scopeAccess ─────────────────────────────────────────
+    // Prefer the value stored in Firestore (written at account creation/edit).
+    // Fall back to deriving from role for older accounts that lack this field.
     const scopeAccess: string[] =
       Array.isArray(userData.scopeAccess) && userData.scopeAccess.length > 0
         ? userData.scopeAccess
         : getScopeAccessForRole(role);
 
-    // Derive legacy accessLevel (with RBAC-aware logic)
+    // Resolve legacy accessLevel with RBAC-aware helper
     const accessLevel = userData.accessLevel || getAccessLevelForRole(role);
 
-    // Create session via API (scopeAccess is now forwarded)
+    // ── Build session payload ─────────────────────────────────────────────
     const sessionData = {
       uid: user.uid,
       name: userData.fullName || userData.name || "Internal Staff",
@@ -143,7 +144,6 @@ export function LoginForm({
       id: loginToast,
     });
 
-    // Role-based routing using centralized configuration
     const redirectPath = getPrimaryRouteForRole(role);
     router.replace(redirectPath);
   };
@@ -153,7 +153,6 @@ export function LoginForm({
      ========================= */
   const handleAuthError = async (error: any, loginToast: string | number) => {
     await signOut(auth);
-    // Best-effort: clear any server session cookie (HTTP-only) via API
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {
@@ -169,7 +168,7 @@ export function LoginForm({
     const messages: Record<string, string> = {
       user_not_registered:
         "This account is not registered. Please sign up first.",
-      unauthorized_role: "Access denied: Invalid role.",
+      unauthorized_role: "Access denied: Invalid or unrecognised role.",
       account_disabled: "Account is disabled.",
       "auth/invalid-credential": "Invalid email or password.",
     };
@@ -178,9 +177,7 @@ export function LoginForm({
       messages[error.message] ||
         messages[error.code] ||
         "Authentication failed.",
-      {
-        id: loginToast,
-      },
+      { id: loginToast },
     );
   };
 

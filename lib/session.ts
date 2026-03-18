@@ -8,7 +8,7 @@ export interface SessionUser {
   role: string;
   accessLevel: string;
   /** RBAC scope list stored at login time — e.g. ["read:products","write:products"] */
-  scopeAccess: string[];
+  scopeAccess?: string[]; // optional — back-filled in getSession() for pre-RBAC cookies
 }
 
 export const SESSION_COOKIE_NAME = "admin_session_token";

@@ -136,8 +136,29 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
     }
     case "delete": {
       if (!resourceId) throw new Error("resourceId required for delete");
-      const targetRef = doc(db, resource, resourceId);
-      await deleteDoc(targetRef);
+
+      // Products use soft-delete: move to recycle_bin, then remove from products.
+      // Payload must carry productSnapshot + optional deletedBy / originPage.
+      if (resource === "products") {
+        const snap = (payload as any).productSnapshot;
+        if (snap) {
+          const { writeBatch: makeBatch } = await import("firebase/firestore");
+          const batch = makeBatch(db);
+          batch.set(doc(db, "recycle_bin", resourceId), {
+            ...snap,
+            originalCollection: "products",
+            originPage: (payload as any).originPage ?? "/products",
+            deletedAt: serverTimestamp(),
+            deletedBy: (payload as any).deletedBy ?? null,
+          });
+          batch.delete(doc(db, "products", resourceId));
+          await batch.commit();
+          break;
+        }
+      }
+
+      // Generic hard-delete for all other resources
+      await deleteDoc(doc(db, resource, resourceId));
       break;
     }
     default:
@@ -158,8 +179,12 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
 export async function approveRequest(
   requestId: string,
   reviewer: { uid: string; name?: string },
+  /**
+   * When true, skip executeRequest. Used when the mutation was already
+   * performed directly by a privileged user — request exists for audit only.
+   */
+  skipExecution = false,
 ): Promise<void> {
-  // Load request
   const snap = await getDoc(requestRef(requestId));
   if (!snap.exists()) throw new Error("Request not found");
 
@@ -171,10 +196,11 @@ export async function approveRequest(
     );
   }
 
-  // Execute the actual mutation first
-  await executeRequest(request);
+  // Execute the actual mutation (skip if already done by privileged user)
+  if (!skipExecution) {
+    await executeRequest(request);
+  }
 
-  // Mark as approved
   await updateDoc(requestRef(requestId), {
     status: "approved" as RequestStatus,
     reviewedBy: reviewer.uid,

@@ -34,9 +34,10 @@ import {
   Check,
   Sun,
   Info,
+  Clock,
+  ShieldAlert,
 } from "lucide-react";
 
-// UI Components
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -63,6 +64,11 @@ import {
   CreateProductFamilyDialog,
   type CreatedFamily,
 } from "./CreateProductFamilyDialog";
+
+// ─── Approval workflow ────────────────────────────────────────────────────────
+import { useProductWorkflow } from "@/lib/useProductWorkflow";
+import { useAuth } from "@/lib/useAuth";
+import { hasAccess } from "@/lib/rbac";
 
 // --- TYPES ---
 interface MasterItem {
@@ -132,6 +138,73 @@ const STATUS_OPTIONS = [
   },
 ];
 
+// ─── Approval banner ──────────────────────────────────────────────────────────
+function ApprovalRequiredBanner({ productName }: { productName?: string }) {
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800">
+      <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+      <div>
+        <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+          Changes require approval
+        </p>
+        <p className="text-xs text-amber-600/80 dark:text-amber-500 mt-0.5">
+          As a PD Engineer, your edits to{" "}
+          <span className="font-medium">{productName || "this product"}</span>{" "}
+          will be submitted as a request. A PD Manager or Admin must approve
+          before changes go live.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── QrDropzone ───────────────────────────────────────────────────────────────
+function QrDropzone({
+  file,
+  existingUrl,
+  onDrop,
+  onRemove,
+}: {
+  file: File | null;
+  existingUrl: string;
+  onDrop: (files: File[]) => void;
+  onRemove: () => void;
+}) {
+  const { getRootProps, getInputProps } = useDropzone({ onDrop, maxFiles: 1 });
+  return (
+    <div
+      {...getRootProps()}
+      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
+    >
+      <input {...getInputProps()} />
+      {file || existingUrl ? (
+        <div className="relative w-full h-full group">
+          <img
+            src={file ? URL.createObjectURL(file) : existingUrl}
+            className="w-full h-full object-contain rounded"
+            alt="QR Code"
+          />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg hover:bg-destructive/90 z-10"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center">
+          <Zap className="h-8 w-8 mb-2 text-muted-foreground" />
+          <p className="text-xs font-medium text-muted-foreground">QR Code</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function TaskflowAddNewProduct({
   editData,
   onFinished,
@@ -141,6 +214,14 @@ export default function TaskflowAddNewProduct({
 }) {
   const CLOUDINARY_UPLOAD_PRESET = "taskflow_preset";
   const CLOUDINARY_CLOUD_NAME = "dvmpn8mjh";
+
+  // ── Auth & workflow ────────────────────────────────────────────────────────
+  const { user } = useAuth();
+  const { submitProductUpdate } = useProductWorkflow();
+
+  // Does the current user bypass the approval queue?
+  const canDirectWrite = hasAccess(user, "verify", "products");
+  const isEditMode = !!editData?.id;
 
   const [isPublishing, setIsPublishing] = useState(false);
   const [createFamilyOpen, setCreateFamilyOpen] = useState(false);
@@ -154,13 +235,9 @@ export default function TaskflowAddNewProduct({
   const [itemCode, setItemCode] = useState("");
   const [regPrice, setRegPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
-
-  // STATUS
   const [status, setStatus] = useState<"draft" | "public" | "">(
     editData?.status || "",
   );
-
-  // PRODUCT USAGE
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
   );
@@ -178,7 +255,6 @@ export default function TaskflowAddNewProduct({
   const [selectedCatId, setSelectedCatId] = useState<string>("");
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
-
   const [specValues, setSpecValues] = useState<Record<string, string>>({});
 
   // IMAGES
@@ -202,7 +278,7 @@ export default function TaskflowAddNewProduct({
     });
   }, [availableCats, productUsage]);
 
-  // --- 1. FETCH MASTER DATA ---
+  // --- FETCH MASTER DATA ---
   useEffect(() => {
     const unsubCats = onSnapshot(
       query(collection(db, "productfamilies"), orderBy("title")),
@@ -225,41 +301,36 @@ export default function TaskflowAddNewProduct({
         setAvailableCats([...dbItems, ...pending]);
       },
     );
-
     const unsubBrands = onSnapshot(
       query(
         collection(db, "brand_name"),
         where("websites", "array-contains-any", SELECTED_WEBS),
         orderBy("title"),
       ),
-      (snap) => {
+      (snap) =>
         setAvailableBrands(
           snap.docs.map((d) => ({
             id: d.id,
             name: d.data().title || d.data().name || "Unnamed",
             websites: d.data().websites || [],
           })),
-        );
-      },
+        ),
     );
-
     const unsubApps = onSnapshot(
       query(
         collection(db, "applications"),
         where("websites", "array-contains-any", SELECTED_WEBS),
         orderBy("title"),
       ),
-      (snap) => {
+      (snap) =>
         setAvailableApps(
           snap.docs.map((d) => ({
             id: d.id,
             name: d.data().title || d.data().name || "Unnamed",
             websites: d.data().websites || [],
           })),
-        );
-      },
+        ),
     );
-
     return () => {
       unsubCats();
       unsubBrands();
@@ -267,39 +338,32 @@ export default function TaskflowAddNewProduct({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- FETCH SPECS BASED ON SELECTED CATEGORY ---
+  // --- FETCH SPECS ---
   useEffect(() => {
     if (!selectedCatId) {
       setAvailableSpecs([]);
       setSpecsLoading(false);
       return;
     }
-
     let cancelled = false;
     let unsubSpecs: (() => void) | null = null;
     setSpecsLoading(true);
-
     (async () => {
       try {
         const catDoc = await getDoc(doc(db, "productfamilies", selectedCatId));
         if (cancelled) return;
-
         const catData = catDoc.exists() ? (catDoc.data() as any) : null;
-
         const specIds = new Set<string>();
         const familySpecs: {
           specGroupId: string;
           specItems?: { id: string; name: string }[];
         }[] = Array.isArray(catData?.specs) ? catData.specs : [];
-
-        if (familySpecs.length > 0) {
+        if (familySpecs.length > 0)
           familySpecs.forEach((g) => {
             if (g.specGroupId) specIds.add(g.specGroupId);
           });
-        } else if (Array.isArray(catData?.specifications)) {
+        else if (Array.isArray(catData?.specifications))
           catData.specifications.forEach((id: string) => specIds.add(id));
-        }
-
         if (specIds.size === 0) {
           if (!cancelled) {
             setAvailableSpecs([]);
@@ -307,7 +371,6 @@ export default function TaskflowAddNewProduct({
           }
           return;
         }
-
         const allowedLabelsByGroup = new Map<string, Set<string>>();
         familySpecs.forEach((g) => {
           if (!g.specGroupId || !Array.isArray(g.specItems)) return;
@@ -317,7 +380,6 @@ export default function TaskflowAddNewProduct({
           });
           if (set.size > 0) allowedLabelsByGroup.set(g.specGroupId, set);
         });
-
         unsubSpecs = onSnapshot(collection(db, "specs"), (specsSnap) => {
           const items: SpecItem[] = [];
           specsSnap.docs
@@ -353,7 +415,6 @@ export default function TaskflowAddNewProduct({
         }
       }
     })();
-
     return () => {
       cancelled = true;
       unsubSpecs?.();
@@ -361,10 +422,9 @@ export default function TaskflowAddNewProduct({
     };
   }, [selectedCatId]);
 
-  // --- 2. LOAD EDIT DATA ---
+  // --- LOAD EDIT DATA ---
   useEffect(() => {
     if (!editData) return;
-
     setProductName(editData.name || "");
     setShortDesc(editData.shortDescription || "");
     setItemCode(editData.itemCode || "");
@@ -382,7 +442,6 @@ export default function TaskflowAddNewProduct({
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
-
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
@@ -399,7 +458,6 @@ export default function TaskflowAddNewProduct({
     setSpecValues(values);
   }, [editData, availableSpecs]);
 
-  // --- 3. LOAD PRODUCT FAMILY AFTER CATEGORIES ARE FETCHED ---
   useEffect(() => {
     if (editData && availableCats.length > 0 && !selectedCatId) {
       const match = editData.productFamily
@@ -411,7 +469,7 @@ export default function TaskflowAddNewProduct({
     }
   }, [editData, availableCats]);
 
-  // --- 4. HANDLERS ---
+  // --- HANDLERS ---
   const uploadToCloudinary = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -420,8 +478,7 @@ export default function TaskflowAddNewProduct({
       `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
       { method: "POST", body: formData },
     );
-    const data = await res.json();
-    return data.secure_url;
+    return (await res.json()).secure_url;
   };
 
   const handleAddItem = (
@@ -432,11 +489,9 @@ export default function TaskflowAddNewProduct({
   ) => {
     if (!name.trim()) return;
     const cleanName = name.trim();
-
     let listToCheck: MasterItem[] = [];
     if (type === "brand") listToCheck = availableBrands;
     if (type === "application") listToCheck = availableApps;
-
     const exists = listToCheck.some(
       (item) => item.name.toLowerCase() === cleanName.toLowerCase(),
     );
@@ -444,21 +499,18 @@ export default function TaskflowAddNewProduct({
       toast.error(`"${cleanName}" already exists in ${type}s.`);
       return;
     }
-
     pendingItemsRef.current.push({
       type,
       name: cleanName,
       collection: collectionName,
       field: dbField,
     });
-
     const newItem: MasterItem = {
       id: `temp-${cleanName}`,
       name: cleanName,
       websites: SELECTED_WEBS,
       isTemp: true,
     };
-
     if (type === "brand") {
       setAvailableBrands((prev) => [...prev, newItem]);
       setSelectedBrands((prev) => [...prev, `temp-${cleanName}`]);
@@ -472,23 +524,26 @@ export default function TaskflowAddNewProduct({
     if (!productName) return toast.error("Please enter a product name!");
     if (!status)
       return toast.error("Please select a product status (Draft or Public).");
-
     setIsPublishing(true);
-    const publishToast = toast.loading("Validating...");
+    const publishToast = toast.loading(
+      isEditMode && !canDirectWrite
+        ? "Submitting update request…"
+        : "Validating...",
+    );
 
     try {
+      // Duplicate check (only for creates or name changes)
       const nameChanged = !editData || editData.name !== productName;
       if (nameChanged) {
-        const dupQuery = query(
-          collection(db, "products"),
-          where("name", "==", productName),
+        const dupSnap = await getDocs(
+          query(collection(db, "products"), where("name", "==", productName)),
         );
-        const dupSnap = await getDocs(dupQuery);
         const isDuplicate = dupSnap.docs.some((docSnap) => {
           if (docSnap.id === editData?.id) return false;
           const data = docSnap.data();
-          const productWebsites = data.websites || data.website || [];
-          return productWebsites.some((w: string) => SELECTED_WEBS.includes(w));
+          return (data.websites || data.website || []).some((w: string) =>
+            SELECTED_WEBS.includes(w),
+          );
         });
         if (isDuplicate) {
           toast.dismiss(publishToast);
@@ -498,33 +553,35 @@ export default function TaskflowAddNewProduct({
         }
       }
 
+      // Save pending new tags
       const pendingIdMap: Record<string, string> = {};
       if (pendingItemsRef.current.length > 0) {
         toast.loading("Saving new tags...", { id: publishToast });
         for (const item of pendingItemsRef.current) {
-          const payload: any = {
+          const p: any = {
             websites: SELECTED_WEBS,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
-          payload[item.field] = item.name;
+          p[item.field] = item.name;
           if (item.type === "application") {
-            payload.isActive = true;
-            payload.imageUrl = "";
-            payload.description = "";
+            p.isActive = true;
+            p.imageUrl = "";
+            p.description = "";
           }
           if (item.type === "category") {
-            payload.isActive = true;
-            payload.imageUrl = "";
-            payload.description = "";
-            payload.specifications = [];
+            p.isActive = true;
+            p.imageUrl = "";
+            p.description = "";
+            p.specifications = [];
           }
-          const docRef = await addDoc(collection(db, item.collection), payload);
+          const docRef = await addDoc(collection(db, item.collection), p);
           pendingIdMap[`temp-${item.name}`] = docRef.id;
         }
         pendingItemsRef.current = [];
       }
 
+      // Upload images
       toast.loading("Uploading images...", { id: publishToast });
       const mainUrl = mainImage
         ? await uploadToCloudinary(mainImage)
@@ -536,31 +593,31 @@ export default function TaskflowAddNewProduct({
         galleryImages.map(uploadToCloudinary),
       );
 
+      // Build technicalSpecs
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
       Object.entries(specValues).forEach(([key, value]) => {
-        if (value.trim() !== "") {
-          const specItem = availableSpecs.find(
-            (spec) =>
-              `${spec.specGroupId}-${spec.label}` === key ||
-              `${spec.specGroup}-${spec.label}` === key,
-          );
-          if (specItem) {
-            if (!specsGrouped[specItem.specGroup])
-              specsGrouped[specItem.specGroup] = [];
-            specsGrouped[specItem.specGroup].push({
-              name: specItem.label,
-              value,
-            });
-          }
+        if (!value.trim()) return;
+        const specItem = availableSpecs.find(
+          (spec) =>
+            `${spec.specGroupId}-${spec.label}` === key ||
+            `${spec.specGroup}-${spec.label}` === key,
+        );
+        if (specItem) {
+          if (!specsGrouped[specItem.specGroup])
+            specsGrouped[specItem.specGroup] = [];
+          specsGrouped[specItem.specGroup].push({
+            name: specItem.label,
+            value,
+          });
         }
       });
       const technicalSpecs = Object.entries(specsGrouped).map(
         ([specGroup, specs]) => ({ specGroup, specs }),
       );
 
-      const resolveAppIds = (appIds: string[]) =>
-        appIds.map((id) => pendingIdMap[id] || id);
+      const resolveAppIds = (ids: string[]) =>
+        ids.map((id) => pendingIdMap[id] || id);
       const productFamilyTitle = selectedCatId
         ? availableCats.find((c) => c.id === selectedCatId)?.name || ""
         : "";
@@ -568,7 +625,7 @@ export default function TaskflowAddNewProduct({
       const payload = {
         name: productName,
         shortDescription: shortDesc,
-        itemCode: itemCode,
+        itemCode,
         regularPrice: Number(regPrice) || 0,
         salePrice: Number(salePrice) || 0,
         technicalSpecs,
@@ -587,19 +644,31 @@ export default function TaskflowAddNewProduct({
       };
 
       if (editData?.id) {
-        await updateDoc(doc(db, "products", editData.id), payload);
-        await logAuditEvent({
-          action: "update",
-          entityType: "product",
-          entityId: editData.id,
-          entityName: productName || editData.name || "",
-          context: {
-            page: "/products/taskflow-products",
-            source: "taskflow-add-new-product-form",
-            collection: "products",
-          },
+        // ── APPROVAL WORKFLOW: route through submitProductUpdate ──────────
+        const result = await submitProductUpdate({
+          productId: editData.id,
+          before: editData,
+          after: payload,
+          productName: productName || editData.name || editData.id,
+          source: "taskflow-add-new-product-form",
+          page: "/products/taskflow-products",
         });
+
+        toast.success(
+          result.mode === "pending"
+            ? "Update submitted for approval"
+            : "Product Saved Successfully!",
+          {
+            id: publishToast,
+            description:
+              result.mode === "pending"
+                ? "A PD Manager or Admin will review your changes before they go live."
+                : undefined,
+          },
+        );
+        if (onFinished) onFinished();
       } else {
+        // ── CREATE: always direct ─────────────────────────────────────────
         const docRef = await addDoc(collection(db, "products"), {
           ...payload,
           createdAt: serverTimestamp(),
@@ -615,13 +684,12 @@ export default function TaskflowAddNewProduct({
             collection: "products",
           },
         });
+        toast.success("Product Saved Successfully!", { id: publishToast });
+        if (onFinished) onFinished();
       }
-
-      toast.success("Product Saved Successfully!", { id: publishToast });
-      if (onFinished) onFinished();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("Error saving product", { id: publishToast });
+      toast.error(err.message || "Error saving product", { id: publishToast });
     } finally {
       setIsPublishing(false);
     }
@@ -632,7 +700,6 @@ export default function TaskflowAddNewProduct({
   }, []);
   const { getRootProps: getMainRootProps, getInputProps: getMainInputProps } =
     useDropzone({ onDrop: onDropMain, maxFiles: 1 });
-
   const onDropGallery = useCallback((files: File[]) => {
     setGalleryImages((prev) => [...prev, ...files]);
   }, []);
@@ -652,11 +719,17 @@ export default function TaskflowAddNewProduct({
 
   const selectedCatName =
     availableCats.find((c) => c.id === selectedCatId)?.name ?? "";
-
   const toggleUsage = (u: string) =>
     setProductUsage((p) =>
       p.includes(u) ? p.filter((v) => v !== u) : [...p, u],
     );
+
+  // Button label
+  const submitLabel = isEditMode
+    ? canDirectWrite
+      ? "Update Product"
+      : "Submit for Approval"
+    : "Publish Product";
 
   return (
     <>
@@ -684,6 +757,13 @@ export default function TaskflowAddNewProduct({
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-4 min-h-screen">
         <div className="md:col-span-2 space-y-6">
+          {/* ── Approval banner (only shown in edit mode for non-privileged users) ── */}
+          {isEditMode && !canDirectWrite && (
+            <ApprovalRequiredBanner
+              productName={productName || editData?.name}
+            />
+          )}
+
           {/* STATUS CARD */}
           <Card>
             <CardHeader>
@@ -702,11 +782,7 @@ export default function TaskflowAddNewProduct({
                       type="button"
                       onClick={() => setStatus(opt.value)}
                       className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all
-                        ${
-                          active
-                            ? `${opt.activeBg} ${opt.color} border-current font-semibold`
-                            : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"
-                        }`}
+                        ${active ? `${opt.activeBg} ${opt.color} border-current font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
                     >
                       <span
                         className={active ? opt.color : "text-muted-foreground"}
@@ -797,7 +873,7 @@ export default function TaskflowAddNewProduct({
                   />
                 </div>
 
-                {/* Gallery Dropzone */}
+                {/* Gallery */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium text-muted-foreground">
                     Add Gallery Images
@@ -833,7 +909,7 @@ export default function TaskflowAddNewProduct({
                         className="aspect-square relative border rounded-md overflow-hidden shadow-sm group"
                       >
                         <img
-                          src={img || "/placeholder.svg"}
+                          src={img}
                           className="object-cover w-full h-full"
                           alt={`Gallery ${i + 1}`}
                         />
@@ -855,7 +931,7 @@ export default function TaskflowAddNewProduct({
                         className="aspect-square relative border rounded-md overflow-hidden shadow-sm group"
                       >
                         <img
-                          src={URL.createObjectURL(img) || "/placeholder.svg"}
+                          src={URL.createObjectURL(img)}
                           className="object-cover w-full h-full"
                           alt={`New gallery ${i + 1}`}
                         />
@@ -916,7 +992,7 @@ export default function TaskflowAddNewProduct({
                 />
               </div>
 
-              {/* SPECS SECTION */}
+              {/* SPECS */}
               {selectedCatId && (
                 <div className="pt-6 border-t">
                   <div className="flex items-center gap-2 mb-4">
@@ -925,7 +1001,6 @@ export default function TaskflowAddNewProduct({
                       Technical Specifications
                     </Label>
                   </div>
-
                   {specsLoading ? (
                     <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
                       <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -996,7 +1071,7 @@ export default function TaskflowAddNewProduct({
 
         {/* SIDEBAR */}
         <div className="space-y-6">
-          {/* USAGE & PRODUCT FAMILY CARD */}
+          {/* USAGE & PRODUCT FAMILY */}
           <Card className="border-primary/20 bg-primary/2">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -1005,7 +1080,6 @@ export default function TaskflowAddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Product Usage pills */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -1044,13 +1118,11 @@ export default function TaskflowAddNewProduct({
                 </div>
               </div>
 
-              {/* Product Family combobox */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Tag className="h-3 w-3 text-primary" />
                   <Label className="text-xs font-medium">Product Family</Label>
                 </div>
-
                 <div
                   className={cn(
                     "flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-medium transition-all",
@@ -1063,16 +1135,13 @@ export default function TaskflowAddNewProduct({
                   <span>
                     {productUsage.length > 0 ? (
                       <>
-                        Showing families tagged{" "}
-                        <strong>{productUsage.join(", ")}</strong>. Select usage
-                        above to filter.
+                        <strong>Filtered by:</strong> {productUsage.join(", ")}
                       </>
                     ) : (
-                      "Select a product usage above to filter families by type. This is optional."
+                      "Select usage above to filter families."
                     )}
                   </span>
                 </div>
-
                 <Popover open={catOpen} onOpenChange={setCatOpen}>
                   <PopoverTrigger asChild>
                     <Button
@@ -1155,27 +1224,6 @@ export default function TaskflowAddNewProduct({
                               <span className="flex-1 truncate">
                                 {cat.name}
                               </span>
-                              {cat.productUsage &&
-                                cat.productUsage.length > 0 && (
-                                  <span className="ml-2 flex gap-1 shrink-0">
-                                    {(cat.productUsage as string[]).map((u) => (
-                                      <span
-                                        key={u}
-                                        className={cn(
-                                          "text-[7px] font-bold uppercase px-1 py-0.5 rounded-sm border",
-                                          u === "INDOOR" &&
-                                            "border-blue-200 bg-blue-50 text-blue-600",
-                                          u === "OUTDOOR" &&
-                                            "border-emerald-200 bg-emerald-50 text-emerald-600",
-                                          u === "SOLAR" &&
-                                            "border-amber-200 bg-amber-50 text-amber-600",
-                                        )}
-                                      >
-                                        {u}
-                                      </span>
-                                    ))}
-                                  </span>
-                                )}
                               {cat.isTemp && (
                                 <span className="ml-1 text-[10px] opacity-60">
                                   *new
@@ -1192,7 +1240,7 @@ export default function TaskflowAddNewProduct({
             </CardContent>
           </Card>
 
-          {/* CLASSIFICATION — Brand & Applications (comboboxes) */}
+          {/* CLASSIFICATION */}
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium text-center">
@@ -1200,7 +1248,7 @@ export default function TaskflowAddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-8">
-              {/* Brand (combobox) */}
+              {/* Brand */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <Factory className="h-3 w-3" />
@@ -1241,33 +1289,30 @@ export default function TaskflowAddNewProduct({
                               Clear selection
                             </CommandItem>
                           )}
-                          {availableBrands.map((brand) => {
-                            const active = selectedBrands.includes(brand.id);
-                            return (
-                              <CommandItem
-                                key={brand.id}
-                                value={brand.name}
-                                onSelect={() =>
-                                  setSelectedBrands((prev) =>
-                                    prev.includes(brand.id)
-                                      ? prev.filter((i) => i !== brand.id)
-                                      : [...prev, brand.id],
-                                  )
-                                }
-                                className="text-xs"
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-3 w-3",
-                                    active
-                                      ? "opacity-100 text-primary"
-                                      : "opacity-0",
-                                  )}
-                                />
-                                {brand.name}
-                              </CommandItem>
-                            );
-                          })}
+                          {availableBrands.map((brand) => (
+                            <CommandItem
+                              key={brand.id}
+                              value={brand.name}
+                              onSelect={() =>
+                                setSelectedBrands((prev) =>
+                                  prev.includes(brand.id)
+                                    ? prev.filter((i) => i !== brand.id)
+                                    : [...prev, brand.id],
+                                )
+                              }
+                              className="text-xs"
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  selectedBrands.includes(brand.id)
+                                    ? "opacity-100 text-primary"
+                                    : "opacity-0",
+                                )}
+                              />
+                              {brand.name}
+                            </CommandItem>
+                          ))}
                         </CommandGroup>
                       </CommandList>
                     </Command>
@@ -1275,7 +1320,7 @@ export default function TaskflowAddNewProduct({
                 </Popover>
               </div>
 
-              {/* Applications (combobox) */}
+              {/* Applications */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <LayoutGrid className="h-3 w-3" />
@@ -1316,33 +1361,30 @@ export default function TaskflowAddNewProduct({
                               Clear all
                             </CommandItem>
                           )}
-                          {availableApps.map((app) => {
-                            const active = selectedApps.includes(app.id);
-                            return (
-                              <CommandItem
-                                key={app.id}
-                                value={app.name}
-                                onSelect={() =>
-                                  setSelectedApps((prev) =>
-                                    prev.includes(app.id)
-                                      ? prev.filter((a) => a !== app.id)
-                                      : [...prev, app.id],
-                                  )
-                                }
-                                className="text-xs"
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-3 w-3",
-                                    active
-                                      ? "opacity-100 text-primary"
-                                      : "opacity-0",
-                                  )}
-                                />
-                                {app.name}
-                              </CommandItem>
-                            );
-                          })}
+                          {availableApps.map((app) => (
+                            <CommandItem
+                              key={app.id}
+                              value={app.name}
+                              onSelect={() =>
+                                setSelectedApps((prev) =>
+                                  prev.includes(app.id)
+                                    ? prev.filter((a) => a !== app.id)
+                                    : [...prev, app.id],
+                                )
+                              }
+                              className="text-xs"
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-3 w-3",
+                                  selectedApps.includes(app.id)
+                                    ? "opacity-100 text-primary"
+                                    : "opacity-0",
+                                )}
+                              />
+                              {app.name}
+                            </CommandItem>
+                          ))}
                         </CommandGroup>
                       </CommandList>
                     </Command>
@@ -1382,71 +1424,41 @@ export default function TaskflowAddNewProduct({
             </CardContent>
           </Card>
 
+          {/* Submit button */}
           <Button
             disabled={isPublishing}
             onClick={handlePublish}
-            className="w-full h-14 text-base font-semibold"
+            className={cn(
+              "w-full h-14 text-base font-semibold gap-2",
+              isEditMode &&
+                !canDirectWrite &&
+                "bg-amber-600 hover:bg-amber-700 text-white",
+            )}
           >
             {isPublishing ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Publishing...
+                {isEditMode && !canDirectWrite
+                  ? "Submitting Request…"
+                  : "Publishing..."}
               </>
-            ) : editData ? (
-              "Update Product"
             ) : (
-              "Publish Product"
+              <>
+                {isEditMode && !canDirectWrite && <Clock className="h-4 w-4" />}
+                {submitLabel}
+              </>
             )}
           </Button>
+
+          {/* Hint text below button */}
+          {isEditMode && !canDirectWrite && (
+            <p className="text-[11px] text-center text-muted-foreground leading-relaxed">
+              Your changes will be reviewed by a PD Manager or Admin before they
+              go live.
+            </p>
+          )}
         </div>
       </div>
     </>
-  );
-}
-
-// --- SUBCOMPONENTS ---
-
-function QrDropzone({
-  file,
-  existingUrl,
-  onDrop,
-  onRemove,
-}: {
-  file: File | null;
-  existingUrl: string;
-  onDrop: (files: File[]) => void;
-  onRemove: () => void;
-}) {
-  const { getRootProps, getInputProps } = useDropzone({ onDrop, maxFiles: 1 });
-  return (
-    <div
-      {...getRootProps()}
-      className="relative border-2 border-dashed rounded-lg p-2 text-center cursor-pointer hover:bg-accent/50 transition-all h-40 flex flex-col items-center justify-center"
-    >
-      <input {...getInputProps()} />
-      {file || existingUrl ? (
-        <div className="relative w-full h-full group">
-          <img
-            src={file ? URL.createObjectURL(file) : existingUrl}
-            className="w-full h-full object-contain rounded"
-            alt="QR Code"
-          />
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-lg hover:bg-destructive/90 z-10"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center">
-          <Zap className="h-8 w-8 mb-2 text-muted-foreground" />
-          <p className="text-xs font-medium text-muted-foreground">QR Code</p>
-        </div>
-      )}
-    </div>
   );
 }

@@ -8,7 +8,7 @@ export default async function LoginPage({
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="items-center justify-center">
         <LoginForm />
     </div>
   )

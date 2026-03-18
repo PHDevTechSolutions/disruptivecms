@@ -116,6 +116,12 @@ import {
 } from "firebase/firestore";
 import { toast } from "sonner";
 import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
+import { useProductWorkflow } from "@/lib/useProductWorkflow";
+import {
+  usePendingProducts,
+  PendingRowIndicator,
+} from "@/components/product-forms/pending-product-badge";
+import { NotificationsDropdown } from "@/components/notifications/notifications-dropdown";
 
 import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
@@ -1270,6 +1276,8 @@ export default function AllProductsPage() {
     null,
   );
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const { submitProductDelete } = useProductWorkflow();
+  const pendingMap = usePendingProducts();
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
@@ -1424,96 +1432,62 @@ export default function AllProductsPage() {
 
   // ── Soft-delete helpers ───────────────────────────────────────────────────
   const handleSoftDelete = async (product: Product) => {
-    const batch = writeBatch(db);
-    const { id, ...rest } = product;
-    const actor = getCurrentAdminUser();
-    batch.set(doc(db, "recycle_bin", id), {
-      ...rest,
-      originalCollection: "products",
-      originPage: "/products/all-products",
-      deletedAt: serverTimestamp(),
-      deletedBy: actor
-        ? {
-            uid: actor.uid ?? null,
-            name: actor.name ?? null,
-            email: actor.email ?? null,
-            role: actor.role ?? null,
-          }
-        : null,
-    });
-    batch.delete(doc(db, "products", id));
-    await batch.commit();
-    await logAuditEvent({
-      action: "delete",
-      entityType: "product",
-      entityId: product.id,
-      entityName: product.itemDescription || product.name,
-      context: {
-        page: "/products/all-products",
-        source: "all-products:soft-delete",
-        collection: "products",
-      },
-    });
-    toast.success(
-      `"${product.itemDescription || product.name}" moved to recycle bin.`,
-    );
+    const t = toast.loading("Processing…");
+    try {
+      const result = await submitProductDelete({
+        product,
+        originPage: "/products/all-products",
+        source: "all-products:delete",
+      });
+      toast.success(result.message, {
+        id: t,
+        description:
+          result.mode === "pending"
+            ? "A PD Manager or Admin will review your request."
+            : undefined,
+      });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete product.", { id: t });
+    }
   };
 
   const handleBulkSoftDelete = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     setIsDeleting(true);
-    const loadingToast = toast.loading(
-      `Moving ${selectedRows.length} products to recycle bin...`,
+    const t = toast.loading(
+      `Submitting delete for ${selectedRows.length} products…`,
     );
-    try {
-      const batch = writeBatch(db);
-      const actor = getCurrentAdminUser();
-      const ids: string[] = [];
-      selectedRows.forEach(({ original: product }) => {
-        const { id, ...rest } = product;
-        ids.push(id);
-        batch.set(doc(db, "recycle_bin", id), {
-          ...rest,
-          originalCollection: "products",
-          originPage: "/products/all-products",
-          deletedAt: serverTimestamp(),
-          deletedBy: actor
-            ? {
-                uid: actor.uid ?? null,
-                name: actor.name ?? null,
-                email: actor.email ?? null,
-                role: actor.role ?? null,
-              }
-            : null,
-        });
-        batch.delete(doc(db, "products", id));
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+
+    await Promise.all(
+      selectedRows.map(async ({ original: product }) => {
+        try {
+          const result = await submitProductDelete({
+            product,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-delete",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
+
+    if (errors === 0) {
+      const parts: string[] = [];
+      if (direct > 0) parts.push(`${direct} moved to recycle bin`);
+      if (pending > 0) parts.push(`${pending} pending approval`);
+      toast.success(parts.join(", ") || "Done", { id: t });
+    } else {
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
       });
-      await batch.commit();
-      await logAuditEvent({
-        action: "delete",
-        entityType: "product",
-        entityId: null,
-        entityName: `${selectedRows.length} products`,
-        context: {
-          page: "/products/all-products",
-          source: "all-products:bulk-soft-delete",
-          collection: "products",
-          bulk: true,
-        },
-        metadata: { ids },
-      });
-      toast.success(`${selectedRows.length} products moved to recycle bin.`, {
-        id: loadingToast,
-      });
-      setRowSelection({});
-    } catch (error) {
-      console.error("Bulk soft-delete error:", error);
-      toast.error("Failed to move products to recycle bin.", {
-        id: loadingToast,
-      });
-    } finally {
-      setIsDeleting(false);
     }
+    setRowSelection({});
+    setIsDeleting(false);
   };
 
   // ── Bulk assign to website ────────────────────────────────────────────────
@@ -2225,27 +2199,18 @@ export default function AllProductsPage() {
       ),
       cell: ({ row }) => {
         const product = row.original;
-        const hasTds = !!product.tdsFileUrl;
+        const pendingStatus = pendingMap.get(product.id) ?? null;
+        const isPendingDelete = pendingStatus === "delete";
+        const busy = !!pendingStatus;
+
         return (
           <div
-            className="flex justify-end items-center gap-1"
+            className="flex items-center justify-end gap-1"
             onClick={(e) => e.stopPropagation()}
           >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 transition-colors ${hasTds ? "text-red-500 hover:text-red-600 hover:bg-red-50" : "text-muted-foreground/30 hover:text-muted-foreground/60 hover:bg-muted/50"}`}
-                  onClick={() => setTdsPreviewProduct(product)}
-                >
-                  <FileText className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {hasTds ? "View / Download TDS" : "No TDS available"}
-              </TooltipContent>
-            </Tooltip>
+            {/* Pending indicator dot */}
+            <PendingRowIndicator status={pendingStatus} />
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -2253,14 +2218,18 @@ export default function AllProductsPage() {
                   size="icon"
                   className="h-8 w-8"
                   onClick={() => handleEdit(product)}
+                  disabled={isPendingDelete}
                 >
                   <Pencil className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                Edit product
+                {isPendingDelete
+                  ? "Cannot edit — deletion pending"
+                  : "Edit product"}
               </TooltipContent>
             </Tooltip>
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -2268,12 +2237,13 @@ export default function AllProductsPage() {
                   size="icon"
                   className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                   onClick={() => setDeleteTarget(product)}
+                  disabled={busy}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                Move to recycle bin
+                {busy ? "Action pending — cannot delete" : "Delete product"}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -2677,6 +2647,18 @@ export default function AllProductsPage() {
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm font-medium truncate">
                         {product.itemDescription || product.name}
+                        {pendingMap.get(product.id) === "delete" && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200 ml-1">
+                            <Clock className="w-2.5 h-2.5" />
+                            Pending Deletion
+                          </span>
+                        )}
+                        {pendingMap.get(product.id) === "update" && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 ml-1">
+                            <Clock className="w-2.5 h-2.5" />
+                            Pending Update
+                          </span>
+                        )}
                       </span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground font-mono">
@@ -3412,6 +3394,9 @@ export default function AllProductsPage() {
                     </BreadcrumbItem>
                   </BreadcrumbList>
                 </Breadcrumb>
+              </div>
+              <div className="px-4">
+                <NotificationsDropdown />
               </div>
             </header>
             <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
