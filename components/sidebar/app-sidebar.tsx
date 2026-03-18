@@ -220,7 +220,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 alt="JarIS CMS Logo"
                 width={160}
                 height={40}
-                className="object-contain"
+                className="h-auto w-auto object-contain"
                 priority
               />
             </div>

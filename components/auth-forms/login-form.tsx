@@ -193,7 +193,7 @@ export function LoginForm({
               width={180}
               height={60}
               priority
-              className="object-contain"
+              className="h-auto w-auto object-contain"
             />
           </div>
           <CardTitle className="text-xl">Welcome back</CardTitle>
