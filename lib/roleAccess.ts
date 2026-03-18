@@ -58,9 +58,9 @@ export const roleAccessConfig: RoleAccessConfig = {
   director: ["*"],
 
   // PD roles — both access the products module
-  pd_manager: ["/products/all-products", "/admin/requests", "/admin/deleted-products"],
-  pd_engineer: ["/products/all-products"],
-  pd: ["/products/all-products"], // legacy
+  pd_manager: ["/products/all-products", "/products/requests", "/admin/deleted-products"],
+  pd_engineer: ["/products/all-products", "/products/requests"],
+  pd: ["/products/all-products", "/products/requests"],
 
   project_sales: ["/products/all-products"],
 

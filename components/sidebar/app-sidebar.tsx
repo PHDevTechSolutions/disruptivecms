@@ -39,6 +39,7 @@ const allNavItems = {
       { title: "All Products", url: "/products/all-products" },
       { title: "Taskflow Products", url: "/products/taskflow-products" },
       { title: "Shopify Products", url: "/products/shopify-products" },
+      { title: "Requests", url: "/products/requests" },
       { title: "Applications", url: "/products/applications" },
       { title: "Brands", url: "/products/brands" },
       { title: "Product Families", url: "/products/product-families" },
@@ -98,8 +99,7 @@ const allNavItems = {
     url: "/admin",
     icon: <LockIcon />,
     items: [
-      { title: "Register User",    url: "/admin/register" },
-      { title: "Requests",         url: "/admin/requests" },   // ← NEW
+      { title: "Register User",    url: "/admin/register" },   // ← NEW
       { title: "Audit Logs",       url: "/admin/audit-logs" },
       { title: "Deleted Products", url: "/admin/deleted-products" },
     ],
