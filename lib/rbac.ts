@@ -187,11 +187,20 @@ export function canSeeNotifications(
   user: RBACUser | null | undefined,
 ): boolean {
   if (!user) return false;
-  return (
-    isSuperAdmin(user) ||
-    canVerify(user, "*") ||
-    /* check any verify scope */ (Array.isArray(user.scopeAccess)
-      ? user.scopeAccess.some((s) => s.startsWith("verify:"))
-      : getScopeAccessForRole(user.role).some((s) => s.startsWith("verify:")))
-  );
+ 
+  const scopes: string[] = Array.isArray(user.scopeAccess)
+    ? user.scopeAccess
+    : getScopeAccessForRole(user.role);
+ 
+  // Superadmin bypasses everything
+  if (scopes.includes("superadmin")) return true;
+ 
+  // Verifiers can see (and action) all pending requests
+  if (scopes.some((s) => s.startsWith("verify:"))) return true;
+ 
+  // Writers can see (read-only) their own submitted requests
+  // so they can track what's happening to them.
+  if (scopes.some((s) => s.startsWith("write:"))) return true;
+ 
+  return false;
 }
