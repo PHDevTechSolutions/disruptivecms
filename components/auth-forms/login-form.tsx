@@ -21,7 +21,7 @@ import {
   FieldSeparator,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Loader2, Eye, EyeOff } from "lucide-react"; // Added Eye icons
+import { Loader2, Eye, EyeOff } from "lucide-react";
 
 // Firebase Imports
 import { auth, db } from "@/lib/firebase";
@@ -34,10 +34,33 @@ import {
 } from "firebase/auth";
 import { toast } from "sonner";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";
+import { getScopeAccessForRole, getAccessLevelForRole } from "@/lib/rbac";
 import { useAuth } from "@/lib/useAuth";
 import { useSearchParams } from "next/navigation";
 
 const LOGIN_MARKER_KEY = "disruptive_last_login_at";
+
+/**
+ * All roles that are permitted to log in to the CMS.
+ * Keep in sync with lib/roleAccess.ts → UserRole.
+ */
+const VALID_ROLES = new Set([
+  "superadmin",
+  "admin",
+  "director",
+  "pd_manager",
+  "pd_engineer",
+  "pd", // legacy
+  "project_sales",
+  "warehouse",
+  "staff",
+  "inventory",
+  "hr",
+  "seo",
+  "csr",
+  "ecomm",
+  "marketing",
+]);
 
 export function LoginForm({
   className,
@@ -49,7 +72,7 @@ export function LoginForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); // Visibility state
+  const [showPassword, setShowPassword] = useState(false);
 
   // No automatic redirects from /auth/login.
   // Redirect happens only after a successful login submit.
@@ -76,31 +99,29 @@ export function LoginForm({
       throw new Error("account_disabled");
     }
 
-    const validRoles = [
-      "superadmin",
-      "admin",
-      "warehouse",
-      "staff",
-      "inventory",
-      "hr",
-      "seo",
-      "csr",
-      "ecomm",
-      "pd",
-      "marketing",
-    ];
-    if (!validRoles.includes(role)) {
+    if (!VALID_ROLES.has(role)) {
       throw new Error("unauthorized_role");
     }
 
-    // Create session via API
+    // ── RBAC: resolve scopeAccess ──────────────────────────────────────────
+    // Prefer the value stored in Firestore (set at account creation / edit).
+    // Fall back to computing from role for accounts created before this field.
+    const scopeAccess: string[] =
+      Array.isArray(userData.scopeAccess) && userData.scopeAccess.length > 0
+        ? userData.scopeAccess
+        : getScopeAccessForRole(role);
+
+    // Derive legacy accessLevel (with RBAC-aware logic)
+    const accessLevel = userData.accessLevel || getAccessLevelForRole(role);
+
+    // Create session via API (scopeAccess is now forwarded)
     const sessionData = {
       uid: user.uid,
       name: userData.fullName || userData.name || "Internal Staff",
       email: user.email,
       role,
-      accessLevel:
-        userData.accessLevel || (role === "admin" ? "full" : "staff"),
+      accessLevel,
+      scopeAccess,
     };
 
     const sessionResponse = await fetch("/api/auth/login", {
@@ -116,10 +137,7 @@ export function LoginForm({
     // Also store in localStorage for client-side access
     const loginAt = Date.now();
     localStorage.setItem(LOGIN_MARKER_KEY, String(loginAt));
-    localStorage.setItem(
-      "disruptive_admin_user",
-      JSON.stringify(sessionData),
-    );
+    localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData));
 
     toast.success(`Access Authorized: ${role.toUpperCase()}`, {
       id: loginToast,
@@ -238,16 +256,16 @@ export function LoginForm({
                     className="w-4 h-4 mr-2"
                   >
                     <path
-                      d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"
+                      d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.827 16.08 0 12.48 0 5.868 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"
                       fill="currentColor"
                     />
                   </svg>
                   Login with Google
                 </Button>
               </Field>
-              <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
-                Or continue with
-              </FieldSeparator>
+
+              <FieldSeparator />
+
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input
@@ -257,18 +275,12 @@ export function LoginForm({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  disabled={isLoading}
                 />
               </Field>
+
               <Field>
-                <div className="flex items-center">
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <a
-                    href="#"
-                    className="ml-auto text-sm underline-offset-4 hover:underline"
-                  >
-                    Forgot your password?
-                  </a>
-                </div>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
                 <div className="relative">
                   <Input
                     id="password"
@@ -277,25 +289,27 @@ export function LoginForm({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pr-10"
+                    disabled={isLoading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
-                    aria-label={
-                      showPassword ? "Hide password" : "Show password"
-                    }
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
+                <FieldDescription>
+                  Contact your administrator if you forgot your credentials.
+                </FieldDescription>
               </Field>
+
               <Field>
                 <Button type="submit" className="w-full" disabled={isLoading}>
                   {isLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Authenticating...
+                      Verifying…
                     </>
                   ) : (
                     "Login"
@@ -306,17 +320,6 @@ export function LoginForm({
           </form>
         </CardContent>
       </Card>
-      <FieldDescription className="px-6 text-center">
-        By clicking continue, you agree to our{" "}
-        <a href="#" className="underline underline-offset-4">
-          Terms of Service
-        </a>{" "}
-        and{" "}
-        <a href="#" className="underline underline-offset-4">
-          Privacy Policy
-        </a>
-        .
-      </FieldDescription>
     </div>
   );
 }

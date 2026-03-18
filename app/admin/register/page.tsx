@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useState, useEffect, useMemo } from "react";
-import Image from "next/image";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import {
   ColumnDef,
@@ -114,8 +113,6 @@ import { secondaryAuth } from "@/lib/firebase-secondary";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
-  GoogleAuthProvider,
-  signInWithPopup,
   signOut,
 } from "firebase/auth";
 import {
@@ -128,12 +125,14 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
-import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
+import { logAuditEvent } from "@/lib/logger";
+import { getScopeAccessForRole, getAccessLevelForRole } from "@/lib/rbac";
+import { ScopeAccessSelector } from "@/components/notifications/scope-access-selector";
+import { NotificationsDropdown } from "@/components/notifications/notifications-dropdown";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -144,6 +143,7 @@ export type AdminUser = {
   fullName: string;
   role: string;
   accessLevel: string;
+  scopeAccess?: string[];
   status: "active" | "inactive" | string;
   provider: "password" | "google" | string;
   website?: string;
@@ -304,7 +304,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── CountPill (same as all-products) ────────────────────────────────────────
+// ─── CountPill ────────────────────────────────────────────────────────────────
 
 function CountPill({
   count,
@@ -346,13 +346,21 @@ function EditUserDialog({
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("");
   const [status, setStatus] = useState<"active" | "inactive">("active");
+  const [scopeAccess, setScopeAccess] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Populate fields when dialog opens
   useEffect(() => {
     if (user && open) {
       setFullName(user.fullName || "");
       setRole(user.role || "");
       setStatus((user.status as "active" | "inactive") || "active");
+      // Prefer stored scopeAccess; derive from role as fallback for older accounts
+      setScopeAccess(
+        Array.isArray(user.scopeAccess) && user.scopeAccess.length > 0
+          ? user.scopeAccess
+          : getScopeAccessForRole(user.role || ""),
+      );
     }
   }, [user, open]);
 
@@ -362,7 +370,12 @@ function EditUserDialog({
     try {
       await updateDoc(doc(db, "adminaccount", user.id), {
         fullName,
-        ...(isSuperAdmin && { role }),
+        // Superadmin can change role + recompute scopes/accessLevel
+        ...(isSuperAdmin && {
+          role,
+          scopeAccess,
+          accessLevel: getAccessLevelForRole(role),
+        }),
         status,
         updatedAt: new Date().toISOString(),
       });
@@ -404,6 +417,7 @@ function EditUserDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {/* Full Name */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
               Full Name
@@ -416,6 +430,7 @@ function EditUserDialog({
             />
           </div>
 
+          {/* Role — superadmin only */}
           {isSuperAdmin && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">
@@ -429,7 +444,7 @@ function EditUserDialog({
                   {ROLE_CONFIG.map((r) => (
                     <SelectItem key={r.value} value={r.value}>
                       <span className="flex items-center gap-2">
-                        {r.icon}
+                        <span className={r.color}>{r.icon}</span>
                         {r.label}
                       </span>
                     </SelectItem>
@@ -439,6 +454,17 @@ function EditUserDialog({
             </div>
           )}
 
+          {/* Scope Access — editable by superadmin, read-only for others */}
+          {role && (
+            <ScopeAccessSelector
+              role={role}
+              value={scopeAccess}
+              onChange={setScopeAccess}
+              isSuperAdmin={isSuperAdmin}
+            />
+          )}
+
+          {/* Status */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
               Status
@@ -623,6 +649,8 @@ export default function AllUsersPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<string>("");
+  const [scopeAccess, setScopeAccess] = useState<string[]>([]);
+  const [scopeError, setScopeError] = useState("");
   const [isFormLoading, setIsFormLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -661,6 +689,8 @@ export default function AllUsersPage() {
     setConfirmPassword("");
     setFullName("");
     setRole("");
+    setScopeAccess([]);
+    setScopeError("");
     setShowPassword(false);
     setShowConfirmPassword(false);
   };
@@ -668,6 +698,7 @@ export default function AllUsersPage() {
   // ── Register (email/password) ─────────────────────────────────────────────
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!email || !password || !fullName || !role) {
       return toast.error("Missing Information", {
         description: "Please fill in all fields and select a role.",
@@ -681,6 +712,12 @@ export default function AllUsersPage() {
     if (password.length < 8) {
       return toast.error("Weak Password", {
         description: "Security policy requires at least 8 characters.",
+      });
+    }
+    if (scopeAccess.length === 0) {
+      setScopeError("At least one scope is required.");
+      return toast.error("Missing Scope Access", {
+        description: "Please select at least one scope for this account.",
       });
     }
 
@@ -712,8 +749,8 @@ export default function AllUsersPage() {
         email,
         fullName,
         role,
-        accessLevel:
-          role === "admin" || role === "superadmin" ? "full" : "staff",
+        scopeAccess,
+        accessLevel: getAccessLevelForRole(role),
         status: "active",
         website: "disruptivesolutionsinc",
         provider: "password",
@@ -733,7 +770,7 @@ export default function AllUsersPage() {
           source: "all-users:register",
           collection: "adminaccount",
         },
-        metadata: { role, email },
+        metadata: { role, email, scopeAccess },
       });
 
       toast.success("Account Created!", {
@@ -782,7 +819,7 @@ export default function AllUsersPage() {
       toast.success(`${selectedRows.length} users removed.`, { id: t });
       setRowSelection({});
       setBulkDeleteOpen(false);
-    } catch (err) {
+    } catch {
       toast.error("Bulk delete failed.", { id: t });
     } finally {
       setIsBulkDeleting(false);
@@ -823,7 +860,6 @@ export default function AllUsersPage() {
       }
       case "oldest":
         return d.sort((a, b) => ts(a) - ts(b));
-      case "newest":
       default:
         return d.sort((a, b) => ts(b) - ts(a));
     }
@@ -865,7 +901,6 @@ export default function AllUsersPage() {
           .slice(0, 2)
           .join("")
           .toUpperCase();
-        const roleConf = getRoleConfig(u.role);
         return (
           <div
             className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-xs font-bold border-2 ${
@@ -1051,9 +1086,9 @@ export default function AllUsersPage() {
         <SidebarProvider>
           <AppSidebar />
           <SidebarInset>
-            {/* Header */}
+            {/* ── Header ── */}
             <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-              <div className="flex items-center gap-2 px-4">
+              <div className="flex items-center gap-2 px-4 flex-1">
                 <SidebarTrigger className="-ml-1" />
                 <Separator orientation="vertical" className="mr-2 h-4" />
                 <Breadcrumb>
@@ -1068,10 +1103,14 @@ export default function AllUsersPage() {
                   </BreadcrumbList>
                 </Breadcrumb>
               </div>
+              {/* Global notifications bell — visible to verifiers + superadmin */}
+              <div className="px-4">
+                <NotificationsDropdown />
+              </div>
             </header>
 
             <div className="flex flex-1 flex-col gap-6 p-4 pt-0">
-              {/* Page title */}
+              {/* ── Page title ── */}
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">
                   User Management
@@ -1097,7 +1136,7 @@ export default function AllUsersPage() {
                 </p>
               </div>
 
-              {/* Two-column layout */}
+              {/* ── Two-column layout ── */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                 {/* ═══ FORM COLUMN ═══ */}
                 <div className="lg:col-span-4 sticky top-6 z-10">
@@ -1140,7 +1179,7 @@ export default function AllUsersPage() {
                           />
                         </div>
 
-                        {/* Role */}
+                        {/* Account Role */}
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold uppercase opacity-60">
                             Account Role{" "}
@@ -1170,6 +1209,20 @@ export default function AllUsersPage() {
                             </SelectContent>
                           </Select>
                         </div>
+
+                        {/* Scope Access — shown once a role is selected */}
+                        {role && (
+                          <ScopeAccessSelector
+                            role={role}
+                            value={scopeAccess}
+                            onChange={(scopes) => {
+                              setScopeAccess(scopes);
+                              if (scopes.length > 0) setScopeError("");
+                            }}
+                            isSuperAdmin={isSuperAdmin}
+                            error={scopeError}
+                          />
+                        )}
 
                         {/* Email */}
                         <div className="space-y-1.5">
@@ -1261,7 +1314,7 @@ export default function AllUsersPage() {
                           )}
                         </div>
 
-                        {/* Role preview */}
+                        {/* Role preview card */}
                         {role && (
                           <div className="border border-foreground/10 rounded-none px-3 py-2.5 bg-muted/20 flex items-center gap-2.5">
                             <span
@@ -1274,10 +1327,7 @@ export default function AllUsersPage() {
                                 {getRoleConfig(role)?.label ?? role}
                               </p>
                               <p className="text-[9px] text-muted-foreground uppercase">
-                                Access:{" "}
-                                {role === "admin" || role === "superadmin"
-                                  ? "Full"
-                                  : "Staff"}
+                                Access Level: {getAccessLevelForRole(role)}
                               </p>
                             </div>
                             <RoleBadge role={role} />
@@ -1308,7 +1358,7 @@ export default function AllUsersPage() {
 
                 {/* ═══ TABLE COLUMN ═══ */}
                 <div className="lg:col-span-8 space-y-4">
-                  {/* Bulk actions */}
+                  {/* Bulk actions bar */}
                   {selectedCount > 0 && (
                     <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -1356,7 +1406,7 @@ export default function AllUsersPage() {
                     </div>
                   )}
 
-                  {/* Filters */}
+                  {/* Filters row */}
                   <div className="flex flex-wrap gap-3 items-center">
                     {/* Search */}
                     <div className="relative flex-1 max-w-sm">
@@ -1469,56 +1519,35 @@ export default function AllUsersPage() {
                           </div>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() =>
-                            table
-                              .getColumn("status")
-                              ?.setFilterValue(
-                                activeStatusFilter === "active" ? "" : "active",
-                              )
-                          }
-                          className="flex items-center justify-between"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                            Active
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <CountPill
-                              count={statusCounts.get("active") ?? 0}
-                              variant="green"
-                            />
-                            {activeStatusFilter === "active" && (
-                              <Check className="h-3.5 w-3.5 text-primary" />
-                            )}
-                          </div>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() =>
-                            table
-                              .getColumn("status")
-                              ?.setFilterValue(
-                                activeStatusFilter === "inactive"
-                                  ? ""
-                                  : "inactive",
-                              )
-                          }
-                          className="flex items-center justify-between"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40" />
-                            Inactive
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <CountPill
-                              count={statusCounts.get("inactive") ?? 0}
-                              variant="amber"
-                            />
-                            {activeStatusFilter === "inactive" && (
-                              <Check className="h-3.5 w-3.5 text-primary" />
-                            )}
-                          </div>
-                        </DropdownMenuItem>
+                        {(["active", "inactive"] as const).map((s) => (
+                          <DropdownMenuItem
+                            key={s}
+                            onClick={() =>
+                              table
+                                .getColumn("status")
+                                ?.setFilterValue(
+                                  activeStatusFilter === s ? "" : s,
+                                )
+                            }
+                            className="flex items-center justify-between"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full ${s === "active" ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                              />
+                              {s.charAt(0).toUpperCase() + s.slice(1)}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <CountPill
+                                count={statusCounts.get(s) ?? 0}
+                                variant={s === "active" ? "green" : "amber"}
+                              />
+                              {activeStatusFilter === s && (
+                                <Check className="h-3.5 w-3.5 text-primary" />
+                              )}
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
                       </DropdownMenuContent>
                     </DropdownMenu>
 
@@ -1549,73 +1578,61 @@ export default function AllUsersPage() {
                           )}
                         </DropdownMenuLabel>
 
-                        <DropdownMenuCheckboxItem
-                          checked={sortOption === "alpha-asc"}
-                          onCheckedChange={() =>
-                            setSortOption((s) =>
-                              s === "alpha-asc" ? null : "alpha-asc",
-                            )
-                          }
-                        >
-                          <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-                          Alphabetically A → Z
-                        </DropdownMenuCheckboxItem>
-
-                        <DropdownMenuCheckboxItem
-                          checked={sortOption === "alpha-desc"}
-                          onCheckedChange={() =>
-                            setSortOption((s) =>
-                              s === "alpha-desc" ? null : "alpha-desc",
-                            )
-                          }
-                        >
-                          <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-                          Alphabetically Z → A
-                        </DropdownMenuCheckboxItem>
-
-                        <DropdownMenuCheckboxItem
-                          checked={sortOption === "recent-12h"}
-                          onCheckedChange={() =>
-                            setSortOption((s) =>
-                              s === "recent-12h" ? null : "recent-12h",
-                            )
-                          }
-                        >
-                          <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-                          <span className="flex-1">Recently Added</span>
-                          <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                            12 h
-                          </span>
-                        </DropdownMenuCheckboxItem>
-
-                        <DropdownMenuCheckboxItem
-                          checked={
-                            sortOption === "newest" || sortOption === null
-                          }
-                          onCheckedChange={() =>
-                            setSortOption((s) =>
-                              s === "newest" ? null : "newest",
-                            )
-                          }
-                        >
-                          <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-                          Newest to Oldest
-                        </DropdownMenuCheckboxItem>
-
-                        <DropdownMenuCheckboxItem
-                          checked={sortOption === "oldest"}
-                          onCheckedChange={() =>
-                            setSortOption((s) =>
-                              s === "oldest" ? null : "oldest",
-                            )
-                          }
-                        >
-                          <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-                          Oldest to Newest
-                        </DropdownMenuCheckboxItem>
+                        {(
+                          [
+                            {
+                              key: "alpha-asc",
+                              icon: (
+                                <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                              ),
+                              label: "Alphabetically A → Z",
+                            },
+                            {
+                              key: "alpha-desc",
+                              icon: (
+                                <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                              ),
+                              label: "Alphabetically Z → A",
+                            },
+                            {
+                              key: "recent-12h",
+                              icon: (
+                                <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                              ),
+                              label: "Recently Added (12h)",
+                            },
+                            {
+                              key: "newest",
+                              icon: (
+                                <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                              ),
+                              label: "Newest to Oldest",
+                            },
+                            {
+                              key: "oldest",
+                              icon: (
+                                <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                              ),
+                              label: "Oldest to Newest",
+                            },
+                          ] as const
+                        ).map(({ key, icon, label }) => (
+                          <DropdownMenuCheckboxItem
+                            key={key}
+                            checked={
+                              sortOption === key ||
+                              (key === "newest" && sortOption === null)
+                            }
+                            onCheckedChange={() =>
+                              setSortOption((s) => (s === key ? null : key))
+                            }
+                          >
+                            {icon}
+                            {label}
+                          </DropdownMenuCheckboxItem>
+                        ))}
 
                         <DropdownMenuSeparator />
-
                         <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Toggle Columns
                         </DropdownMenuLabel>
@@ -1638,7 +1655,7 @@ export default function AllUsersPage() {
                     </DropdownMenu>
                   </div>
 
-                  {/* Active filters row */}
+                  {/* Active filters display */}
                   {(activeRoleFilter ||
                     activeStatusFilter ||
                     (sortOption && sortOption !== "newest")) && (
@@ -1848,7 +1865,7 @@ export default function AllUsersPage() {
           onConfirm={() => handleDelete(deleteTarget!)}
         />
 
-        {/* Bulk delete confirm dialog */}
+        {/* Bulk delete confirm */}
         <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>

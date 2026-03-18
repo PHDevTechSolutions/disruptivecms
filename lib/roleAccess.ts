@@ -6,6 +6,11 @@
 export type UserRole =
   | "superadmin"
   | "admin"
+  | "director"
+  | "pd_manager"
+  | "pd_engineer"
+  | "pd" // legacy alias
+  | "project_sales"
   | "warehouse"
   | "staff"
   | "inventory"
@@ -13,7 +18,6 @@ export type UserRole =
   | "seo"
   | "csr"
   | "ecomm"
-  | "pd"
   | "marketing";
 
 export type RoleAccessConfig = {
@@ -38,6 +42,12 @@ export const PUBLIC_ROUTES = [
 
 export const SUPERADMIN_ONLY_ROUTES = ["/admin/register"];
 
+/**
+ * Routes accessible to users with verify permissions (pd_manager, admin, etc.)
+ * as well as superadmin.
+ */
+export const VERIFY_ONLY_ROUTES = ["/admin/requests"];
+
 /* ==============================
    ROLE ACCESS CONFIG
    ============================== */
@@ -45,14 +55,25 @@ export const SUPERADMIN_ONLY_ROUTES = ["/admin/register"];
 export const roleAccessConfig: RoleAccessConfig = {
   superadmin: ["*"],
   admin: ["*"],
-  pd: ["/products/all-products"],
+  director: ["*"],
+
+  // PD roles — both access the products module
+  pd_manager: ["/products/all-products", "/admin/requests"],
+  pd_engineer: ["/products/all-products"],
+  pd: ["/products/all-products"], // legacy
+
+  project_sales: ["/products/all-products"],
+
   // /jobs and all nested routes like /jobs/applications
   hr: ["/jobs/applications"],
+
   // /content and all nested routes
   seo: ["/content"],
   marketing: ["/content"],
+
   // /inquiries and all nested routes
   csr: ["/inquiries"],
+
   warehouse: ["/access-denied"],
   staff: ["/access-denied"],
   inventory: ["/access-denied"],
@@ -109,10 +130,11 @@ export function isSuperadminOnlyRoute(path: string): boolean {
  *
  * ROLE ACCESS TEST CASES:
  * - superadmin: Can access all routes (*) including SUPERADMIN_ONLY_ROUTES
- * - admin: Can access all routes (*) EXCEPT SUPERADMIN_ONLY_ROUTES
- * - pd: Can access only /products/all-products
- * - seo: Can access only /content/blogs
- * - hr: Can access /jobs and nested routes (/jobs/applications, /jobs/careers, etc.)
+ * - admin / director: Can access all routes (*) EXCEPT SUPERADMIN_ONLY_ROUTES
+ * - pd_manager / pd_engineer / pd: Can access only /products/all-products
+ * - project_sales: Can access only /products/all-products
+ * - seo: Can access only /content
+ * - hr: Can access /jobs and nested routes (/jobs/applications, etc.)
  * - marketing: Can access all /content/* routes
  * - warehouse/staff/inventory/csr/ecomm: No routes (except public) → redirect to /access-denied
  */
@@ -172,7 +194,11 @@ export function getPrimaryRouteForRole(role: string): string {
   const primaryRoutes: Record<UserRole, string> = {
     superadmin: "/products/all-products",
     admin: "/products/all-products",
+    director: "/products/all-products",
+    pd_manager: "/products/all-products",
+    pd_engineer: "/products/all-products",
     pd: "/products/all-products",
+    project_sales: "/products/all-products",
     hr: "/jobs/applications",
     seo: "/content/blogs",
     marketing: "/content/projects",

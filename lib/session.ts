@@ -7,6 +7,8 @@ export interface SessionUser {
   name: string;
   role: string;
   accessLevel: string;
+  /** RBAC scope list stored at login time — e.g. ["read:products","write:products"] */
+  scopeAccess: string[];
 }
 
 export const SESSION_COOKIE_NAME = "admin_session_token";
@@ -28,7 +30,11 @@ export function setSessionCookieOnResponse(
   res: NextResponse,
   userData: SessionUser,
 ) {
-  res.cookies.set(SESSION_COOKIE_NAME, JSON.stringify(userData), getSessionCookieOptions());
+  res.cookies.set(
+    SESSION_COOKIE_NAME,
+    JSON.stringify(userData),
+    getSessionCookieOptions(),
+  );
 }
 
 export function clearSessionCookieOnResponse(res: NextResponse) {
@@ -54,7 +60,11 @@ export async function writeSessionCookie(
 
     // Fallback: mutate cookies() store (works in Server Actions / some runtimes)
     const cookieStore = await cookies();
-    cookieStore.set(SESSION_COOKIE_NAME, JSON.stringify(userData), getSessionCookieOptions());
+    cookieStore.set(
+      SESSION_COOKIE_NAME,
+      JSON.stringify(userData),
+      getSessionCookieOptions(),
+    );
 
     return userData;
   } catch (error) {
@@ -71,17 +81,23 @@ export async function getSession(): Promise<SessionUser | null> {
   try {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    
+
     if (!sessionCookie) {
       return null;
     }
 
     // Parse the stored user data
     const userData = JSON.parse(sessionCookie) as SessionUser;
-    
+
     if (!userData.uid) {
       await clearSession();
       return null;
+    }
+
+    // Back-fill scopeAccess for sessions created before this field was added
+    if (!Array.isArray(userData.scopeAccess)) {
+      const { getScopeAccessForRole } = await import("@/lib/rbac");
+      userData.scopeAccess = getScopeAccessForRole(userData.role);
     }
 
     return userData;
@@ -99,7 +115,7 @@ export async function validateSession(): Promise<boolean> {
   try {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    
+
     if (!sessionCookie) {
       return false;
     }
@@ -121,7 +137,7 @@ export async function refreshSession(): Promise<boolean> {
   try {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    
+
     if (!sessionCookie) {
       return false;
     }
@@ -133,7 +149,11 @@ export async function refreshSession(): Promise<boolean> {
     }
 
     // Update cookie expiration
-    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, getSessionCookieOptions());
+    cookieStore.set(
+      SESSION_COOKIE_NAME,
+      sessionCookie,
+      getSessionCookieOptions(),
+    );
 
     return true;
   } catch (error) {

@@ -93,13 +93,14 @@ const allNavItems = {
     ],
 
   },
-  "recycle-bin": {
+    "recycle-bin": {
     title: "Admin",
     url: "/admin",
     icon: <LockIcon />,
     items: [
-      { title: "Register User", url: "/admin/register" },
-      { title: "Audit Logs", url: "/admin/audit-logs" },
+      { title: "Register User",    url: "/admin/register" },
+      { title: "Requests",         url: "/admin/requests" },   // ← NEW
+      { title: "Audit Logs",       url: "/admin/audit-logs" },
       { title: "Deleted Products", url: "/admin/deleted-products" },
     ],
   },

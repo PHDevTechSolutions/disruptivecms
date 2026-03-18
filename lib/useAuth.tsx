@@ -19,6 +19,8 @@ export interface User {
   name: string;
   role: string;
   accessLevel: string;
+  /** RBAC scopes — populated from Firestore at login and stored in the session cookie */
+  scopeAccess: string[];
 }
 
 interface AuthContextType {
@@ -58,8 +60,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (response.ok) {
         const data = await response.json();
+        // Back-fill scopeAccess on the client in case older cookies lack it
+        if (!Array.isArray(data.user?.scopeAccess)) {
+          const { getScopeAccessForRole } = await import("@/lib/rbac");
+          data.user.scopeAccess = getScopeAccessForRole(data.user.role ?? "");
+        }
         setUser(data.user);
-        localStorage.setItem("disruptive_admin_user", JSON.stringify(data.user));
+        localStorage.setItem(
+          "disruptive_admin_user",
+          JSON.stringify(data.user),
+        );
       } else if (response.status === 401) {
         // Avoid redirect loops caused by in-flight session checks during login.
         // If a login just happened, don't clear state on a stale 401; re-check once shortly after.
@@ -152,8 +162,7 @@ export function useRequireRole(requiredRoles: string | string[]) {
   const rolesArray = Array.isArray(requiredRoles)
     ? requiredRoles
     : [requiredRoles];
-  const hasRequiredRole =
-    user && rolesArray.includes(user.role.toLowerCase());
+  const hasRequiredRole = user && rolesArray.includes(user.role.toLowerCase());
 
   useEffect(() => {
     if (isLoading) return;
