@@ -2,16 +2,21 @@
 /**
  * lib/useProductWorkflow.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * RBAC-aware hook for product write operations.
+ * RBAC-aware hook for ALL product write operations.
+ *
+ * Exported functions:
+ *   submitProductUpdate        – edit product fields
+ *   submitProductDelete        – soft-delete to recycle_bin
+ *   submitProductAssignWebsite – assign websites (incl. schema transform)
+ *   submitProductSetClass      – set productClass (spf | standard)
  *
  * Rules:
- *  - If user has verify:products | verify:* | superadmin
- *      → execute directly AND create an auto-approved request (audit trail)
- *  - Otherwise (pd_engineer, etc.)
- *      → create a pending request only; do NOT touch the product document
+ *   verify:products | verify:* | superadmin  → direct write + auto-approved audit request
+ *   write:products (no verify)               → pending request only
  *
- * Usage:
- *   const { submitProductUpdate, submitProductDelete } = useProductWorkflow();
+ * Product schema conventions:
+ *   Primary name : itemDescription  (falls back to name)
+ *   Item codes   : litItemCode, ecoItemCode  (falls back to itemCode)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -21,22 +26,22 @@ import {
   updateDoc,
   writeBatch,
   serverTimestamp,
-  getDoc,
   collection,
   query,
   where,
   getDocs,
+  arrayUnion,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/useAuth";
-import { hasAccess, isSuperAdmin } from "@/lib/rbac";
+import { hasAccess } from "@/lib/rbac";
 import {
   createRequest,
   approveRequest,
-  PendingRequest,
+  resolveProductName,
+  resolveProductMeta,
 } from "@/lib/requestService";
 import { logAuditEvent } from "@/lib/logger";
-import { toast } from "sonner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,31 +49,44 @@ export type WorkflowResult =
   | { mode: "direct"; message: string }
   | { mode: "pending"; requestId: string; message: string };
 
+export interface BulkWorkflowResult {
+  direct: number;
+  pending: number;
+  errors: number;
+}
+
 interface SubmitUpdateOptions {
-  /** The Firestore document ID of the product being updated */
   productId: string;
-  /** Full original product data (before changes) */
   before: Record<string, any>;
-  /** The new payload to be written (after changes) */
   after: Record<string, any>;
-  /** Human-readable product name for toast messages */
   productName?: string;
-  /** Audit source string e.g. "all-products:edit" */
   source?: string;
-  /** Which page this is called from */
   page?: string;
 }
 
 interface SubmitDeleteOptions {
-  /** Full product object including .id */
   product: Record<string, any> & { id: string };
-  /** Page this is called from, used for recycle_bin metadata */
   originPage?: string;
-  /** Audit source string */
   source?: string;
 }
 
-// ─── Helper: check for existing pending request ──────────────────────────────
+interface SubmitAssignWebsiteOptions {
+  product: Record<string, any> & { id: string };
+  websites: string[];
+  /** Pre-built schema-transformed fields (Taskflow / Shopify only) */
+  transformedFields?: Record<string, any>;
+  originPage?: string;
+  source?: string;
+}
+
+interface SubmitSetProductClassOptions {
+  product: Record<string, any> & { id: string };
+  productClass: "spf" | "standard";
+  originPage?: string;
+  source?: string;
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 async function getExistingPendingRequest(
   productId: string,
@@ -111,15 +129,27 @@ export function useProductWorkflow() {
         productId,
         before,
         after,
-        productName = productId,
         source = "product-form:update",
         page = "/products",
       } = opts;
 
+      const productName =
+        opts.productName ||
+        resolveProductName(after) ||
+        resolveProductName(before) ||
+        productId;
+
+      const meta = {
+        ...resolveProductMeta(before),
+        ...resolveProductMeta(after),
+        productName,
+        source,
+        page,
+      };
+
       const reviewer = { uid: user.uid, name: user.name };
 
       if (canVerify()) {
-        // ── PRIVILEGED: execute directly + auto-approve request (audit trail) ──
         await updateDoc(doc(db, "products", productId), {
           ...after,
           updatedAt: serverTimestamp(),
@@ -132,13 +162,10 @@ export function useProductWorkflow() {
           payload: { before, after },
           requestedBy: user.uid,
           requestedByName: user.name,
-          meta: { productName, source, page, autoApproved: true },
+          meta: { ...meta, autoApproved: true },
         });
 
-        // Auto-approve to mark it resolved immediately (no Firestore re-execution)
-        await approveRequest(reqId, reviewer, true).catch(() => {
-          // skipExecution=true: product already updated directly above
-        });
+        await approveRequest(reqId, reviewer, true).catch(() => {});
 
         await logAuditEvent({
           action: "update",
@@ -150,7 +177,6 @@ export function useProductWorkflow() {
 
         return { mode: "direct", message: "Product updated successfully." };
       } else {
-        // ── RESTRICTED: check for duplicate pending update ─────────────────
         const existing = await getExistingPendingRequest(productId, "update");
         if (existing) {
           throw new Error(
@@ -165,7 +191,7 @@ export function useProductWorkflow() {
           payload: { before, after },
           requestedBy: user.uid,
           requestedByName: user.name,
-          meta: { productName, source, page },
+          meta,
         });
 
         return {
@@ -190,31 +216,24 @@ export function useProductWorkflow() {
         originPage = "/products",
         source = "product-page:delete",
       } = opts;
-
       const { id: productId, ...productSnapshot } = product;
-      const productName =
-        productSnapshot.itemDescription || productSnapshot.name || productId;
+      const productName = resolveProductName(productSnapshot, productId);
       const reviewer = { uid: user.uid, name: user.name };
 
-      // Block if there's a pending delete already
-      const existingDelete = await getExistingPendingRequest(
-        productId,
-        "delete",
-      );
-      if (existingDelete) {
-        throw new Error(
-          "A delete request for this product is already pending.",
-        );
-      }
+      const meta = {
+        ...resolveProductMeta(productSnapshot),
+        productName,
+        source,
+        originPage,
+      };
 
-      const payload = {
+      const deletePayload = {
         productSnapshot,
         deletedBy: { uid: user.uid, name: user.name, role: user.role },
         originPage,
       };
 
       if (canVerify()) {
-        // ── PRIVILEGED: soft-delete immediately via batch ──────────────────
         const batch = writeBatch(db);
         batch.set(doc(db, "recycle_bin", productId), {
           ...productSnapshot,
@@ -226,15 +245,14 @@ export function useProductWorkflow() {
         batch.delete(doc(db, "products", productId));
         await batch.commit();
 
-        // Create auto-approved request for audit trail
         const reqId = await createRequest({
           type: "delete",
           resource: "products",
           resourceId: productId,
-          payload,
+          payload: deletePayload,
           requestedBy: user.uid,
           requestedByName: user.name,
-          meta: { productName, source, originPage, autoApproved: true },
+          meta: { ...meta, autoApproved: true },
         });
 
         await approveRequest(reqId, reviewer, true).catch(() => {});
@@ -252,7 +270,6 @@ export function useProductWorkflow() {
           message: `"${productName}" moved to recycle bin.`,
         };
       } else {
-        // ── RESTRICTED: block if pending update exists (can't delete while update pending) ──
         const pendingUpdate = await getExistingPendingRequest(
           productId,
           "update",
@@ -263,20 +280,247 @@ export function useProductWorkflow() {
           );
         }
 
+        const existingDelete = await getExistingPendingRequest(
+          productId,
+          "delete",
+        );
+        if (existingDelete) {
+          throw new Error(
+            "A delete request for this product is already pending.",
+          );
+        }
+
         const reqId = await createRequest({
           type: "delete",
           resource: "products",
           resourceId: productId,
-          payload,
+          payload: deletePayload,
           requestedBy: user.uid,
           requestedByName: user.name,
-          meta: { productName, source, originPage },
+          meta,
         });
 
         return {
           mode: "pending",
           requestId: reqId,
-          message: `Delete request submitted for approval.`,
+          message: "Delete request submitted for approval.",
+        };
+      }
+    },
+    [user, canVerify, canWrite],
+  );
+
+  // ── submitProductAssignWebsite ────────────────────────────────────────────
+  /**
+   * Assigns one or more websites to a single product.
+   *
+   * The payload is always stored as { before, after } so that executeRequest
+   * (via approveRequest) can apply payload.after correctly on approval.
+   *
+   * "after" includes the merged websites array + any transformedFields.
+   * transformedFields is only supplied for schema-transform sites (Taskflow, Shopify).
+   */
+  const submitProductAssignWebsite = useCallback(
+    async (opts: SubmitAssignWebsiteOptions): Promise<WorkflowResult> => {
+      if (!user) throw new Error("Not authenticated");
+      if (!canWrite())
+        throw new Error(
+          "Insufficient permissions to assign products to websites",
+        );
+
+      const {
+        product,
+        websites,
+        transformedFields,
+        originPage = "/products/all-products",
+        source = "all-products:assign-website",
+      } = opts;
+
+      const { id: productId, ...productSnapshot } = product;
+      const productName = resolveProductName(productSnapshot, productId);
+      const reviewer = { uid: user.uid, name: user.name };
+
+      // Build merged websites array (the "after" state).
+      const existingWebsites: string[] = Array.isArray(productSnapshot.websites)
+        ? productSnapshot.websites
+        : Array.isArray(productSnapshot.website)
+          ? productSnapshot.website
+          : productSnapshot.website
+            ? [productSnapshot.website as string]
+            : [];
+
+      const mergedWebsites = Array.from(
+        new Set([...existingWebsites, ...websites]),
+      );
+
+      // "after" = what the doc will look like — used by executeRequest on approval.
+      const after: Record<string, any> = {
+        ...productSnapshot,
+        websites: mergedWebsites,
+        website: mergedWebsites,
+        updatedAt: serverTimestamp(),
+        ...(transformedFields ?? {}),
+      };
+
+      const meta = {
+        ...resolveProductMeta(productSnapshot),
+        productName,
+        source,
+        originPage,
+        assignedWebsites: websites,
+        actionType: "assign-website",
+      };
+
+      if (canVerify()) {
+        // Privileged: write directly, then create auto-approved audit request.
+        const batch = writeBatch(db);
+        const ref = doc(db, "products", productId);
+
+        batch.update(ref, {
+          websites: arrayUnion(...websites),
+          website: arrayUnion(...websites),
+          updatedAt: serverTimestamp(),
+        });
+
+        if (transformedFields && Object.keys(transformedFields).length > 0) {
+          batch.set(ref, transformedFields, { merge: true });
+        }
+
+        await batch.commit();
+
+        const reqId = await createRequest({
+          type: "update",
+          resource: "products",
+          resourceId: productId,
+          payload: { before: productSnapshot, after },
+          requestedBy: user.uid,
+          requestedByName: user.name,
+          meta: { ...meta, autoApproved: true },
+        });
+
+        await approveRequest(reqId, reviewer, true).catch(() => {});
+
+        await logAuditEvent({
+          action: "update",
+          entityType: "product",
+          entityId: productId,
+          entityName: productName,
+          context: { page: originPage, source, collection: "products" },
+          metadata: { assignedWebsites: websites },
+        });
+
+        return {
+          mode: "direct",
+          message: `Assigned to ${websites.join(", ")}.`,
+        };
+      } else {
+        // Restricted: create a pending request. No Firestore write yet.
+        const existing = await getExistingPendingRequest(productId, "update");
+        if (existing) {
+          throw new Error(
+            "This product already has a pending update request. Resolve it before assigning websites.",
+          );
+        }
+
+        const reqId = await createRequest({
+          type: "update",
+          resource: "products",
+          resourceId: productId,
+          payload: { before: productSnapshot, after },
+          requestedBy: user.uid,
+          requestedByName: user.name,
+          meta,
+        });
+
+        return {
+          mode: "pending",
+          requestId: reqId,
+          message: `Website assignment submitted for approval.`,
+        };
+      }
+    },
+    [user, canVerify, canWrite],
+  );
+
+  // ── submitProductSetClass ─────────────────────────────────────────────────
+  /**
+   * Sets productClass ("spf" | "standard") on a single product.
+   * Privileged users → direct write. Others → pending request.
+   */
+  const submitProductSetClass = useCallback(
+    async (opts: SubmitSetProductClassOptions): Promise<WorkflowResult> => {
+      if (!user) throw new Error("Not authenticated");
+      if (!canWrite())
+        throw new Error("Insufficient permissions to set product class");
+
+      const {
+        product,
+        productClass,
+        originPage = "/products/all-products",
+        source = "all-products:set-product-class",
+      } = opts;
+
+      const { id: productId, ...productSnapshot } = product;
+      const productName = resolveProductName(productSnapshot, productId);
+      const reviewer = { uid: user.uid, name: user.name };
+
+      const after = {
+        ...productSnapshot,
+        productClass,
+        updatedAt: serverTimestamp(),
+      };
+
+      const meta = {
+        ...resolveProductMeta(productSnapshot),
+        productName,
+        source,
+        originPage,
+        productClass,
+        actionType: "set-product-class",
+      };
+
+      if (canVerify()) {
+        await updateDoc(doc(db, "products", productId), {
+          productClass,
+          updatedAt: serverTimestamp(),
+        });
+
+        const reqId = await createRequest({
+          type: "update",
+          resource: "products",
+          resourceId: productId,
+          payload: { before: productSnapshot, after },
+          requestedBy: user.uid,
+          requestedByName: user.name,
+          meta: { ...meta, autoApproved: true },
+        });
+
+        await approveRequest(reqId, reviewer, true).catch(() => {});
+
+        return {
+          mode: "direct",
+          message: `Product class set to "${productClass}".`,
+        };
+      } else {
+        const existing = await getExistingPendingRequest(productId, "update");
+        if (existing) {
+          throw new Error("This product already has a pending update request.");
+        }
+
+        const reqId = await createRequest({
+          type: "update",
+          resource: "products",
+          resourceId: productId,
+          payload: { before: productSnapshot, after },
+          requestedBy: user.uid,
+          requestedByName: user.name,
+          meta,
+        });
+
+        return {
+          mode: "pending",
+          requestId: reqId,
+          message: "Product class change submitted for approval.",
         };
       }
     },
@@ -286,6 +530,8 @@ export function useProductWorkflow() {
   return {
     submitProductUpdate,
     submitProductDelete,
+    submitProductAssignWebsite,
+    submitProductSetClass,
     canVerifyProducts: canVerify,
     canWriteProducts: canWrite,
     isPrivileged: canVerify,

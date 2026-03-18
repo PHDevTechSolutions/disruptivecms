@@ -93,13 +93,19 @@ import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 
 // ─── TDS lib ──────────────────────────────────────────────────────────────────
-import { generateTdsPdf, uploadTdsPdf, normaliseBrand } from "@/lib/tdsGenerator";
+import {
+  generateTdsPdf,
+  uploadTdsPdf,
+  normaliseBrand,
+} from "@/lib/tdsGenerator";
 
 import {
   CreateProductFamilyDialog,
   type CreatedFamily,
 } from "./CreateProductFamilyDialog";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
+import { useAuth } from "@/lib/useAuth";
+import { hasAccess } from "@/lib/rbac";
 
 // ─── Download helper ──────────────────────────────────────────────────────────
 async function downloadPdf(url: string, filename: string): Promise<void> {
@@ -1007,7 +1013,6 @@ export default function AddNewProduct({
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const { submitProductUpdate } = useProductWorkflow();
 
-
   const [productUsage, setProductUsage] = useState<string[]>(
     editData?.productUsage || [],
   );
@@ -1619,8 +1624,6 @@ export default function AddNewProduct({
     [selectedCatId, allSpecGroups],
   );
 
-  
-
   // ── IDs of spec groups already linked to the selected family ─────────────
   const linkedSpecGroupIds = useMemo(
     () => Array.from(new Set(availableSpecs.map((s) => s.specGroupId))),
@@ -1707,7 +1710,7 @@ export default function AddNewProduct({
             p.isActive = true;
             p.imageUrl = "";
             p.description = "";
-          } 
+          }
           if (item.type === "category") {
             p.isActive = true;
             p.imageUrl = "";
@@ -1824,7 +1827,8 @@ export default function AddNewProduct({
       const productFamilyTitle = selectedCatId
         ? availableCats.find((c) => c.id === selectedCatId)?.name || ""
         : "";
-      const brandName = availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
+      const brandName =
+        availableBrands.find((b) => b.id === selectedBrands[0])?.name || "";
       const resolveApps = (ids: string[]) =>
         ids.map((id) => pendingIdMap[id] || id);
 
@@ -1872,12 +1876,13 @@ export default function AddNewProduct({
       };
 
       let savedDocId: string = editData?.id ?? "";
-       if (editData?.id) {
+      if (editData?.id) {
         const result = await submitProductUpdate({
           productId: editData.id,
           before: editData,
           after: payload,
-          productName: itemDescription || editData.itemDescription || editData.id,
+          productName:
+            itemDescription || editData.itemDescription || editData.id,
           source: "add-new-product-form",
           page: "/products/all-products",
         });
@@ -2045,7 +2050,6 @@ export default function AddNewProduct({
       setIsPublishing(false);
     }
   };
-
 
   // ── Dropzone callbacks ────────────────────────────────────────────────────
   const onDropMain = useCallback((f: File[]) => {

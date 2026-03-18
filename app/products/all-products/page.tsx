@@ -117,6 +117,8 @@ import {
 import { toast } from "sonner";
 import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
+import { useAuth } from "@/lib/useAuth";
+import { canWrite as rbacCanWrite } from "@/lib/rbac";
 import {
   usePendingProducts,
   PendingRowIndicator,
@@ -127,10 +129,8 @@ import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
-// ─── Updated: use new unified tdsGenerator API (matches bulk-uploader) ────────
 import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
-// ─── Cloudinary constants (same as bulk-uploader) ────────────────────────────
 const CLOUDINARY_CLOUD_NAME =
   process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
 const CLOUDINARY_UPLOAD_PRESET =
@@ -163,8 +163,6 @@ export type Product = {
   createdAt: any;
 };
 
-// ─── TDS Generation Types ─────────────────────────────────────────────────────
-
 type TdsJobStatus = "pending" | "generating" | "done" | "error";
 
 interface TdsJob {
@@ -174,8 +172,6 @@ interface TdsJob {
   error?: string;
 }
 
-// ─── Sort option type ─────────────────────────────────────────────────────────
-
 type SortOption =
   | "alpha-asc"
   | "alpha-desc"
@@ -184,7 +180,7 @@ type SortOption =
   | "oldest"
   | null;
 
-// ─── Download helper (fetch-blob — works cross-origin with Cloudinary) ────────
+// ─── Download helper ──────────────────────────────────────────────────────────
 
 async function downloadPdf(url: string, filename: string): Promise<void> {
   const res = await fetch(url);
@@ -200,7 +196,7 @@ async function downloadPdf(url: string, filename: string): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
-// ─── Schema builder (shared by Taskflow & Shopify transforms) ─────────────────
+// ─── Schema builder ───────────────────────────────────────────────────────────
 
 function buildTransformedProduct(product: Product, newWebsites: string[]) {
   const existingWebsites: string[] = Array.isArray(product.websites)
@@ -351,8 +347,6 @@ const PRODUCT_CLASS_OPTIONS: {
     dot: "bg-slate-500",
   },
 ];
-
-// ─── TDS Brand options ────────────────────────────────────────────────────────
 
 const TDS_BRAND_OPTIONS: {
   value: "LIT" | "ECOSHIFT";
@@ -626,7 +620,6 @@ function BulkGenerateTdsDialog({
     "LIT" | "ECOSHIFT" | null
   >(null);
 
-  // Reset brand selection each time the dialog reopens
   React.useEffect(() => {
     if (open) setSelectedBrand(null);
   }, [open]);
@@ -669,7 +662,6 @@ function BulkGenerateTdsDialog({
           </div>
         </DialogHeader>
 
-        {/* ── Brand selector — only visible before generation starts ── */}
         {!isRunning && !isComplete && (
           <div className="space-y-2.5">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -721,7 +713,6 @@ function BulkGenerateTdsDialog({
           </div>
         )}
 
-        {/* ── Progress bar — shown while running or after complete ── */}
         {(isRunning || isComplete) && (
           <div className="space-y-1.5">
             <Progress value={progressPct} className="h-2" />
@@ -1276,8 +1267,20 @@ export default function AllProductsPage() {
     null,
   );
   const [isDeleting, setIsDeleting] = React.useState(false);
-  const { submitProductDelete } = useProductWorkflow();
+
+  // ── RBAC ──────────────────────────────────────────────────────────────────
+  const {
+    submitProductDelete,
+    submitProductAssignWebsite,
+    submitProductSetClass,
+    canVerifyProducts,
+  } = useProductWorkflow();
   const pendingMap = usePendingProducts();
+
+  const { user } = useAuth();
+  const userCanWrite = rbacCanWrite(user, "products");
+  // isRequestMode = user can write but cannot verify → changes go through approval queue
+  const isRequestMode = userCanWrite && !canVerifyProducts();
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
@@ -1304,11 +1307,7 @@ export default function AllProductsPage() {
   const [bulkTdsOpen, setBulkTdsOpen] = React.useState(false);
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
-
-  // ── NEW: ZIP download state ───────────────────────────────────────────────
   const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
-
-  // ── Sort state ────────────────────────────────────────────────────────────
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
 
   React.useEffect(() => {
@@ -1490,163 +1489,149 @@ export default function AllProductsPage() {
     setIsDeleting(false);
   };
 
-  // ── Bulk assign to website ────────────────────────────────────────────────
+  // ── Bulk assign to website — RBAC-aware ───────────────────────────────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
-    const count = selectedRows.length;
-    const transformSites = websites.filter((w) =>
-      SCHEMA_TRANSFORM_WEBSITES.has(w),
+    const rows = selectedRows.map((r) => r.original);
+    const count = rows.length;
+
+    const t = toast.loading(
+      `${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to ${websites.join(", ")}...`,
     );
 
-    const loadingToast = toast.loading(
-      `Assigning ${count} product${count !== 1 ? "s" : ""} to ${websites.length} website${websites.length !== 1 ? "s" : ""}...`,
-    );
+    let direct = 0,
+      pending = 0,
+      errors = 0;
 
-    try {
-      const CHUNK = 200;
-      const rows = selectedRows.map((r) => r.original);
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const transformSites = websites.filter((w) =>
+            SCHEMA_TRANSFORM_WEBSITES.has(w),
+          );
+          const transformedFields =
+            transformSites.length > 0
+              ? buildTransformedProduct(product, websites)
+              : undefined;
 
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const chunk = rows.slice(i, i + CHUNK);
-        const batch = writeBatch(db);
-
-        chunk.forEach((product) => {
-          batch.update(doc(db, "products", product.id), {
-            websites: arrayUnion(...websites),
-            website: arrayUnion(...websites),
-            updatedAt: serverTimestamp(),
+          const result = await submitProductAssignWebsite({
+            product,
+            websites,
+            transformedFields,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-assign-website",
           });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
 
-          if (transformSites.length > 0) {
-            const transformedData = buildTransformedProduct(product, websites);
-            batch.set(doc(db, "products", product.id), transformedData, {
-              merge: true,
-            });
-          }
-        });
-
-        await batch.commit();
-      }
-
-      toast.success(
-        `${count} product${count !== 1 ? "s" : ""} assigned to ${websites.join(", ")}.`,
-        { id: loadingToast },
-      );
-      setRowSelection({});
-    } catch (error) {
-      console.error("Bulk assign error:", error);
-      toast.error("Failed to assign products to websites.", {
-        id: loadingToast,
+    if (errors === 0) {
+      const parts: string[] = [];
+      if (direct > 0) parts.push(`${direct} assigned`);
+      if (pending > 0) parts.push(`${pending} pending approval`);
+      toast.success(parts.join(", ") || "Done", { id: t });
+    } else {
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
       });
     }
+    setRowSelection({});
   };
 
-  // ── Bulk assign to Shopify ────────────────────────────────────────────────
+  // ── Bulk assign to Shopify — RBAC-aware ───────────────────────────────────
   const handleBulkAssignShopify = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
-    const count = selectedRows.length;
+    const rows = selectedRows.map((r) => r.original);
+    const count = rows.length;
 
-    const loadingToast = toast.loading(
-      `Assigning ${count} product${count !== 1 ? "s" : ""} to Shopify...`,
+    const t = toast.loading(
+      `${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to Shopify...`,
     );
 
-    try {
-      const CHUNK = 200;
-      const rows = selectedRows.map((r) => r.original);
+    let direct = 0,
+      pending = 0,
+      errors = 0;
 
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const chunk = rows.slice(i, i + CHUNK);
-        const batch = writeBatch(db);
-
-        chunk.forEach((product) => {
-          batch.update(doc(db, "products", product.id), {
-            websites: arrayUnion("Shopify"),
-            website: arrayUnion("Shopify"),
-            updatedAt: serverTimestamp(),
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const transformedFields = buildTransformedProduct(product, [
+            "Shopify",
+          ]);
+          const result = await submitProductAssignWebsite({
+            product,
+            websites: ["Shopify"],
+            transformedFields,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-assign-shopify",
           });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
 
-          const transformedData = buildTransformedProduct(product, ["Shopify"]);
-          batch.set(doc(db, "products", product.id), transformedData, {
-            merge: true,
-          });
-        });
-
-        await batch.commit();
-      }
-
-      await logAuditEvent({
-        action: "update",
-        entityType: "product",
-        entityId: null,
-        entityName: `${count} products`,
-        context: {
-          page: "/products/all-products",
-          source: "all-products:bulk-assign-shopify",
-          collection: "products",
-          bulk: true,
-        },
-        metadata: { target: "Shopify", ids: rows.map((r) => r.id) },
-      });
-
-      toast.success(
-        `${count} product${count !== 1 ? "s" : ""} assigned to Shopify.`,
-        { id: loadingToast },
-      );
-      setRowSelection({});
-    } catch (error) {
-      console.error("Bulk assign Shopify error:", error);
-      toast.error("Failed to assign products to Shopify.", {
-        id: loadingToast,
+    if (errors === 0) {
+      const parts: string[] = [];
+      if (direct > 0) parts.push(`${direct} assigned to Shopify`);
+      if (pending > 0) parts.push(`${pending} pending approval`);
+      toast.success(parts.join(", ") || "Done", { id: t });
+    } else {
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
       });
     }
+    setRowSelection({});
   };
 
-  // ── Bulk assign product class ─────────────────────────────────────────────
+  // ── Bulk assign product class — RBAC-aware ────────────────────────────────
   const handleBulkAssignProductClass = async (
     productClass: "spf" | "standard",
   ) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
-    const count = selectedRows.length;
-    const loadingToast = toast.loading(
-      `Setting ${count} product${count !== 1 ? "s" : ""} to "${productClass}"...`,
+    const rows = selectedRows.map((r) => r.original);
+    const count = rows.length;
+    const label = productClass === "spf" ? "SPF" : "Standard";
+
+    const t = toast.loading(
+      `${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`,
     );
 
-    try {
-      const CHUNK = 400;
-      const rows = selectedRows.map((r) => r.original);
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        const chunk = rows.slice(i, i + CHUNK);
-        const batch = writeBatch(db);
-        chunk.forEach((product) => {
-          batch.update(doc(db, "products", product.id), {
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const result = await submitProductSetClass({
+            product,
             productClass,
-            updatedAt: serverTimestamp(),
+            originPage: "/products/all-products",
+            source: "all-products:bulk-set-product-class",
           });
-        });
-        await batch.commit();
-      }
-      await logAuditEvent({
-        action: "update",
-        entityType: "product",
-        entityId: null,
-        entityName: `${count} products`,
-        context: {
-          page: "/products/all-products",
-          source: "all-products:bulk-assign-product-class",
-          collection: "products",
-          bulk: true,
-        },
-        metadata: { productClass, ids: rows.map((r) => r.id) },
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
+
+    if (errors === 0) {
+      const parts: string[] = [];
+      if (direct > 0) parts.push(`${direct} set to "${label}"`);
+      if (pending > 0) parts.push(`${pending} pending approval`);
+      toast.success(parts.join(", ") || "Done", { id: t });
+    } else {
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
       });
-      toast.success(
-        `${count} product${count !== 1 ? "s" : ""} set to "${productClass === "spf" ? "SPF" : "Standard"}".`,
-        { id: loadingToast },
-      );
-      setRowSelection({});
-    } catch (error) {
-      console.error("Bulk assign product class error:", error);
-      toast.error("Failed to assign product class.", { id: loadingToast });
     }
+    setRowSelection({});
   };
 
   // ── Bulk TDS generate ─────────────────────────────────────────────────────
@@ -1662,7 +1647,6 @@ export default function AllProductsPage() {
     setBulkTdsOpen(true);
   };
 
-  // ── Updated: accepts brand chosen in the dialog ───────────────────────────
   const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
     setIsTdsRunning(true);
 
@@ -1791,7 +1775,6 @@ export default function AllProductsPage() {
   };
 
   // ── Bulk Download TDS ZIP ─────────────────────────────────────────────────
-  // ── Bulk Download TDS ZIP ─────────────────────────────────────────────────
   const handleBulkDownloadTds = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
@@ -1813,7 +1796,6 @@ export default function AllProductsPage() {
       const litFolder = zip.folder("LIT")!;
       const ecoshiftFolder = zip.folder("ECOSHIFT")!;
 
-      // ── Brand detection ──────────────────────────────────────────────────
       const detectFolder = (product: Product) => {
         const brands: string[] = Array.isArray(product.brands)
           ? product.brands
@@ -1825,7 +1807,6 @@ export default function AllProductsPage() {
         if (brandStr.includes("ecoshift")) return ecoshiftFolder;
         if (brandStr.includes("lit")) return litFolder;
 
-        // Fallback: which item code is populated
         if (product.litItemCode && !product.ecoItemCode) return litFolder;
         if (product.ecoItemCode && !product.litItemCode) return ecoshiftFolder;
         if (product.litItemCode) return litFolder;
@@ -1834,13 +1815,9 @@ export default function AllProductsPage() {
         return litFolder;
       };
 
-      // ── Treats blank or "N/A" as missing ────────────────────────────────
       const isBlank = (v?: string) =>
         !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
 
-      // ── Safe, unique filename ────────────────────────────────────────────
-      // Falls back litItemCode → ecoItemCode → id, skipping blank/"N/A" values.
-      // Appends a counter if two products share the same resolved code.
       const usedFilenames = new Map<string, number>();
       const safeFilename = (product: Product): string => {
         const raw =
@@ -1857,7 +1834,6 @@ export default function AllProductsPage() {
         return count === 0 ? `${base}.pdf` : `${base}_(${count}).pdf`;
       };
 
-      // ── Fetch with retry (up to 3 attempts, exponential backoff) ────────
       const fetchWithRetry = async (
         url: string,
         retries = 3,
@@ -1878,7 +1854,6 @@ export default function AllProductsPage() {
         throw lastError;
       };
 
-      // ── Batched fetches (8 at a time) with 300ms pause between batches ──
       const BATCH = 8;
       const BATCH_DELAY_MS = 300;
       let succeeded = 0;
@@ -2211,48 +2186,58 @@ export default function AllProductsPage() {
             {/* Pending indicator dot */}
             <PendingRowIndicator status={pendingStatus} />
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => handleEdit(product)}
-                  disabled={isPendingDelete}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {isPendingDelete
-                  ? "Cannot edit — deletion pending"
-                  : "Edit product"}
-              </TooltipContent>
-            </Tooltip>
+            {/* Edit — only for users with write:products */}
+            {userCanWrite && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleEdit(product)}
+                    disabled={isPendingDelete}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  {isPendingDelete
+                    ? "Cannot edit — deletion pending"
+                    : "Edit product"}
+                </TooltipContent>
+              </Tooltip>
+            )}
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => setDeleteTarget(product)}
-                  disabled={busy}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {busy ? "Action pending — cannot delete" : "Delete product"}
-              </TooltipContent>
-            </Tooltip>
+            {/* Delete — only for users with write:products */}
+            {userCanWrite && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => setDeleteTarget(product)}
+                    disabled={busy}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  {busy
+                    ? "Pending — cannot delete"
+                    : isRequestMode
+                      ? "Submit delete request"
+                      : "Delete product"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         );
       },
     },
   ];
 
-  // ── Derived data: uniqueBrands, uniqueWebsites, uniqueProductFamilies ─────
+  // ── Derived data ──────────────────────────────────────────────────────────
   const uniqueBrands = React.useMemo(() => {
     const s = new Set<string>();
     data.forEach((p) => {
@@ -2280,7 +2265,6 @@ export default function AllProductsPage() {
     return Array.from(s).sort();
   }, [data]);
 
-  // ── Usage counts ──────────────────────────────────────────────────────────
   const brandCounts = React.useMemo(() => {
     const m = new Map<string, number>();
     data.forEach((p) => {
@@ -2367,7 +2351,6 @@ export default function AllProductsPage() {
     [data],
   );
 
-  // ── Sorted data ───────────────────────────────────────────────────────────
   const sortedData = React.useMemo(() => {
     const d = [...data];
     const ts = (p: Product): number =>
@@ -2459,7 +2442,6 @@ export default function AllProductsPage() {
     </div>
   );
 
-  // ── Sort option label for display ─────────────────────────────────────────
   const sortLabel: Record<NonNullable<SortOption>, string> = {
     "alpha-asc": "A → Z",
     "alpha-desc": "Z → A",
@@ -2498,15 +2480,18 @@ export default function AllProductsPage() {
         </div>
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
-          <Button
-            onClick={() => {
-              setSelectedProduct(null);
-              setIsEditing(true);
-            }}
-            className="gap-2"
-          >
-            <PlusCircle className="h-4 w-4" /> Add Product
-          </Button>
+          {/* Add Product — only for users with write:products */}
+          {userCanWrite && (
+            <Button
+              onClick={() => {
+                setSelectedProduct(null);
+                setIsEditing(true);
+              }}
+              className="gap-2"
+            >
+              <PlusCircle className="h-4 w-4" /> Add Product
+            </Button>
+          )}
         </div>
       </div>
 
@@ -2537,24 +2522,42 @@ export default function AllProductsPage() {
             >
               <X className="h-4 w-4" /> Clear
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 border-primary/30 text-primary hover:bg-primary/5"
-              onClick={() => setAssignWebsiteOpen(true)}
-            >
-              <Globe className="h-4 w-4" />
-              Assign to Website
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 border-violet-300 text-violet-700 hover:bg-violet-50"
-              onClick={() => setAssignProductClassOpen(true)}
-            >
-              <Tag className="h-4 w-4" />
-              Set Product Class
-            </Button>
+
+            {/* Assign to Website — only for users with write:products */}
+            {userCanWrite && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={`gap-2 ${
+                  isRequestMode
+                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                    : "border-primary/30 text-primary hover:bg-primary/5"
+                }`}
+                onClick={() => setAssignWebsiteOpen(true)}
+              >
+                <Globe className="h-4 w-4" />
+                {isRequestMode ? "Request Website Assign" : "Assign to Website"}
+              </Button>
+            )}
+
+            {/* Set Product Class — only for users with write:products */}
+            {userCanWrite && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={`gap-2 ${
+                  isRequestMode
+                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                    : "border-violet-300 text-violet-700 hover:bg-violet-50"
+                }`}
+                onClick={() => setAssignProductClassOpen(true)}
+              >
+                <Tag className="h-4 w-4" />
+                {isRequestMode ? "Request Class Change" : "Set Product Class"}
+              </Button>
+            )}
+
+            {/* Generate TDS — available to all (read/generate, not a write gate) */}
             <Button
               variant="outline"
               size="sm"
@@ -2564,7 +2567,8 @@ export default function AllProductsPage() {
               <FilePlus2 className="h-4 w-4" />
               Generate TDS
             </Button>
-            {/* ── NEW: Download TDS ZIP ── */}
+
+            {/* Download TDS ZIP — available to all */}
             <Button
               variant="outline"
               size="sm"
@@ -2579,20 +2583,30 @@ export default function AllProductsPage() {
               )}
               {isTdsDownloading ? "Zipping…" : "Download TDS ZIP"}
             </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={isDeleting}
-              className="gap-2"
-              onClick={() => setBulkDeleteOpen(true)}
-            >
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              Move {selectedCount} to Bin
-            </Button>
+
+            {/* Delete — only for users with write:products */}
+            {userCanWrite && (
+              <Button
+                variant={isRequestMode ? "outline" : "destructive"}
+                size="sm"
+                disabled={isDeleting}
+                className={`gap-2 ${
+                  isRequestMode
+                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
+                    : ""
+                }`}
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {isRequestMode
+                  ? `Request Delete (${selectedCount})`
+                  : `Move ${selectedCount} to Bin`}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -2694,7 +2708,7 @@ export default function AllProductsPage() {
           )}
         </div>
 
-        {/* ── Product Class filter ──────────────────────────────────────── */}
+        {/* Product Class filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -2756,7 +2770,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* ── Product Usage filter ──────────────────────────────────────── */}
+        {/* Product Usage filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -2871,6 +2885,8 @@ export default function AllProductsPage() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Product Family filter */}
         <DropdownMenu
           onOpenChange={(open) => {
             if (!open) setFamilySearch("");
@@ -2978,7 +2994,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* ── Brands filter ─────────────────────────────────────────────── */}
+        {/* Brands filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -3012,7 +3028,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* ── Websites filter ───────────────────────────────────────────── */}
+        {/* Websites filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
@@ -3069,7 +3085,7 @@ export default function AllProductsPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* ── View / Sort / Column toggle (combined) ────────────────────── */}
+        {/* Sort / Column toggle */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -3081,7 +3097,6 @@ export default function AllProductsPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            {/* ── Sort section ──────────────────────────────────────────── */}
             <DropdownMenuLabel className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Sort
@@ -3152,7 +3167,6 @@ export default function AllProductsPage() {
 
             <DropdownMenuSeparator />
 
-            {/* ── Column visibility section ──────────────────────────── */}
             <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Toggle Columns
             </DropdownMenuLabel>
@@ -3423,13 +3437,16 @@ export default function AllProductsPage() {
           isRunning={isTdsRunning}
         />
 
+        {/* Single delete — requestMode-aware */}
         <DeleteToRecycleBinDialog
           open={!!deleteTarget}
           onOpenChange={(v) => !v && setDeleteTarget(null)}
           itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
           onConfirm={() => handleSoftDelete(deleteTarget!)}
+          requestMode={isRequestMode}
         />
 
+        {/* Bulk delete — requestMode-aware */}
         <DeleteToRecycleBinDialog
           open={bulkDeleteOpen}
           onOpenChange={setBulkDeleteOpen}
@@ -3437,6 +3454,7 @@ export default function AllProductsPage() {
           confirmText={`${selectedCount} products`}
           count={selectedCount}
           onConfirm={handleBulkSoftDelete}
+          requestMode={isRequestMode}
         />
 
         <AssignToWebsiteDialog

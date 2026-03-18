@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Trash2, AlertTriangle } from "lucide-react";
+import { Trash2, AlertTriangle, Clock, Send } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,16 @@ interface DeleteToRecycleBinDialogProps {
   onConfirm: () => Promise<void> | void;
   /** Optional: show how many items are being deleted */
   count?: number;
+  /**
+   * requestMode — true when the current user is restricted (e.g. pd_engineer)
+   * and cannot delete directly. The dialog becomes a "Submit Delete Request"
+   * flow instead of "Move to Recycle Bin".
+   *
+   * The actual routing (pending vs direct) is handled by the caller via
+   * useProductWorkflow → submitProductDelete. This prop only controls the
+   * copy / iconography so the UI matches the user's permission level.
+   */
+  requestMode?: boolean;
 }
 
 const LONG_PRESS_MS = 2000;
@@ -38,6 +48,7 @@ export function DeleteToRecycleBinDialog({
   confirmText,
   onConfirm,
   count = 1,
+  requestMode = false,
 }: DeleteToRecycleBinDialogProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -86,73 +97,105 @@ export function DeleteToRecycleBinDialog({
     }
   }, [isLoading, onOpenChange]);
 
-  // Keep executeConfirm fresh in a ref for the rAF tick
   const executeConfirmRef = useRef(executeConfirm);
   useEffect(() => {
     executeConfirmRef.current = executeConfirm;
   }, [executeConfirm]);
 
-  // ── rAF tick for long-press ───────────────────────────────────────────────
+  // ── rAF-based long-press logic (bulk only) ───────────────────────────────
   const tick = useCallback(() => {
     if (!pressStart.current) return;
     const elapsed = Date.now() - pressStart.current;
-    const pct = Math.min((elapsed / LONG_PRESS_MS) * 100, 100);
-    setPressProgress(pct);
-
-    if (pct < 100) {
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      // Completed — fire once
-      if (!firedRef.current) {
-        firedRef.current = true;
-        setIsPressing(false);
-        pressStart.current = null;
-        executeConfirmRef.current();
-      }
+    const progress = Math.min((elapsed / LONG_PRESS_MS) * 100, 100);
+    setPressProgress(progress);
+    if (progress >= 100 && !firedRef.current) {
+      firedRef.current = true;
+      executeConfirmRef.current();
+      return;
     }
-  }, []); // empty deps — reads everything through refs
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
 
   const startPress = useCallback(() => {
     if (isLoading || firedRef.current) return;
     pressStart.current = Date.now();
-    setIsPressing(true);
+    firedRef.current = false;
     setPressProgress(0);
+    setIsPressing(true);
     rafRef.current = requestAnimationFrame(tick);
   }, [isLoading, tick]);
 
   const cancelPress = useCallback(() => {
-    if (firedRef.current) return; // already fired, don't reset
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     pressStart.current = null;
     setIsPressing(false);
-    setPressProgress(0);
+    if (!firedRef.current) setPressProgress(0);
   }, []);
 
-  // ── Single-item typed confirm ─────────────────────────────────────────────
-  const handleConfirmSingle = () => {
+  // ── Single confirm (type-to-confirm) ────────────────────────────────────
+  const handleConfirmSingle = useCallback(() => {
     if (!isMatch) return;
     executeConfirm();
-  };
+  }, [isMatch, executeConfirm]);
+
+  // ── Derived copy based on requestMode ────────────────────────────────────
+  const dialogTitle = requestMode
+    ? isBulk
+      ? `Submit Delete Request for ${count} Products`
+      : "Submit Delete Request"
+    : isBulk
+      ? `Move ${count} Products to Recycle Bin`
+      : "Move to Recycle Bin";
+
+  const dialogDescription = requestMode
+    ? "Your delete request will be sent to a PD Manager or Admin for approval."
+    : "This item will be moved to the recycle bin where it can be restored or permanently deleted.";
+
+  const confirmButtonLabel = requestMode
+    ? isBulk
+      ? "Submit Delete Request"
+      : "Submit Request"
+    : isBulk
+      ? "Move to Recycle Bin"
+      : "Move to Recycle Bin";
+
+  const noteText = requestMode
+    ? "This request will be reviewed before any product is deleted. You can track its status on the Requests page."
+    : "Items in the recycle bin can be restored or permanently deleted from the Recycle Bin page.";
+
+  const NoteIcon = requestMode ? Clock : Trash2;
+  const noteColor = requestMode
+    ? "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:border-amber-900 dark:text-amber-400"
+    : "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:border-amber-900 dark:text-amber-400";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="rounded-none max-w-lg">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
-            <div className="h-10 w-10 rounded-none bg-destructive/10 flex items-center justify-center shrink-0">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div
+              className={cn(
+                "h-10 w-10 rounded-none flex items-center justify-center shrink-0",
+                requestMode
+                  ? "bg-amber-100 dark:bg-amber-950/40"
+                  : "bg-destructive/10",
+              )}
+            >
+              {requestMode ? (
+                <Clock className="h-5 w-5 text-amber-600" />
+              ) : (
+                <Trash2 className="h-5 w-5 text-destructive" />
+              )}
             </div>
             <div>
               <DialogTitle className="text-base font-bold uppercase tracking-tight">
-                Move to Recycle Bin
+                {dialogTitle}
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                {isBulk
-                  ? `You are about to move ${count} items to the recycle bin.`
-                  : "This item will be moved to the recycle bin."}
+                {dialogDescription}
               </DialogDescription>
             </div>
           </div>
@@ -176,7 +219,9 @@ export function DeleteToRecycleBinDialog({
                 <span className="font-semibold text-foreground">
                   {count} products
                 </span>{" "}
-                will be moved to the recycle bin.
+                {requestMode
+                  ? "will be submitted for delete approval."
+                  : "will be moved to the recycle bin."}
               </p>
               <p className="text-[11px] text-muted-foreground">
                 Hold the button below for 2 seconds to confirm.
@@ -210,24 +255,28 @@ export function DeleteToRecycleBinDialog({
               />
               {inputValue.length > 0 && !isMatch && (
                 <p className="text-[10px] text-destructive">
-                  Name doesn't match. Please type exactly as shown.
+                  Name doesn&apos;t match. Please type exactly as shown.
                 </p>
               )}
               {isMatch && (
                 <p className="text-[10px] text-emerald-600 font-medium">
-                  ✓ Confirmed — ready to move to recycle bin.
+                  {requestMode
+                    ? "✓ Confirmed — ready to submit delete request."
+                    : "✓ Confirmed — ready to move to recycle bin."}
                 </p>
               )}
             </div>
           )}
 
           {/* Info note */}
-          <div className="flex items-start gap-2 rounded-none bg-amber-50 border border-amber-200 px-3 py-2.5 dark:bg-amber-950/20 dark:border-amber-900">
-            <Trash2 className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-relaxed">
-              Items in the recycle bin can be restored or permanently deleted
-              from the Recycle Bin page.
-            </p>
+          <div
+            className={cn(
+              "flex items-start gap-2 rounded-none border px-3 py-2.5",
+              noteColor,
+            )}
+          >
+            <NoteIcon className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600" />
+            <p className="text-[10px] leading-relaxed">{noteText}</p>
           </div>
         </div>
 
@@ -245,7 +294,6 @@ export function DeleteToRecycleBinDialog({
           {isBulk ? (
             /* ── Long-press confirm button ── */
             <div className="relative overflow-hidden rounded-none">
-              {/* Animated fill behind the button */}
               <div
                 className="absolute inset-0 bg-white/20 pointer-events-none origin-left"
                 style={{
@@ -254,10 +302,13 @@ export function DeleteToRecycleBinDialog({
                 }}
               />
               <Button
-                variant="destructive"
+                variant={requestMode ? "default" : "destructive"}
                 size="sm"
                 disabled={isLoading}
-                className="rounded-none relative select-none min-w-[200px]"
+                className={cn(
+                  "rounded-none relative select-none min-w-[200px]",
+                  requestMode && "bg-amber-600 hover:bg-amber-700 text-white",
+                )}
                 onMouseDown={startPress}
                 onMouseUp={cancelPress}
                 onMouseLeave={cancelPress}
@@ -269,16 +320,19 @@ export function DeleteToRecycleBinDialog({
                 onTouchCancel={cancelPress}
               >
                 {isLoading ? (
-                  <span className="animate-pulse">Moving to bin...</span>
+                  <span className="animate-pulse">
+                    {requestMode ? "Submitting..." : "Moving to bin..."}
+                  </span>
                 ) : isPressing ? (
-                  <>
-                    <Trash2 className="mr-1.5 h-3 w-3" />
-                    Hold… {Math.round(pressProgress)}%
-                  </>
+                  `Hold… ${Math.round(pressProgress)}%`
                 ) : (
                   <>
-                    <Trash2 className="mr-1.5 h-3 w-3" />
-                    Hold to Move {count} to Bin
+                    {requestMode ? (
+                      <Send className="mr-2 h-3.5 w-3.5" />
+                    ) : (
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    )}
+                    {confirmButtonLabel}
                   </>
                 )}
               </Button>
@@ -286,18 +340,27 @@ export function DeleteToRecycleBinDialog({
           ) : (
             /* ── Single typed confirm ── */
             <Button
-              variant="destructive"
+              variant={requestMode ? "default" : "destructive"}
               size="sm"
-              className="rounded-none"
-              onClick={handleConfirmSingle}
               disabled={!isMatch || isLoading}
+              className={cn(
+                "rounded-none",
+                requestMode && "bg-amber-600 hover:bg-amber-700 text-white",
+              )}
+              onClick={handleConfirmSingle}
             >
               {isLoading ? (
-                <span className="animate-pulse">Moving...</span>
+                <span className="animate-pulse">
+                  {requestMode ? "Submitting..." : "Moving to bin..."}
+                </span>
               ) : (
                 <>
-                  <Trash2 className="mr-1.5 h-3 w-3" />
-                  Move to Recycle Bin
+                  {requestMode ? (
+                    <Send className="mr-1.5 h-3 w-3" />
+                  ) : (
+                    <Trash2 className="mr-1.5 h-3 w-3" />
+                  )}
+                  {confirmButtonLabel}
                 </>
               )}
             </Button>

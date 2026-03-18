@@ -21,6 +21,7 @@ import {
   Loader2,
   Inbox,
   Clock,
+  Package,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -78,10 +79,51 @@ function TypeChip({ type }: { type: string }) {
     delete: "bg-rose-100 text-rose-700",
   };
   return (
-    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${styles[type] ?? "bg-muted text-muted-foreground"}`}>
+    <span
+      className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+        styles[type] ?? "bg-muted text-muted-foreground"
+      }`}
+    >
       {type}
     </span>
   );
+}
+
+// ─── Product label resolver ───────────────────────────────────────────────────
+// Resolves the best display name from a request — uses canonical product schema
+// fields stored in meta (populated by createRequest / resolveProductMeta).
+
+function getRequestDisplayName(req: PendingRequest): string {
+  const meta = req.meta ?? {};
+
+  // meta.productName is always set for product requests (resolveProductName:
+  // itemDescription → name → itemCode).
+  if (meta.productName) return meta.productName;
+
+  // Fallback: try to pull directly from payload for legacy requests that
+  // predate meta enrichment.
+  const payload = req.payload ?? {};
+  const doc =
+    payload.after ?? // update request
+    payload.productSnapshot ?? // delete request
+    payload; // create request (flat)
+
+  return (
+    doc?.itemDescription || doc?.name || doc?.itemCode || req.resourceId || "—"
+  );
+}
+
+function getRequestSubtitle(req: PendingRequest): string | null {
+  const meta = req.meta ?? {};
+
+  // Show LIT / ECO item codes as subtitle when available.
+  const parts: string[] = [];
+  if (meta.litItemCode) parts.push(meta.litItemCode);
+  if (meta.ecoItemCode && meta.ecoItemCode !== meta.litItemCode)
+    parts.push(meta.ecoItemCode);
+  if (meta.productFamily) parts.push(meta.productFamily);
+
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 // ─── Single notification row ──────────────────────────────────────────────────
@@ -127,13 +169,18 @@ function NotificationItem({
   };
 
   const busy = approving || rejecting;
+  const displayName = getRequestDisplayName(req);
+  const subtitle = getRequestSubtitle(req);
 
   return (
     <div className="group flex flex-col gap-1.5 px-3 py-2.5 hover:bg-muted/40 transition-colors border-b border-border/50 last:border-0">
-      {/* Top row */}
+      {/* Top row: resource chip + type chip + timestamp */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-semibold capitalize">{req.resource}</span>
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold capitalize text-muted-foreground">
+            <Package className="w-3 h-3 shrink-0" />
+            {req.resource}
+          </span>
           <TypeChip type={req.type} />
         </div>
         <span className="text-[10px] text-muted-foreground shrink-0 mt-0.5">
@@ -141,9 +188,24 @@ function NotificationItem({
         </span>
       </div>
 
+      {/* Product identity */}
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-foreground truncate leading-snug">
+          {displayName}
+        </p>
+        {subtitle && (
+          <p className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">
+            {subtitle}
+          </p>
+        )}
+      </div>
+
       {/* Requested by */}
       <p className="text-[11px] text-muted-foreground">
-        By <span className="font-medium text-foreground">{req.requestedByName || req.requestedBy}</span>
+        By{" "}
+        <span className="font-medium text-foreground">
+          {req.requestedByName || req.requestedBy}
+        </span>
       </p>
 
       {/* Actions */}
@@ -164,7 +226,11 @@ function NotificationItem({
           onClick={handleApprove}
           disabled={busy}
         >
-          {approving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+          {approving ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <CheckCircle2 className="w-3 h-3" />
+          )}
           Approve
         </Button>
         <Button
@@ -174,7 +240,11 @@ function NotificationItem({
           onClick={handleReject}
           disabled={busy}
         >
-          {rejecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+          {rejecting ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <XCircle className="w-3 h-3" />
+          )}
           Reject
         </Button>
       </div>
@@ -190,7 +260,6 @@ export function NotificationsDropdown() {
   const [preview, setPreview] = useState<PendingRequest | null>(null);
   const [open, setOpen] = useState(false);
 
-  // Guard: only render for users who can see notifications
   const visible = canSeeNotifications(user);
 
   useEffect(() => {
@@ -206,7 +275,7 @@ export function NotificationsDropdown() {
       q,
       (snap) => {
         setRequests(
-          snap.docs.map((d) => ({ id: d.id, ...d.data() } as PendingRequest)),
+          snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PendingRequest),
         );
       },
       (err) => {
@@ -273,7 +342,7 @@ export function NotificationsDropdown() {
               <p className="text-xs">No pending requests</p>
             </div>
           ) : (
-            <ScrollArea className="max-h-90">
+            <ScrollArea className="max-h-96">
               {requests.map((req) => (
                 <NotificationItem
                   key={req.id}
