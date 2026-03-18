@@ -17,12 +17,18 @@
  * Product schema conventions:
  *   Primary name : itemDescription  (falls back to name)
  *   Item codes   : litItemCode, ecoItemCode  (falls back to itemCode)
+ *
+ * FIX (v2): submitProductDelete now re-reads the user's Firestore document to
+ * validate verify permission at execution time, not just from the cached session
+ * cookie.  This prevents stale or mis-set scopeAccess values from bypassing the
+ * approval workflow for PD Engineers.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { useCallback } from "react";
 import {
   doc,
+  getDoc, // ← added for server-side re-validation
   updateDoc,
   writeBatch,
   serverTimestamp,
@@ -34,7 +40,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/useAuth";
-import { hasAccess } from "@/lib/rbac";
+import { hasAccess, getScopeAccessForRole } from "@/lib/rbac"; // ← getScopeAccessForRole added
 import {
   createRequest,
   approveRequest,
@@ -101,6 +107,49 @@ async function getExistingPendingRequest(
   );
   const snap = await getDocs(q);
   return snap.empty ? null : snap.docs[0].id;
+}
+
+/**
+ * fetchServerCanVerify
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Re-reads the caller's Firestore `adminaccount` document to determine their
+ * CURRENT verify:products permission — the authoritative source of truth.
+ *
+ * Why this exists:
+ *   The session cookie stores scopeAccess at login time.  If a user's role or
+ *   scopes were updated in Firestore after their last login, the cookie can be
+ *   stale.  A PD Engineer whose cookie incorrectly contains "verify:products"
+ *   (e.g., from a prior role) would bypass the approval workflow without this
+ *   check.
+ *
+ * Fail-safe: returns false on any Firestore error so that uncertain users are
+ * always routed through the approval queue, never given silent direct access.
+ */
+async function fetchServerCanVerify(uid: string): Promise<boolean> {
+  try {
+    const snap = await getDoc(doc(db, "adminaccount", uid));
+    if (!snap.exists()) return false;
+
+    const data = snap.data();
+    const scopes: string[] =
+      Array.isArray(data.scopeAccess) && data.scopeAccess.length > 0
+        ? (data.scopeAccess as string[])
+        : getScopeAccessForRole(
+            String(data.role ?? "")
+              .toLowerCase()
+              .trim(),
+          );
+
+    return (
+      scopes.includes("superadmin") ||
+      scopes.includes("verify:*") ||
+      scopes.includes("verify:products")
+    );
+  } catch (err) {
+    // Fail-safe: if Firestore read fails, deny privileged path.
+    console.warn("[useProductWorkflow] fetchServerCanVerify failed:", err);
+    return false;
+  }
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -233,7 +282,15 @@ export function useProductWorkflow() {
         originPage,
       };
 
-      if (canVerify()) {
+      // ── AUTHORITATIVE server-side verify check ──────────────────────────
+      // Re-read the user's Firestore document here instead of trusting the
+      // cached session cookie.  This is the critical guard that ensures a
+      // PD Engineer (write:products only) cannot bypass the approval queue
+      // due to a stale or incorrect scopeAccess in their session.
+      const serverCanVerify = await fetchServerCanVerify(user.uid);
+
+      if (serverCanVerify) {
+        // ── Privileged path: direct soft-delete ──────────────────────────
         const batch = writeBatch(db);
         batch.set(doc(db, "recycle_bin", productId), {
           ...productSnapshot,
@@ -270,6 +327,7 @@ export function useProductWorkflow() {
           message: `"${productName}" moved to recycle bin.`,
         };
       } else {
+        // ── Restricted path: create pending request ───────────────────────
         const pendingUpdate = await getExistingPendingRequest(
           productId,
           "update",
@@ -504,7 +562,9 @@ export function useProductWorkflow() {
       } else {
         const existing = await getExistingPendingRequest(productId, "update");
         if (existing) {
-          throw new Error("This product already has a pending update request.");
+          throw new Error(
+            "This product already has a pending update request. Resolve it before setting product class.",
+          );
         }
 
         const reqId = await createRequest({

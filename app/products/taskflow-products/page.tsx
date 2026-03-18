@@ -500,7 +500,7 @@ export default function TaskflowProductsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <span className="font-medium text-sm truncate max-w-[220px]">
+                        <span className="font-medium text-sm truncate max-w-55">
                           {product.name || "—"}
                         </span>
                         {pendingStatus && (

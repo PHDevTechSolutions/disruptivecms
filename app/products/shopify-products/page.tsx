@@ -318,7 +318,7 @@ export default function ShopifyProductsPage() {
         </div>
 
         <Select value={brandFilter} onValueChange={setBrandFilter}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-40">
             <SelectValue placeholder="Filter by brand" />
           </SelectTrigger>
           <SelectContent>
@@ -443,7 +443,7 @@ export default function ShopifyProductsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <span className="font-medium text-sm truncate max-w-[220px]">
+                        <span className="font-medium text-sm truncate max-w-55">
                           {product.name || "—"}
                         </span>
                         {pendingStatus && (
