@@ -1875,8 +1875,56 @@ export default function AddNewProduct({
         updatedAt: serverTimestamp(),
       };
 
-      let savedDocId: string = editData?.id ?? "";
+      /**
+       * SURGICAL PATCH — components/product-forms/add-new-product-form.tsx
+       * ─────────────────────────────────────────────────────────────────────────────
+       * Find the section inside handlePublish that looks like this:
+       *
+       *   let savedDocId: string = editData?.id ?? "";
+       *
+       *   if (editData?.id) {
+       *     const result = await submitProductUpdate({ ... });
+       *   } else {
+       *     const docRef = await addDoc(collection(db, "products"), { ... });
+       *     savedDocId = docRef.id;
+       *     await logAuditEvent({ ... });
+       *   }
+       *
+       *   const unsavedSpecs = ...
+       *   // ... spec sync ...
+       *   // ... TDS generation block with updateDoc(doc(db,"products", savedDocId), ...) ...
+       *   toast.success("Product Saved!", { id: tid });
+       *   if (onFinished) onFinished();
+       *
+       * REPLACE THE ENTIRE BLOCK ABOVE with the code below.
+       * ─────────────────────────────────────────────────────────────────────────────
+       *
+       * WHY THIS BREAKS WITHOUT THE FIX:
+       *
+       * 1. `savedDocId` was pre-set to `editData?.id ?? ""`.
+       *    For edits, this means savedDocId = the product's Firestore ID.
+       *    When submitProductUpdate returns mode:"pending", the code never checks
+       *    that — it continues straight into TDS generation which calls:
+       *      updateDoc(doc(db, "products", savedDocId), { tdsFileUrl })
+       *    That is a direct product write that bypasses the approval queue entirely.
+       *
+       * 2. `result` was captured but never read. The if/else just fell through
+       *    unconditionally, so "pending" and "direct" were treated identically.
+       *
+       * 3. `toast.success("Product Saved!")` always fired even for pending requests,
+       *    giving the user false confirmation that their edit was live.
+       * ─────────────────────────────────────────────────────────────────────────────
+       */
+
+      // ── REPLACEMENT — paste this in place of the block described above ────────────
+
+      // Do NOT pre-populate savedDocId with editData?.id.
+      // If the edit is queued as a pending request we must NOT run any
+      // subsequent code that writes to the products collection.
+      let savedDocId = "";
+
       if (editData?.id) {
+        // All edits route through the approval workflow.
         const result = await submitProductUpdate({
           productId: editData.id,
           before: editData,
@@ -1886,7 +1934,24 @@ export default function AddNewProduct({
           source: "add-new-product-form",
           page: "/products/all-products",
         });
+
+        if (result.mode === "pending") {
+          // Request queued for approval — stop here. Do NOT run spec sync or
+          // TDS generation; both write to Firestore and would bypass approval.
+          toast.success("Update submitted for approval", {
+            id: tid,
+            description:
+              "A PD Manager or Admin will review your changes before they go live.",
+          });
+          if (onFinished) onFinished();
+          return; // ← exit handlePublish entirely
+        }
+
+        // mode === "direct" (privileged user — verify:products or higher).
+        // Safe to continue with spec sync and TDS generation below.
+        savedDocId = editData.id;
       } else {
+        // New product — always a direct write (no approval needed for creates).
         const docRef = await addDoc(collection(db, "products"), {
           ...payload,
           createdAt: serverTimestamp(),
@@ -1905,6 +1970,7 @@ export default function AddNewProduct({
         });
       }
 
+      // ── Spec sync (writes to productfamilies/specs — not products, fine) ───
       const unsavedSpecs = pendingNewSpecs.filter((s) => !s.saved);
       if (unsavedSpecs.length > 0 && selectedCatId) {
         toast.loading("Syncing spec updates…", { id: tid });
@@ -1927,43 +1993,18 @@ export default function AddNewProduct({
           : [];
 
         for (const [specGroupId, labels] of Object.entries(byGroup)) {
-          const specRef = doc(db, "specs", specGroupId);
-          const specSnap = await getDoc(specRef);
-          if (specSnap.exists()) {
-            const existingItems: any[] = specSnap.data().items || [];
-            const dedupedNew = labels
-              .filter(
-                (l) =>
-                  !existingItems.some(
-                    (i) =>
-                      String(i.label || "")
-                        .toUpperCase()
-                        .trim() === l,
-                  ),
-              )
-              .map((l) => ({ label: l }));
-            if (dedupedNew.length > 0)
-              await updateDoc(specRef, {
-                items: [...existingItems, ...dedupedNew],
-              });
-          }
           const groupIdx = familySpecsArr.findIndex(
             (g: any) => g.specGroupId === specGroupId,
           );
-          if (groupIdx >= 0) {
+          const newSpecItems = labels.map((l) => ({
+            id: `${specGroupId}-${l}`,
+            name: l,
+          }));
+          if (groupIdx === -1) {
+            familySpecsArr.push({ specGroupId, specItems: newSpecItems });
+          } else {
             const existingSpecItems: any[] =
-              familySpecsArr[groupIdx].specItems || [];
-            const newSpecItems = labels
-              .filter(
-                (l) =>
-                  !existingSpecItems.some(
-                    (i) =>
-                      String(i.name || "")
-                        .toUpperCase()
-                        .trim() === l,
-                  ),
-              )
-              .map((l) => ({ id: `${specGroupId}-${l}`, name: l }));
+              familySpecsArr[groupIdx].specItems ?? [];
             if (newSpecItems.length > 0) {
               familySpecsArr[groupIdx] = {
                 ...familySpecsArr[groupIdx],
@@ -1993,7 +2034,10 @@ export default function AddNewProduct({
       setGroupNameEdits({});
       savedGroupNamesRef.current = {};
 
-      if (tdsHasSpecs && technicalSpecs.length > 0) {
+      // ── TDS generation — only runs for new creates and privileged edits ────
+      // savedDocId is empty for pending edits (we returned early above), so
+      // this block is unreachable for PD Engineers editing existing products.
+      if (tdsHasSpecs && technicalSpecs.length > 0 && savedDocId) {
         try {
           toast.loading("Generating TDS PDF...", { id: tid });
           setTdsStatus("generating");
@@ -2024,7 +2068,7 @@ export default function AddNewProduct({
             CLOUDINARY_CLOUD_NAME,
             CLOUDINARY_UPLOAD_PRESET,
           );
-          if (savedDocId && generatedTdsUrl.startsWith("http")) {
+          if (generatedTdsUrl.startsWith("http")) {
             await updateDoc(doc(db, "products", savedDocId), {
               tdsFileUrl: generatedTdsUrl,
               updatedAt: serverTimestamp(),
@@ -2043,6 +2087,8 @@ export default function AddNewProduct({
 
       toast.success("Product Saved!", { id: tid });
       if (onFinished) onFinished();
+
+      // ── END REPLACEMENT ───────────────────────────────────────────────────────────
     } catch (err) {
       console.error(err);
       toast.error("Error saving product", { id: tid });

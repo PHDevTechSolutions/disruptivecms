@@ -5,86 +5,82 @@ import { adminDb } from "@/lib/firebase/admin";
 
 /**
  * POST /api/auth/login
- * Create a session cookie with user data after successful Firebase authentication.
  *
- * SECURITY: scopeAccess is NEVER taken from the client request body.
- * It is always read from Firestore server-side via the Admin SDK so that
- * a malicious caller cannot inject elevated scopes (e.g. "superadmin",
- * "verify:products") into their own session cookie.
+ * Creates the session cookie after Firebase client-side authentication succeeds.
  *
- * Resolution order for scopeAccess:
+ * SECURITY: scopeAccess is ALWAYS read from Firestore via the Admin SDK.
+ * The client-sent `scopeAccess` body field is silently discarded — trusting it
+ * would let anyone POST `scopeAccess: ["superadmin"]` and get admin privileges.
+ *
+ * Resolution order for scopeAccess (first that succeeds wins):
  *   1. adminaccount/{uid}.scopeAccess from Firestore  ← authoritative
- *   2. Derived from role via getScopeAccessForRole()  ← fallback for legacy accounts
+ *   2. getScopeAccessForRole(role)                     ← safe fallback
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // NOTE: `scopeAccess` from the body is intentionally destructured but
-    // never used below — it is discarded to prevent privilege escalation.
-    const { uid, email, name, role, accessLevel } = body;
+    // `scopeAccess` is destructured here but intentionally never used below —
+    // it is discarded to prevent privilege escalation from the client body.
+    const { uid, email, name, role } = body;
 
     if (!uid || !email || !role) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Missing required fields: uid, email, role" },
         { status: 400 },
       );
     }
 
     const normalizedRole = String(role).toLowerCase().trim();
 
-    // ── Fetch authoritative scopeAccess from Firestore (server-side) ────────
-    // Never trust the client-supplied value; always derive from the database.
+    // ── Fetch authoritative scopeAccess from Firestore ───────────────────────
     let resolvedScopeAccess: string[] = getScopeAccessForRole(normalizedRole);
 
     if (adminDb) {
       try {
-        const userSnap = await adminDb
-          .collection("adminaccount")
-          .doc(uid)
-          .get();
+        const snap = await adminDb.collection("adminaccount").doc(uid).get();
 
-        if (userSnap.exists) {
-          const data = userSnap.data()!;
+        if (snap.exists) {
+          const data = snap.data()!;
 
-          // Use stored scopeAccess if present and non-empty; otherwise fall
-          // back to role-derived scopes (covers legacy/pre-RBAC accounts).
-          if (Array.isArray(data.scopeAccess) && data.scopeAccess.length > 0) {
-            resolvedScopeAccess = data.scopeAccess as string[];
-          }
-
-          // Also re-derive accessLevel from Firestore to keep it consistent.
-          // Ignore the client-sent value for the same reason.
-          const firestoreRole = String(data.role ?? normalizedRole)
+          // Reject if the role stored in Firestore doesn't match what the
+          // client sent — could indicate a tampered request.
+          const firestoreRole = String(data.role ?? "")
             .toLowerCase()
             .trim();
 
-          // Validate that the role in Firestore matches what was sent; if not,
-          // reject — this could indicate a tampered request.
-          if (firestoreRole !== normalizedRole) {
+          if (firestoreRole && firestoreRole !== normalizedRole) {
             console.warn(
-              `[API] Login role mismatch — client sent "${normalizedRole}", Firestore has "${firestoreRole}" for uid ${uid}`,
+              `[login] Role mismatch uid=${uid} ` +
+                `client="${normalizedRole}" firestore="${firestoreRole}"`,
             );
             return NextResponse.json(
-              { error: "Role mismatch — please log in again." },
+              { error: "Role mismatch — please sign out and log in again." },
               { status: 403 },
             );
           }
+
+          // Prefer Firestore-stored scopes; fall back to role-derived defaults
+          // for accounts created before the scopeAccess field was introduced.
+          if (Array.isArray(data.scopeAccess) && data.scopeAccess.length > 0) {
+            resolvedScopeAccess = data.scopeAccess as string[];
+          }
         }
-      } catch (firestoreErr) {
-        // Log but don't fail the login — fall back to role-derived scopes.
-        // This keeps the app functional if Firestore is temporarily unavailable,
-        // while still being safer than trusting the client.
+      } catch (err) {
+        // Firestore read failed — log and continue with role-derived fallback.
+        // This keeps login working even during temporary Firestore outages.
         console.error(
-          "[API] Failed to fetch scopeAccess from Firestore:",
-          firestoreErr,
+          "[login] Failed to fetch scopeAccess from Firestore:",
+          err,
         );
       }
     } else {
-      // Admin SDK not configured — log a warning and fall back gracefully.
+      // Admin SDK not configured (FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL /
+      // FIREBASE_PRIVATE_KEY missing). Log a warning; role-derived fallback is safe.
       console.warn(
-        "[API] Firebase Admin SDK not initialised — scopeAccess derived from role only. " +
-          "Set FIREBASE_ADMIN_* env vars to enable server-side Firestore validation.",
+        "[login] Firebase Admin SDK not initialised — " +
+          "scopeAccess derived from role. Set FIREBASE_PROJECT_ID, " +
+          "FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY in your .env.",
       );
     }
 
@@ -93,15 +89,11 @@ export async function POST(request: NextRequest) {
       email,
       name: name || "User",
       role: normalizedRole,
-      accessLevel: accessLevel || getAccessLevelForRole(normalizedRole),
+      accessLevel: getAccessLevelForRole(normalizedRole),
       scopeAccess: resolvedScopeAccess,
     };
 
-    const res = NextResponse.json({
-      success: true,
-      user: userData,
-    });
-
+    const res = NextResponse.json({ success: true, user: userData });
     const session = await writeSessionCookie(userData, res);
 
     if (!session) {
@@ -113,7 +105,7 @@ export async function POST(request: NextRequest) {
 
     return res;
   } catch (error) {
-    console.error("[API] Login error:", error);
+    console.error("[login] Error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

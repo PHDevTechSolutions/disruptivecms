@@ -1,26 +1,22 @@
-import { initializeApp, getApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
+// Secondary Firebase app instance used for isolated user creation in the
+// admin register flow. createUserWithEmailAndPassword() on this instance
+// will NOT affect the currently logged-in superadmin session.
 const firebaseConfig = {
-  apiKey: "AIzaSyCNonSOohWCFdgL052XUFFZTH1orbP2dH4",
-  authDomain: "taskflow-4605f.firebaseapp.com",
-  projectId: "taskflow-4605f",
-  storageBucket: "taskflow-4605f.firebasestorage.app",
-  messagingSenderId: "558742255762",
-  appId: "1:558742255762:web:5725b5c26f1c6fae9e8e4b",
-  measurementId: "G-9J1LXQ8YZC",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Secondary Firebase app instance for isolated user creation
-// This prevents createUserWithEmailAndPassword() from affecting the primary session
-let secondaryApp: any = null;
-
-try {
-  secondaryApp = getApp("secondary");
-} catch (err) {
-  // App doesn't exist yet, initialize it
-  secondaryApp = initializeApp(firebaseConfig, "secondary");
-}
+// Use a named app ("secondary") so it doesn't clash with the default instance.
+const secondaryApp = getApps().find((a) => a.name === "secondary")
+  ?? initializeApp(firebaseConfig, "secondary");
 
 export const secondaryAuth = getAuth(secondaryApp);
 export default secondaryApp;

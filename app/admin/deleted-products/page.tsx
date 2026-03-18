@@ -1,18 +1,18 @@
 "use client";
 
-import * as React from "react";
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Trash2,
   RotateCcw,
+  Loader2,
   Search,
-  Package,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   AlertTriangle,
   Clock,
+  Package,
   X,
+  ShieldOff,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -30,7 +30,19 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -39,132 +51,149 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 import { db } from "@/lib/firebase";
 import {
   collection,
-  onSnapshot,
   query,
   orderBy,
-  doc,
-  deleteDoc,
+  onSnapshot,
   writeBatch,
+  deleteDoc,
+  doc,
 } from "firebase/firestore";
-import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
+import { logAuditEvent } from "@/lib/logger";
+import { ProtectedLayout } from "@/components/layouts/protected-layout";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { NotificationsDropdown } from "@/components/notifications/notifications-dropdown";
 
-const ITEMS_PER_PAGE = 10;
+// ── RBAC ──────────────────────────────────────────────────────────────────────
+import { useAuth } from "@/lib/useAuth";
+import { hasAccess } from "@/lib/rbac";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ITEMS_PER_PAGE = 20;
 const LONG_PRESS_MS = 2000;
 
-// ── Long-press hook ───────────────────────────────────────────────────────────
-function useLongPress(onComplete: () => void, disabled = false) {
-  const [progress, setProgress] = useState(0);
-  const [pressing, setPressing] = useState(false);
-  const startRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const doneRef = useRef(false);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const reset = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    startRef.current = null;
-    setPressing(false);
-    setProgress(0);
-  }, []);
-
-  const tick = useCallback(() => {
-    if (!startRef.current) return;
-    const elapsed = Date.now() - startRef.current;
-    const pct = Math.min((elapsed / LONG_PRESS_MS) * 100, 100);
-    setProgress(pct);
-    if (pct < 100) {
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      if (!doneRef.current) {
-        doneRef.current = true;
-        setPressing(false);
-        onComplete();
-      }
-    }
-  }, [onComplete]);
-
-  const start = useCallback(() => {
-    if (disabled || doneRef.current) return;
-    doneRef.current = false;
-    startRef.current = Date.now();
-    setPressing(true);
-    setProgress(0);
-    rafRef.current = requestAnimationFrame(tick);
-  }, [disabled, tick]);
-
-  const cancel = useCallback(() => reset(), [reset]);
-
-  // reset doneRef when disabled changes
-  useEffect(() => {
-    if (!disabled) doneRef.current = false;
-  }, [disabled]);
-
-  return { progress, pressing, start, cancel };
+function formatDeletedAt(ts: any): string {
+  if (!ts) return "—";
+  try {
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString("en-PH", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
 }
 
-// ── Long-press Button ─────────────────────────────────────────────────────────
+function getPaginationPages(currentPage: number, totalPages: number): number[] {
+  const pages: number[] = [];
+  for (
+    let i = Math.max(1, currentPage - 2);
+    i <= Math.min(totalPages, currentPage + 2);
+    i++
+  ) {
+    pages.push(i);
+  }
+  return pages;
+}
+
+// ─── Long-press button ────────────────────────────────────────────────────────
+
 function LongPressButton({
   onComplete,
   disabled,
+  className,
   label,
   progressLabel,
-  className,
 }: {
   onComplete: () => void;
   disabled?: boolean;
-  label: React.ReactNode;
-  progressLabel?: (pct: number) => React.ReactNode;
   className?: string;
+  label: React.ReactNode;
+  progressLabel: (pct: number) => React.ReactNode;
 }) {
-  const { progress, pressing, start, cancel } = useLongPress(
-    onComplete,
-    disabled,
+  const [progress, setProgress] = useState(0);
+  const [pressing, setPressing] = useState(false);
+  const pressStart = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const firedRef = useRef(false);
+
+  const tick = useCallback(() => {
+    if (!pressStart.current) return;
+    const elapsed = Date.now() - pressStart.current;
+    const pct = Math.min((elapsed / LONG_PRESS_MS) * 100, 100);
+    setProgress(pct);
+    if (pct >= 100 && !firedRef.current) {
+      firedRef.current = true;
+      onComplete();
+      return;
+    }
+    rafRef.current = requestAnimationFrame(tick);
+  }, [onComplete]);
+
+  const start = useCallback(() => {
+    if (disabled || firedRef.current) return;
+    pressStart.current = Date.now();
+    firedRef.current = false;
+    setProgress(0);
+    setPressing(true);
+    rafRef.current = requestAnimationFrame(tick);
+  }, [disabled, tick]);
+
+  const cancel = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    pressStart.current = null;
+    setPressing(false);
+    if (!firedRef.current) setProgress(0);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    },
+    [],
   );
 
   return (
-    <div className="relative overflow-hidden rounded-none">
+    <div className={cn("relative overflow-hidden rounded-none", className)}>
       <div
-        className="absolute inset-0 bg-destructive/25 pointer-events-none origin-left"
+        className="absolute inset-0 bg-white/20 pointer-events-none origin-left"
         style={{ transform: `scaleX(${progress / 100})`, transition: "none" }}
       />
       <Button
         variant="destructive"
         size="sm"
         disabled={disabled}
-        className={cn("rounded-none relative select-none", className)}
+        className="rounded-none relative select-none w-full"
         onMouseDown={start}
         onMouseUp={cancel}
         onMouseLeave={cancel}
-        onTouchStart={start}
+        onTouchStart={(e) => {
+          e.preventDefault();
+          start();
+        }}
         onTouchEnd={cancel}
+        onTouchCancel={cancel}
       >
-        {pressing && progressLabel
-          ? progressLabel(Math.round(progress))
-          : label}
+        {pressing ? progressLabel(Math.round(progress)) : label}
       </Button>
     </div>
   );
 }
 
-// ── Restore Confirmation Dialog ───────────────────────────────────────────────
+// ─── Restore dialog ───────────────────────────────────────────────────────────
+
 function RestoreDialog({
   open,
   onOpenChange,
@@ -173,27 +202,24 @@ function RestoreDialog({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  item: any;
-  onConfirm: () => Promise<void>;
+  item: any | null;
+  onConfirm: (item: any) => Promise<void>;
 }) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const required = item?.name ?? "";
+  const required = item?.itemDescription || item?.name || "";
   const isMatch = inputValue === required;
 
   useEffect(() => {
-    if (!open) {
-      setInputValue("");
-      setIsLoading(false);
-    }
+    if (!open) setInputValue("");
   }, [open]);
 
   const handleConfirm = async () => {
-    if (!isMatch) return;
+    if (!isMatch || !item) return;
     setIsLoading(true);
     try {
-      await onConfirm();
+      await onConfirm(item);
       onOpenChange(false);
     } finally {
       setIsLoading(false);
@@ -202,18 +228,18 @@ function RestoreDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-lg">
+      <DialogContent className="rounded-none max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
-            <div className="h-10 w-10 rounded-none bg-emerald-500/10 flex items-center justify-center shrink-0">
+            <div className="h-10 w-10 rounded-none flex items-center justify-center shrink-0 bg-emerald-100 dark:bg-emerald-950/40">
               <RotateCcw className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
               <DialogTitle className="text-base font-bold uppercase tracking-tight">
-                Restore Item
+                Restore Product
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                This item will be restored to its original location.
+                This item will be moved back to the products collection.
               </DialogDescription>
             </div>
           </div>
@@ -259,9 +285,7 @@ function RestoreDialog({
               className={cn(
                 "rounded-none font-mono text-sm transition-colors",
                 inputValue.length > 0 &&
-                  (isMatch
-                    ? "border-emerald-500 focus-visible:ring-emerald-500/20"
-                    : "border-destructive/50 focus-visible:ring-destructive/20"),
+                  (isMatch ? "border-emerald-500" : "border-destructive/50"),
               )}
             />
             {inputValue.length > 0 && !isMatch && (
@@ -294,11 +318,9 @@ function RestoreDialog({
             disabled={!isMatch || isLoading}
           >
             {isLoading ? (
-              <span className="animate-pulse">Restoring...</span>
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <>
-                <RotateCcw className="mr-1.5 h-3 w-3" /> Restore Item
-              </>
+              "Restore"
             )}
           </Button>
         </DialogFooter>
@@ -307,7 +329,8 @@ function RestoreDialog({
   );
 }
 
-// ── Permanent Delete Dialog ───────────────────────────────────────────────────
+// ─── Permanent delete dialog ──────────────────────────────────────────────────
+
 function PermanentDeleteDialog({
   open,
   onOpenChange,
@@ -316,27 +339,24 @@ function PermanentDeleteDialog({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  item: any;
-  onConfirm: () => Promise<void>;
+  item: any | null;
+  onConfirm: (item: any) => Promise<void>;
 }) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const required = item?.name ?? "";
+  const required = item?.itemDescription || item?.name || "";
   const isMatch = inputValue === required;
 
   useEffect(() => {
-    if (!open) {
-      setInputValue("");
-      setIsLoading(false);
-    }
+    if (!open) setInputValue("");
   }, [open]);
 
   const handleConfirm = async () => {
-    if (!isMatch) return;
+    if (!isMatch || !item) return;
     setIsLoading(true);
     try {
-      await onConfirm();
+      await onConfirm(item);
       onOpenChange(false);
     } finally {
       setIsLoading(false);
@@ -345,18 +365,18 @@ function PermanentDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-lg">
+      <DialogContent className="rounded-none max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
-            <div className="h-10 w-10 rounded-none bg-destructive/10 flex items-center justify-center shrink-0">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div className="h-10 w-10 rounded-none flex items-center justify-center shrink-0 bg-destructive/10">
+              <Trash2 className="h-5 w-5 text-destructive" />
             </div>
             <div>
               <DialogTitle className="text-base font-bold uppercase tracking-tight">
                 Permanently Delete
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                This cannot be undone. The item will be gone forever.
+                The item will be gone forever.
               </DialogDescription>
             </div>
           </div>
@@ -402,9 +422,7 @@ function PermanentDeleteDialog({
               className={cn(
                 "rounded-none font-mono text-sm transition-colors",
                 inputValue.length > 0 &&
-                  (isMatch
-                    ? "border-emerald-500 focus-visible:ring-emerald-500/20"
-                    : "border-destructive/50 focus-visible:ring-destructive/20"),
+                  (isMatch ? "border-emerald-500" : "border-destructive/50"),
               )}
             />
             {inputValue.length > 0 && !isMatch && (
@@ -446,11 +464,9 @@ function PermanentDeleteDialog({
             disabled={!isMatch || isLoading}
           >
             {isLoading ? (
-              <span className="animate-pulse">Deleting...</span>
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <>
-                <Trash2 className="mr-1.5 h-3 w-3" /> Delete Forever
-              </>
+              "Delete Forever"
             )}
           </Button>
         </DialogFooter>
@@ -459,8 +475,9 @@ function PermanentDeleteDialog({
   );
 }
 
-// ── Bulk Permanent Delete Dialog (long-press) ─────────────────────────────────
-function BulkDeleteDialog({
+// ─── Bulk permanent delete dialog ────────────────────────────────────────────
+
+function BulkPermanentDeleteDialog({
   open,
   onOpenChange,
   count,
@@ -472,10 +489,6 @@ function BulkDeleteDialog({
   onConfirm: () => Promise<void>;
 }) {
   const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open) setIsLoading(false);
-  }, [open]);
 
   const handleComplete = async () => {
     setIsLoading(true);
@@ -489,18 +502,18 @@ function BulkDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-lg">
+      <DialogContent className="rounded-none max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
-            <div className="h-10 w-10 rounded-none bg-destructive/10 flex items-center justify-center shrink-0">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div className="h-10 w-10 rounded-none flex items-center justify-center shrink-0 bg-destructive/10">
+              <Trash2 className="h-5 w-5 text-destructive" />
             </div>
             <div>
               <DialogTitle className="text-base font-bold uppercase tracking-tight">
-                Permanently Delete {count} Items
+                Delete {count} Items Forever
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                This action cannot be undone.
+                These items will be permanently removed.
               </DialogDescription>
             </div>
           </div>
@@ -564,20 +577,28 @@ function BulkDeleteDialog({
   );
 }
 
-// ── Main Recycle Bin Page ─────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function RecycleBinPage() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
   const [restoreTarget, setRestoreTarget] = useState<any>(null);
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<any>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [isBulkRestoring, setIsBulkRestoring] = useState(false);
 
+  // ── RBAC ────────────────────────────────────────────────────────────────────
+  const { user } = useAuth();
+
+  // Only verify:products | verify:* | superadmin can restore or permanently delete.
+  // PD Engineers (write only) reach this page only if routes are misconfigured —
+  // the guard below stops them at the action level too.
+  const canManageRecycleBin = hasAccess(user, "verify", "products");
+
+  // ── Firestore listener ───────────────────────────────────────────────────────
   useEffect(() => {
     const q = query(
       collection(db, "recycle_bin"),
@@ -603,11 +624,17 @@ export default function RecycleBinPage() {
     setSelectedIds(new Set());
   }, [searchQuery]);
 
+  // ── Filtered + paginated data ────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
-      const name = (item.name ?? "").toLowerCase();
-      const code = (item.itemCode ?? "").toLowerCase();
+      const name = (item.name ?? item.itemDescription ?? "").toLowerCase();
+      const code = (
+        item.itemCode ??
+        item.litItemCode ??
+        item.ecoItemCode ??
+        ""
+      ).toLowerCase();
       return name.includes(q) || code.includes(q);
     });
   }, [items, searchQuery]);
@@ -622,7 +649,15 @@ export default function RecycleBinPage() {
     [filtered, currentPage],
   );
 
+  // ── Mutation handlers — all guarded by canManageRecycleBin ──────────────────
+
   const handleRestore = async (item: any) => {
+    // RBAC guard: only verify:products or higher may restore
+    if (!canManageRecycleBin) {
+      toast.error("You don't have permission to restore products.");
+      return;
+    }
+
     const targetCollection = item.originalCollection || "products";
     const batch = writeBatch(db);
     const {
@@ -643,45 +678,59 @@ export default function RecycleBinPage() {
       entityId: id,
       entityName: item.name,
       context: {
-        page: "/recycle-bin/deleted-products",
+        page: "/admin/deleted-products",
         source: "recycle-bin:restore",
         collection: targetCollection,
       },
     });
 
-    toast.success(`"${item.name}" restored successfully.`);
+    toast.success(
+      `"${item.name || item.itemDescription}" restored successfully.`,
+    );
   };
 
   const handlePermanentDelete = async (item: any) => {
+    // RBAC guard: only verify:products or higher may permanently delete
+    if (!canManageRecycleBin) {
+      toast.error("You don't have permission to permanently delete products.");
+      return;
+    }
+
     await deleteDoc(doc(db, "recycle_bin", item.id));
 
     await logAuditEvent({
       action: "delete",
       entityType: item.originalCollection || "products",
       entityId: item.id,
-      entityName: item.name,
+      entityName: item.name || item.itemDescription,
       context: {
-        page: "/recycle-bin/deleted-products",
+        page: "/admin/deleted-products",
         source: "recycle-bin:permanent-delete",
         collection: "recycle_bin",
       },
     });
 
-    toast.success(`"${item.name}" permanently deleted.`);
+    toast.success(
+      `"${item.name || item.itemDescription}" permanently deleted.`,
+    );
   };
 
   const handleBulkRestore = async () => {
+    // RBAC guard
+    if (!canManageRecycleBin) {
+      toast.error("You don't have permission to restore products.");
+      return;
+    }
+
     const selectedItems = items.filter((item) => selectedIds.has(item.id));
     if (selectedItems.length === 0) return;
 
     setIsBulkRestoring(true);
-
     try {
       const CHUNK_SIZE = 200;
       for (let i = 0; i < selectedItems.length; i += CHUNK_SIZE) {
         const chunk = selectedItems.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
-
         chunk.forEach((item) => {
           const targetCollection = item.originalCollection || "products";
           const {
@@ -692,11 +741,9 @@ export default function RecycleBinPage() {
             originPage,
             ...originalData
           } = item;
-
           batch.set(doc(db, targetCollection, id), originalData);
           batch.delete(doc(db, "recycle_bin", id));
         });
-
         await batch.commit();
       }
 
@@ -706,20 +753,16 @@ export default function RecycleBinPage() {
         entityId: null,
         entityName: `${selectedItems.length} items`,
         context: {
-          page: "/recycle-bin/deleted-products",
+          page: "/admin/deleted-products",
           source: "recycle-bin:bulk-restore",
           collection: "recycle_bin",
           bulk: true,
         },
-        metadata: {
-          ids: selectedItems.map((i) => i.id),
-        },
+        metadata: { ids: selectedItems.map((i) => i.id) },
       });
 
       toast.success(
-        `${selectedItems.length} item${
-          selectedItems.length !== 1 ? "s" : ""
-        } restored successfully.`,
+        `${selectedItems.length} item${selectedItems.length !== 1 ? "s" : ""} restored successfully.`,
       );
       setSelectedIds(new Set());
     } catch (error) {
@@ -731,6 +774,12 @@ export default function RecycleBinPage() {
   };
 
   const handleBulkPermanentDelete = async () => {
+    // RBAC guard
+    if (!canManageRecycleBin) {
+      toast.error("You don't have permission to permanently delete products.");
+      return;
+    }
+
     const batch = writeBatch(db);
     const ids: string[] = [];
     selectedIds.forEach((id) => {
@@ -745,7 +794,7 @@ export default function RecycleBinPage() {
       entityId: null,
       entityName: `${selectedIds.size} items`,
       context: {
-        page: "/recycle-bin/deleted-products",
+        page: "/admin/deleted-products",
         source: "recycle-bin:bulk-permanent-delete",
         collection: "recycle_bin",
         bulk: true,
@@ -757,6 +806,7 @@ export default function RecycleBinPage() {
     setSelectedIds(new Set());
   };
 
+  // ── Selection helpers ────────────────────────────────────────────────────────
   const toggleSelectAll = () => {
     if (selectedIds.size === paginated.length) setSelectedIds(new Set());
     else setSelectedIds(new Set(paginated.map((i) => i.id)));
@@ -769,84 +819,72 @@ export default function RecycleBinPage() {
     setSelectedIds(next);
   };
 
-  const formatDeletedAt = (ts: any) => {
-    if (!ts) return "---";
-    try {
-      return ts
-        .toDate()
-        .toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        });
-    } catch {
-      return "---";
-    }
-  };
-
-  const getPaginationPages = () => {
-    const max = 5;
-    if (totalPages <= max)
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    const pages: number[] = [];
-    let start = Math.max(1, currentPage - 2);
-    let end = Math.min(totalPages, start + max - 1);
-    if (end - start < max - 1) start = Math.max(1, end - max + 1);
-    for (let i = start; i <= end; i++) pages.push(i);
-    return pages;
-  };
-
   return (
-    <TooltipProvider delayDuration={0}>
+     <TooltipProvider>
+    <ProtectedLayout>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+          {/* ── Header ── */}
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="/admin">Dashboard</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Recycle Bin</BreadcrumbPage>
+                  <BreadcrumbLink href="/admin">Admin</BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Deleted Products</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
+            <div className="ml-auto flex items-center gap-2">
+              <NotificationsDropdown />
+            </div>
           </header>
 
-          <div className="flex flex-1 flex-col gap-4 p-4 pt-0 mt-4">
+          <div className="flex flex-col gap-4 p-4">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-                  <Trash2 className="h-6 w-6 text-muted-foreground" />
+                <h1 className="text-lg font-bold tracking-tight">
                   Recycle Bin
                 </h1>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {loading ? (
-                    "Loading..."
-                  ) : (
-                    <>
-                      <span className="font-semibold text-foreground">
-                        {filtered.length}
-                      </span>{" "}
-                      item{filtered.length !== 1 ? "s" : ""} in recycle bin
-                    </>
-                  )}
+                <p className="text-xs text-muted-foreground">
+                  {filtered.length} item{filtered.length !== 1 ? "s" : ""} in
+                  bin
                 </p>
               </div>
+            </div>
 
-              {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {selectedIds.size} selected
-                  </span>
+            {/* ── Read-only banner for non-privileged users ── */}
+            {!canManageRecycleBin && (
+              <div className="flex items-start gap-3 rounded-none border border-amber-200 bg-amber-50 px-4 py-3 dark:bg-amber-950/20 dark:border-amber-900">
+                <ShieldOff className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  You have read-only access to the recycle bin. Restoring or
+                  permanently deleting items requires{" "}
+                  <span className="font-semibold">verify:products</span>{" "}
+                  permission.
+                </p>
+              </div>
+            )}
+
+            {/* ── Bulk toolbar — only shown when items are selected AND user can manage ── */}
+            {selectedIds.size > 0 && canManageRecycleBin && (
+              <div className="flex items-center gap-2 rounded-none border bg-muted/30 px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    {selectedIds.size}
+                  </span>{" "}
+                  selected
+                </p>
+                <div className="ml-auto flex items-center gap-2">
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    className="rounded-none text-emerald-700 border-emerald-500 hover:bg-emerald-50"
+                    className="rounded-none text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
                     onClick={handleBulkRestore}
                     disabled={isBulkRestoring}
                   >
@@ -870,7 +908,6 @@ export default function RecycleBinPage() {
                   >
                     <X className="h-3.5 w-3.5 mr-1" /> Clear
                   </Button>
-                  {/* Long-press inline button in the toolbar */}
                   <LongPressButton
                     onComplete={() => setBulkDeleteOpen(true)}
                     className="min-w-[180px]"
@@ -887,9 +924,10 @@ export default function RecycleBinPage() {
                     )}
                   />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
+            {/* ── Search ── */}
             <div className="relative max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -900,29 +938,34 @@ export default function RecycleBinPage() {
               />
             </div>
 
+            {/* ── Info banner ── */}
             <div className="flex items-start gap-2 rounded-none bg-amber-50 border border-amber-200 px-4 py-3 dark:bg-amber-950/20 dark:border-amber-900">
               <Clock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
                 Items in the recycle bin are soft-deleted and can be restored.
-                To restore or permanently delete a single item, type the item's
-                exact name to confirm. For bulk deletion, hold the button for 2
-                seconds.
+                {canManageRecycleBin
+                  ? " To restore or permanently delete a single item, type the item's exact name to confirm. For bulk deletion, hold the button for 2 seconds."
+                  : " Contact a PD Manager or Admin to restore or remove items."}
               </p>
             </div>
 
+            {/* ── Table ── */}
             <div className="rounded-none border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={
-                          selectedIds.size === paginated.length &&
-                          paginated.length > 0
-                        }
-                        onCheckedChange={toggleSelectAll}
-                      />
-                    </TableHead>
+                    {/* Checkbox column only shown to users who can take action */}
+                    {canManageRecycleBin && (
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={
+                            selectedIds.size === paginated.length &&
+                            paginated.length > 0
+                          }
+                          onCheckedChange={toggleSelectAll}
+                        />
+                      </TableHead>
+                    )}
                     <TableHead className="w-16">Image</TableHead>
                     <TableHead>Product Info</TableHead>
                     <TableHead>Item Code</TableHead>
@@ -931,17 +974,22 @@ export default function RecycleBinPage() {
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
-
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-60 text-center">
+                      <TableCell
+                        colSpan={canManageRecycleBin ? 7 : 6}
+                        className="h-60 text-center"
+                      >
                         <Loader2 className="animate-spin mx-auto h-8 w-8 text-muted-foreground" />
                       </TableCell>
                     </TableRow>
                   ) : paginated.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-60 text-center">
+                      <TableCell
+                        colSpan={canManageRecycleBin ? 7 : 6}
+                        className="h-60 text-center"
+                      >
                         <div className="flex flex-col items-center gap-2 text-muted-foreground">
                           <Trash2 className="h-8 w-8 opacity-20" />
                           <p className="text-sm">Recycle bin is empty</p>
@@ -958,12 +1006,14 @@ export default function RecycleBinPage() {
                         data-state={selectedIds.has(item.id) && "selected"}
                         className="opacity-75 hover:opacity-100 transition-opacity"
                       >
-                        <TableCell onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            checked={selectedIds.has(item.id)}
-                            onCheckedChange={() => toggleSelect(item.id)}
-                          />
-                        </TableCell>
+                        {canManageRecycleBin && (
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selectedIds.has(item.id)}
+                              onCheckedChange={() => toggleSelect(item.id)}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <div className="w-12 h-12 bg-background rounded-none border overflow-hidden flex items-center justify-center grayscale">
                             {item.mainImage ? (
@@ -978,39 +1028,40 @@ export default function RecycleBinPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col max-w-[250px]">
-                            <span className="font-medium text-sm line-clamp-1 text-muted-foreground">
-                              {item.name}
-                            </span>
-                            <span className="text-xs text-muted-foreground/70">
-                              {item.productFamily ||
-                                item.categories ||
-                                "No Category"}
-                            </span>
+                          <div className="space-y-1">
+                            <p className="text-sm font-medium leading-tight">
+                              {item.itemDescription || item.name || "Unnamed"}
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] px-1.5 py-0 rounded-none"
+                              >
+                                {Array.isArray(item.brands)
+                                  ? item.brands.join(", ")
+                                  : item.brand || "Generic"}
+                              </Badge>
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] px-1.5 py-0 rounded-none opacity-60"
+                              >
+                                {item.originalCollection || "products"}
+                              </Badge>
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <span className="text-xs text-muted-foreground font-mono">
-                            {item.itemCode || "---"}
+                          <span className="text-xs font-mono text-muted-foreground">
+                            {item.litItemCode ||
+                              item.ecoItemCode ||
+                              item.itemCode ||
+                              "—"}
                           </span>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <Badge
-                              variant="outline"
-                              className="w-fit text-xs opacity-60"
-                            >
-                              {Array.isArray(item.brands)
-                                ? item.brands.join(", ")
-                                : item.brand || "Generic"}
-                            </Badge>
-                            <Badge
-                              variant="secondary"
-                              className="w-fit text-xs opacity-60"
-                            >
-                              {item.originalCollection || "products"}
-                            </Badge>
-                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {item.originPage || "—"}
+                          </span>
                         </TableCell>
                         <TableCell>
                           <span className="text-xs text-muted-foreground">
@@ -1018,24 +1069,31 @@ export default function RecycleBinPage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="rounded-none h-8 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
-                              onClick={() => setRestoreTarget(item)}
-                            >
-                              <RotateCcw className="h-3 w-3 mr-1" /> Restore
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="rounded-none h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => setPermanentDeleteTarget(item)}
-                            >
-                              <Trash2 className="h-3 w-3 mr-1" /> Delete
-                            </Button>
-                          </div>
+                          {canManageRecycleBin ? (
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="rounded-none h-8 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                onClick={() => setRestoreTarget(item)}
+                              >
+                                <RotateCcw className="h-3 w-3 mr-1" /> Restore
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="rounded-none h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => setPermanentDeleteTarget(item)}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" /> Delete
+                              </Button>
+                            </div>
+                          ) : (
+                            // Read-only indicator for non-privileged users
+                            <span className="text-[10px] text-muted-foreground italic">
+                              read only
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1044,6 +1102,7 @@ export default function RecycleBinPage() {
               </Table>
             </div>
 
+            {/* ── Pagination ── */}
             {!loading && totalPages > 1 && (
               <div className="flex items-center justify-between border-t pt-4">
                 <p className="text-xs text-muted-foreground">
@@ -1061,7 +1120,7 @@ export default function RecycleBinPage() {
                   >
                     <ChevronLeft size={14} />
                   </Button>
-                  {getPaginationPages().map((p) => (
+                  {getPaginationPages(currentPage, totalPages).map((p) => (
                     <Button
                       key={p}
                       variant={currentPage === p ? "default" : "outline"}
@@ -1088,26 +1147,26 @@ export default function RecycleBinPage() {
         </SidebarInset>
       </SidebarProvider>
 
+      {/* ── Dialogs ── */}
       <RestoreDialog
         open={!!restoreTarget}
         onOpenChange={(v) => !v && setRestoreTarget(null)}
         item={restoreTarget}
-        onConfirm={() => handleRestore(restoreTarget)}
+        onConfirm={handleRestore}
       />
-
       <PermanentDeleteDialog
         open={!!permanentDeleteTarget}
         onOpenChange={(v) => !v && setPermanentDeleteTarget(null)}
         item={permanentDeleteTarget}
-        onConfirm={() => handlePermanentDelete(permanentDeleteTarget)}
+        onConfirm={handlePermanentDelete}
       />
-
-      <BulkDeleteDialog
+      <BulkPermanentDeleteDialog
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
         count={selectedIds.size}
         onConfirm={handleBulkPermanentDelete}
       />
+    </ProtectedLayout>
     </TooltipProvider>
   );
 }

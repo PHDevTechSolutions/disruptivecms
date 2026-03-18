@@ -3,17 +3,19 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 
+// All client-side Firebase config must use NEXT_PUBLIC_ prefix so Next.js
+// exposes them to the browser bundle. Never hardcode these values.
 const firebaseConfig = {
-  apiKey: "AIzaSyCNonSOohWCFdgL052XUFFZTH1orbP2dH4",
-  authDomain: "taskflow-4605f.firebaseapp.com",
-  projectId: "taskflow-4605f",
-  storageBucket: "taskflow-4605f.firebasestorage.app",
-  messagingSenderId: "558742255762",
-  appId: "1:558742255762:web:5725b5c26f1c6fae9e8e4b",
-  measurementId: "G-9J1LXQ8YZC",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// Singleton pattern para iwas sa "Firebase App already exists" error sa Next.js
+// Singleton pattern — prevents "Firebase App already exists" in Next.js HMR
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export const db = getFirestore(app);
