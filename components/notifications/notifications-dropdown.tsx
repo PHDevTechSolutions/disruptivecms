@@ -483,7 +483,7 @@ export function NotificationsDropdown() {
           <div className="px-3 py-2">
             {isVerifier ? (
               <a
-                href="/admin/requests"
+                href="/products/requests"
                 className="text-[11px] text-primary hover:underline"
               >
                 View all requests →
