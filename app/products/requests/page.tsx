@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * app/products/requests/page.tsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Product requests tracking page. Replaces /admin/requests for all PD roles.
- *
- * Access (enforced via scopeAccess, not just role):
- *   verify:products | verify:* | superadmin
- *     → sees ALL requests, inline Approve / Reject actions
- *   write:products (no verify) — e.g. pd_engineer
- *     → sees ONLY their own submitted requests, read-only, no actions
- *
- * Both modes use the same table + shared RequestPreviewModal.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import * as React from "react";
 import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
@@ -80,17 +65,17 @@ import {
 
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess } from "@/lib/rbac";
-import {
-  PendingRequest,
-  RequestStatus,
-  approveRequest,
-  rejectRequest,
-} from "@/lib/requestService";
+import { PendingRequest, RequestStatus } from "@/lib/requestService";
 import { RequestPreviewModal } from "@/components/notifications/request-preview-modal";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import { NotificationsDropdown } from "@/components/notifications/notifications-dropdown";
+import { useRemarksAction } from "@/lib/useRemarksAction";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatTs(ts: Timestamp | null | undefined): string {
   if (!ts) return "—";
@@ -105,21 +90,18 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "pending")
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-        <Clock className="w-2.5 h-2.5" />
-        Pending
+        <Clock className="w-2.5 h-2.5" /> Pending
       </span>
     );
   if (status === "approved")
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-        <CheckCircle2 className="w-2.5 h-2.5" />
-        Approved
+        <CheckCircle2 className="w-2.5 h-2.5" /> Approved
       </span>
     );
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-      <XCircle className="w-2.5 h-2.5" />
-      Rejected
+      <XCircle className="w-2.5 h-2.5" /> Rejected
     </span>
   );
 }
@@ -139,45 +121,36 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function ProductRequestsPage() {
   const { user } = useAuth();
 
-  // Determine mode from scopeAccess — not role string
   const isVerifier = hasAccess(user, "verify", "products");
   const canWrite = hasAccess(user, "write", "products");
-
-  // Only users with write:products or verify:products should be here
   const canAccess = isVerifier || canWrite;
+  const reviewer = { uid: user?.uid ?? "", name: user?.name };
 
   const [allRequests, setAllRequests] = useState<PendingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState<PendingRequest | null>(null);
-  const [actionId, setActionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">(
     "all",
   );
   const [page, setPage] = useState(0);
 
-  const reviewer = { uid: user?.uid ?? "", name: user?.name };
+  // ── Remarks-gated approve/reject ──────────────────────────────────────────
+  const { setRemarksTarget, RemarksDialog } = useRemarksAction({ reviewer });
 
   // ── Firestore listener ────────────────────────────────────────────────────
   useEffect(() => {
     if (!canAccess || !user) return;
-
     setLoading(true);
 
-    let q;
-    if (isVerifier) {
-      // Verifiers: all requests ordered by date
-      q = query(collection(db, "requests"), orderBy("createdAt", "desc"));
-    } else {
-      // Submitters: only their own requests
-      q = query(
-        collection(db, "requests"),
-        where("requestedBy", "==", user.uid),
-      );
-    }
+    const q = isVerifier
+      ? query(collection(db, "requests"), orderBy("createdAt", "desc"))
+      : query(collection(db, "requests"), where("requestedBy", "==", user.uid));
 
     const unsub = onSnapshot(
       q,
@@ -185,7 +158,6 @@ export default function ProductRequestsPage() {
         let docs = snap.docs.map(
           (d) => ({ id: d.id, ...d.data() }) as PendingRequest,
         );
-        // Client-side sort for submitter query (avoids composite index requirement)
         if (!isVerifier) {
           docs = docs.sort(
             (a, b) =>
@@ -197,7 +169,7 @@ export default function ProductRequestsPage() {
         setLoading(false);
       },
       (err) => {
-        console.error("[ProductRequests] Firestore error:", err);
+        console.error("[ProductRequests]", err);
         toast.error("Failed to load requests");
         setLoading(false);
       },
@@ -212,26 +184,23 @@ export default function ProductRequestsPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (search) {
         const q = search.toLowerCase();
-        const hit =
+        return (
           r.id.toLowerCase().includes(q) ||
           (r.meta?.productName ?? "").toLowerCase().includes(q) ||
           (r.meta?.litItemCode ?? "").toLowerCase().includes(q) ||
           (r.meta?.ecoItemCode ?? "").toLowerCase().includes(q) ||
           r.type.toLowerCase().includes(q) ||
-          (r.requestedByName ?? "").toLowerCase().includes(q);
-        if (!hit) return false;
+          (r.requestedByName ?? "").toLowerCase().includes(q)
+        );
       }
       return true;
     });
   }, [allRequests, statusFilter, search]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [statusFilter, search]);
+  useEffect(() => setPage(0), [statusFilter, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
   const pendingCount = allRequests.filter((r) => r.status === "pending").length;
   const approvedCount = allRequests.filter(
     (r) => r.status === "approved",
@@ -240,36 +209,7 @@ export default function ProductRequestsPage() {
     (r) => r.status === "rejected",
   ).length;
 
-  // ── Actions (verifiers only) ──────────────────────────────────────────────
-  const handleApprove = async (req: PendingRequest) => {
-    if (!isVerifier) return;
-    setActionId(req.id);
-    const t = toast.loading("Approving…");
-    try {
-      await approveRequest(req.id, reviewer);
-      toast.success("Approved and executed.", { id: t });
-    } catch (err: any) {
-      toast.error(err.message || "Approval failed.", { id: t });
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const handleReject = async (req: PendingRequest) => {
-    if (!isVerifier) return;
-    setActionId(req.id);
-    const t = toast.loading("Rejecting…");
-    try {
-      await rejectRequest(req.id, reviewer);
-      toast.success("Request rejected.", { id: t });
-    } catch (err: any) {
-      toast.error(err.message || "Rejection failed.", { id: t });
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  // ── Access denied (in-page guard for scopeAccess edge cases) ─────────────
+  // ── Access denied ─────────────────────────────────────────────────────────
   if (!canAccess) {
     return (
       <ProtectedLayout>
@@ -479,15 +419,16 @@ export default function ProductRequestsPage() {
                     ) : (
                       paged.map((req) => {
                         const isPending = req.status === "pending";
-                        const canAct =
-                          isPending && isVerifier && actionId !== req.id;
-                        const isActing = actionId === req.id;
+                        const canAct = isPending && isVerifier;
 
-                        // Resolve display name from meta
                         const productName =
-                          req.meta?.productName || req.resourceId || "—";
+                          (req.meta?.productName as string) ||
+                          req.resourceId ||
+                          "—";
                         const itemCode =
-                          req.meta?.litItemCode || req.meta?.ecoItemCode || "—";
+                          (req.meta?.litItemCode as string) ||
+                          (req.meta?.ecoItemCode as string) ||
+                          "—";
 
                         return (
                           <TableRow
@@ -546,7 +487,7 @@ export default function ProductRequestsPage() {
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div className="flex items-center justify-end gap-1">
-                                {/* Preview — always visible */}
+                                {/* Preview */}
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -559,7 +500,7 @@ export default function ProductRequestsPage() {
                                   <Eye className="w-3.5 h-3.5" />
                                 </Button>
 
-                                {/* Approve / Reject — verifiers only, pending only */}
+                                {/* Approve / Reject — verifiers only */}
                                 {canAct && (
                                   <>
                                     <Button
@@ -568,11 +509,13 @@ export default function ProductRequestsPage() {
                                       className="h-7 px-2 text-[10px] gap-1 border-emerald-200 text-emerald-600 hover:bg-emerald-50"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        handleApprove(req);
+                                        setRemarksTarget({
+                                          request: req,
+                                          action: "approve",
+                                        });
                                       }}
-                                      disabled={isActing}
                                     >
-                                      <CheckCircle2 className="w-3 h-3" />
+                                      <CheckCircle2 className="w-3 h-3" />{" "}
                                       Approve
                                     </Button>
                                     <Button
@@ -581,18 +524,15 @@ export default function ProductRequestsPage() {
                                       className="h-7 px-2 text-[10px] gap-1 border-rose-200 text-rose-600 hover:bg-rose-50"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        handleReject(req);
+                                        setRemarksTarget({
+                                          request: req,
+                                          action: "reject",
+                                        });
                                       }}
-                                      disabled={isActing}
                                     >
-                                      <XCircle className="w-3 h-3" />
-                                      Reject
+                                      <XCircle className="w-3 h-3" /> Reject
                                     </Button>
                                   </>
-                                )}
-
-                                {isActing && (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
                                 )}
                               </div>
                             </TableCell>
@@ -645,6 +585,9 @@ export default function ProductRequestsPage() {
         onOpenChange={(v) => !v && setPreview(null)}
         onActionComplete={() => setPreview(null)}
       />
+
+      {/* Remarks-gated confirm dialog */}
+      <RemarksDialog />
     </ProtectedLayout>
   );
 }

@@ -32,6 +32,8 @@ import {
   orderBy,
   onSnapshot,
   Timestamp,
+  doc,
+  updateDoc,
 } from "firebase/firestore";
 
 import { useAuth } from "@/lib/useAuth";
@@ -42,6 +44,13 @@ import {
   rejectRequest,
 } from "@/lib/requestService";
 import { RequestPreviewModal } from "./request-preview-modal";
+import {
+  RemarksConfirmDialog,
+  RemarksTarget,
+  RemarksAction,
+} from "./remarks-confirm-dialog";
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function relativeTime(ts: Timestamp | null | undefined): string {
   if (!ts) return "";
@@ -100,7 +109,7 @@ function StatusChip({ status }: { status: string }) {
 
 function getRequestDisplayName(req: PendingRequest): string {
   const meta = req.meta ?? {};
-  if (meta.productName) return meta.productName;
+  if (meta.productName) return String(meta.productName);
   const payload = req.payload ?? {};
   const d = payload.after ?? payload.productSnapshot ?? payload;
   return d?.itemDescription || d?.name || d?.itemCode || req.resourceId || "—";
@@ -109,54 +118,25 @@ function getRequestDisplayName(req: PendingRequest): string {
 function getRequestSubtitle(req: PendingRequest): string | null {
   const meta = req.meta ?? {};
   const parts: string[] = [];
-  if (meta.litItemCode) parts.push(meta.litItemCode);
+  if (meta.litItemCode) parts.push(String(meta.litItemCode));
   if (meta.ecoItemCode && meta.ecoItemCode !== meta.litItemCode)
-    parts.push(meta.ecoItemCode);
-  if (meta.productFamily) parts.push(meta.productFamily);
+    parts.push(String(meta.ecoItemCode));
+  if (meta.productFamily) parts.push(String(meta.productFamily));
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+// ─── Verifier notification row ──────────────────────────────────────────────────
+// Approve / Reject buttons open the RemarksConfirmDialog via setRemarksTarget.
+
 function VerifierNotificationItem({
   req,
-  reviewer,
   onPreview,
+  onRequestAction,
 }: {
   req: PendingRequest;
-  reviewer: { uid: string; name?: string };
   onPreview: (r: PendingRequest) => void;
+  onRequestAction: (target: RemarksTarget) => void;
 }) {
-  const [approving, setApproving] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
-  const busy = approving || rejecting;
-
-  const handleApprove = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setApproving(true);
-    const t = toast.loading("Approving…");
-    try {
-      await approveRequest(req.id, reviewer);
-      toast.success("Approved and executed.", { id: t });
-    } catch (err: any) {
-      toast.error(err.message || "Approval failed.", { id: t });
-    } finally {
-      setApproving(false);
-    }
-  };
-
-  const handleReject = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setRejecting(true);
-    const t = toast.loading("Rejecting…");
-    try {
-      await rejectRequest(req.id, reviewer);
-      toast.success("Request rejected.", { id: t });
-    } catch (err: any) {
-      toast.error(err.message || "Rejection failed.", { id: t });
-    } finally {
-      setRejecting(false);
-    }
-  };
-
   const displayName = getRequestDisplayName(req);
   const subtitle = getRequestSubtitle(req);
 
@@ -189,6 +169,7 @@ function VerifierNotificationItem({
               {req.requestedByName || "Unknown"} · {relativeTime(req.createdAt)}
             </p>
             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+              {/* Preview */}
               <Button
                 size="sm"
                 variant="ghost"
@@ -197,32 +178,30 @@ function VerifierNotificationItem({
               >
                 <Eye className="w-3 h-3" />
               </Button>
+
+              {/* Approve — opens RemarksConfirmDialog */}
               <Button
                 size="sm"
                 variant="outline"
                 className="h-6 px-2 text-[10px] gap-1 border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-                onClick={handleApprove}
-                disabled={busy}
+                onClick={() =>
+                  onRequestAction({ request: req, action: "approve" })
+                }
               >
-                {approving ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="w-3 h-3" />
-                )}
+                <CheckCircle2 className="w-3 h-3" />
                 Approve
               </Button>
+
+              {/* Reject — opens RemarksConfirmDialog */}
               <Button
                 size="sm"
                 variant="outline"
                 className="h-6 px-2 text-[10px] gap-1 border-rose-200 text-rose-600 hover:bg-rose-50"
-                onClick={handleReject}
-                disabled={busy}
+                onClick={() =>
+                  onRequestAction({ request: req, action: "reject" })
+                }
               >
-                {rejecting ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <XCircle className="w-3 h-3" />
-                )}
+                <XCircle className="w-3 h-3" />
                 Reject
               </Button>
             </div>
@@ -232,6 +211,8 @@ function VerifierNotificationItem({
     </div>
   );
 }
+
+// ─── Submitter notification row (read-only) ─────────────────────────────────────
 
 function SubmitterNotificationItem({
   req,
@@ -292,52 +273,47 @@ function SubmitterNotificationItem({
   );
 }
 
+// ─── Main dropdown ──────────────────────────────────────────────────────────────
+
 export function NotificationsDropdown() {
   const { user } = useAuth();
   const [requests, setRequests] = useState<PendingRequest[]>([]);
   const [preview, setPreview] = useState<PendingRequest | null>(null);
   const [open, setOpen] = useState(false);
 
+  // Remarks dialog state — null when closed
+  const [remarksTarget, setRemarksTarget] = useState<RemarksTarget | null>(
+    null,
+  );
+
   const visible = canSeeNotifications(user);
   const isVerifier = hasAccess(user, "verify", "products");
   const isSubmitter = !isVerifier && hasAccess(user, "write", "products");
+  const reviewer = { uid: user?.uid ?? "", name: user?.name };
 
   useEffect(() => {
     if (!visible || !user) return;
 
-    let q;
-    if (isVerifier) {
-      q = query(
-        collection(db, "requests"),
-        where("status", "==", "pending"),
-        orderBy("createdAt", "desc"),
-      );
-    } else {
-      q = query(
-        collection(db, "requests"),
-        where("requestedBy", "==", user.uid),
-      );
-    }
+    const q = isVerifier
+      ? query(
+          collection(db, "requests"),
+          where("status", "==", "pending"),
+          orderBy("createdAt", "desc"),
+        )
+      : query(collection(db, "requests"), where("requestedBy", "==", user.uid));
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        let docs = snap.docs.map(
-          (d) => ({ id: d.id, ...d.data() }) as PendingRequest,
+    const unsub = onSnapshot(q, (snap) => {
+      let docs = snap.docs.map(
+        (d) => ({ id: d.id, ...d.data() }) as PendingRequest,
+      );
+      if (isSubmitter) {
+        docs = docs.sort(
+          (a, b) =>
+            (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
         );
-        if (isSubmitter) {
-          docs = docs.sort((a, b) => {
-            const ta = a.createdAt?.toMillis?.() ?? 0;
-            const tb = b.createdAt?.toMillis?.() ?? 0;
-            return tb - ta;
-          });
-        }
-        setRequests(docs);
-      },
-      (err) => {
-        console.error("[Notifications] Firestore error:", err);
-      },
-    );
+      }
+      setRequests(docs);
+    });
 
     return unsub;
   }, [visible, isVerifier, isSubmitter, user]);
@@ -348,8 +324,40 @@ export function NotificationsDropdown() {
     ? requests.length
     : requests.filter((r) => r.status === "pending").length;
 
-  const reviewer = { uid: user?.uid ?? "", name: user?.name };
-  const headerTitle = isVerifier ? "Pending Approvals" : "My Requests";
+  // ── Confirm handler — executed after user fills in remarks ─────────────────
+  const handleRemarksConfirm = async (
+    action: RemarksAction,
+    requestId: string,
+    remarks: string,
+  ) => {
+    const t = toast.loading(action === "approve" ? "Approving…" : "Rejecting…");
+    try {
+      if (action === "approve") {
+        await approveRequest(requestId, reviewer);
+      } else {
+        await rejectRequest(requestId, reviewer);
+      }
+      // Persist remarks
+      await updateDoc(doc(db, "requests", requestId), {
+        reviewRemarks: remarks,
+      }).catch(() => {});
+      toast.success(
+        action === "approve"
+          ? "Request approved and executed."
+          : "Request rejected.",
+        { id: t },
+      );
+    } catch (err: any) {
+      toast.error(
+        err.message ||
+          `${action === "approve" ? "Approval" : "Rejection"} failed.`,
+        {
+          id: t,
+        },
+      );
+      throw err; // re-throw so dialog stays open on error
+    }
+  };
 
   return (
     <>
@@ -375,12 +383,14 @@ export function NotificationsDropdown() {
           className="w-80 p-0 shadow-lg"
           sideOffset={8}
         >
-          {/* ── STICKY HEADER ── */}
+          {/* Sticky header */}
           <div className="sticky top-0 z-10 bg-popover border-b">
             <div className="flex items-center justify-between px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <Bell className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-sm font-semibold">{headerTitle}</span>
+                <span className="text-sm font-semibold">
+                  {isVerifier ? "Pending Approvals" : "My Requests"}
+                </span>
                 {badgeCount > 0 && (
                   <Badge
                     variant="secondary"
@@ -390,7 +400,6 @@ export function NotificationsDropdown() {
                   </Badge>
                 )}
               </div>
-              {/* "View all requests" link always visible for verifiers */}
               {isVerifier && (
                 <a
                   href="/products/requests"
@@ -404,7 +413,7 @@ export function NotificationsDropdown() {
             </div>
           </div>
 
-          {/* ── CONTENT ── */}
+          {/* Content */}
           {requests.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
               <Inbox className="w-8 h-8 opacity-30" />
@@ -421,10 +430,13 @@ export function NotificationsDropdown() {
                   <VerifierNotificationItem
                     key={req.id}
                     req={req}
-                    reviewer={reviewer}
                     onPreview={(r) => {
                       setPreview(r);
                       setOpen(false);
+                    }}
+                    onRequestAction={(target) => {
+                      setOpen(false); // close dropdown while dialog is open
+                      setRemarksTarget(target);
                     }}
                   />
                 ) : (
@@ -441,7 +453,6 @@ export function NotificationsDropdown() {
             </ScrollArea>
           )}
 
-          {/* ── FOOTER: submitter status note only ── */}
           {isSubmitter && requests.length > 0 && (
             <>
               <DropdownMenuSeparator className="m-0" />
@@ -457,11 +468,20 @@ export function NotificationsDropdown() {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {/* Full preview modal */}
       <RequestPreviewModal
         request={preview}
         open={!!preview}
         onOpenChange={(v) => !v && setPreview(null)}
         onActionComplete={() => setPreview(null)}
+      />
+
+      {/* Remarks-gated approve/reject dialog — triggered from inline buttons */}
+      <RemarksConfirmDialog
+        target={remarksTarget}
+        open={!!remarksTarget}
+        onOpenChange={(v) => !v && setRemarksTarget(null)}
+        onConfirm={handleRemarksConfirm}
       />
     </>
   );
