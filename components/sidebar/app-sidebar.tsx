@@ -21,14 +21,16 @@ import {
   Settings,
   Settings2Icon,
   BriefcaseBusiness,
-  LockIcon
+  LockIcon,
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { canAccessRoute } from "@/lib/roleAccess";
 
-// Define all navigation items
+// ─── All navigation items ─────────────────────────────────────────────────────
+
 const allNavItems = {
   products: {
     title: "Products",
@@ -67,7 +69,6 @@ const allNavItems = {
     items: [
       { title: "Applications", url: "/jobs/applications" },
       { title: "Careers Posting", url: "/jobs/careers" },
-      { title: "Email", url: "#" },
     ],
   },
   contents: {
@@ -81,7 +82,6 @@ const allNavItems = {
       { title: "FAQs Manager", url: "/content/faq-manager" },
       { title: "Home Popups", url: "/content/popup" },
       { title: "Projects", url: "/content/projects" },
-      { title: "Partners", url: "#" },
     ],
   },
   settings: {
@@ -89,33 +89,65 @@ const allNavItems = {
     url: "#",
     icon: <Settings />,
     items: [
-      { title: "All Users", url: "#" },
+      { title: "All Users", url: "/admin/register" },
       { title: "Change Password", url: "#" },
     ],
-
   },
-    "recycle-bin": {
+  "recycle-bin": {
     title: "Admin",
     url: "/admin",
     icon: <LockIcon />,
     items: [
-      { title: "Register User",    url: "/admin/register" },   // ← NEW
-      { title: "Audit Logs",       url: "/admin/audit-logs" },
+      { title: "Register User", url: "/admin/register" },
+      { title: "Audit Logs", url: "/admin/audit-logs" },
       { title: "Deleted Products", url: "/admin/deleted-products" },
+      { title: "Requests", url: "/admin/requests" },
     ],
   },
 };
 
-// Role-based navigation mapping
+// ─── Role → visible sections ──────────────────────────────────────────────────
+
 const roleNavMap: Record<string, string[]> = {
-  superadmin: ["products", "inquiries", "jobs", "contents", "settings", "recycle-bin"],
-  admin: ["products", "inquiries", "jobs", "contents", "settings", "recycle-bin"],
+  superadmin: [
+    "products",
+    "inquiries",
+    "jobs",
+    "contents",
+    "settings",
+    "recycle-bin",
+  ],
+  admin: [
+    "products",
+    "inquiries",
+    "jobs",
+    "contents",
+    "settings",
+    "recycle-bin",
+  ],
+  director: [
+    "products",
+    "inquiries",
+    "jobs",
+    "contents",
+    "settings",
+    "recycle-bin",
+  ],
   warehouse: ["products"],
   hr: ["jobs"],
   seo: ["contents"],
+  marketing: ["contents"],
   csr: ["inquiries"],
   ecomm: ["products", "inquiries"],
+  pd_manager: ["products", "recycle-bin"],
+  pd_engineer: ["products"],
+  pd: ["products"],
+  project_sales: ["products"],
 };
+
+// ─── Wildcard roles (see all items in their allowed sections) ─────────────────
+
+const WILDCARD_ROLES = new Set(["superadmin", "admin", "director"]);
 
 interface UserData {
   name: string;
@@ -141,7 +173,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
-          // Fetch user data from Firestore
           const userDoc = await getDoc(doc(db, "adminaccount", user.uid));
 
           if (userDoc.exists()) {
@@ -157,29 +188,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               role: userRole,
             });
 
-            // Set navigation items based on role
-            const allowedNavKeys = roleNavMap[userRole] || [];
-            const filteredNav = allowedNavKeys
-              .map((key) => allNavItems[key as keyof typeof allNavItems])
-              .filter(Boolean)
-              .map((navItem) => {
-                // Filter register item to only show for superadmin
-                if (navItem.title === "Admin") {
-                  return {
-                    ...navItem,
-                    items: navItem.items.filter((item: any) => {
-                      if (item.title === "Register User") {
-                        return userRole === "superadmin";
-                      }
-                      return true;
-                    }),
-                  };
-                }
-                return navItem;
-              });
-            setNavItems(filteredNav);
+            buildNavItems(userRole);
           } else {
-            // Fallback if no Firestore document
             setUserData({
               name: user.displayName || "User",
               email: user.email || "",
@@ -190,7 +200,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           }
         } catch (error) {
           console.error("Error fetching user data:", error);
-          // Fallback on error
           setUserData({
             name: user.displayName || "User",
             email: user.email || "",
@@ -200,13 +209,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           setNavItems([]);
         }
       } else {
-        // Reset if no user
-        setUserData({
-          name: "Guest",
-          email: "",
-          avatar: "",
-          role: "",
-        });
+        setUserData({ name: "Guest", email: "", avatar: "", role: "" });
         setNavItems([]);
       }
     });
@@ -214,12 +217,49 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return () => unsubscribe();
   }, []);
 
+  function buildNavItems(userRole: string) {
+    const allowedKeys = roleNavMap[userRole] ?? [];
+    const isWildcard = WILDCARD_ROLES.has(userRole);
+
+    const filtered = allowedKeys
+      .map((key) => {
+        const section = allNavItems[key as keyof typeof allNavItems];
+        if (!section) return null;
+
+        // Filter individual sub-items by route access
+        const filteredItems = section.items.filter((item: any) => {
+          // Placeholder links: show only for wildcard roles
+          if (item.url === "#") return isWildcard;
+          // Use canAccessRoute for concrete paths
+          return canAccessRoute(userRole, item.url);
+        });
+
+        // Drop the entire section if no items remain
+        if (filteredItems.length === 0) return null;
+
+        // For the Admin section, hide "Register User" from non-superadmins
+        if (section.title === "Admin") {
+          const adminFiltered = filteredItems.filter((item: any) => {
+            if (item.title === "Register User")
+              return userRole === "superadmin";
+            return true;
+          });
+          if (adminFiltered.length === 0) return null;
+          return { ...section, items: adminFiltered };
+        }
+
+        return { ...section, items: filteredItems };
+      })
+      .filter(Boolean);
+
+    setNavItems(filtered);
+  }
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <div className="flex h-16 items-center justify-center">
           {isCollapsed ? (
-            /* Collapsed State: Using almost the full 48px width */
             <div className="flex items-center justify-center w-full">
               <Image
                 src="/logo-small.png"
@@ -231,7 +271,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               />
             </div>
           ) : (
-            /* Expanded State: Left-aligned for a cleaner look */
             <div className="flex w-full items-center px-4">
               <Image
                 src="/logo-full.png"

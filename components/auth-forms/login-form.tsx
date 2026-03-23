@@ -1,322 +1,325 @@
 "use client";
 
-import * as React from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldSeparator,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Loader2, Eye, EyeOff } from "lucide-react";
-
-// Firebase Imports
-import { auth, db } from "@/lib/firebase";
-import { getDoc, doc } from "firebase/firestore";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
-  signOut,
 } from "firebase/auth";
-import { toast } from "sonner";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
+import { useAuth, User } from "@/lib/useAuth";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";
-import { getScopeAccessForRole, getAccessLevelForRole } from "@/lib/rbac";
-import { useAuth } from "@/lib/useAuth";
-import { useSearchParams } from "next/navigation";
+import { Eye, EyeOff, Loader2, Lock, Mail } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 
 const LOGIN_MARKER_KEY = "disruptive_last_login_at";
 
-/**
- * All roles permitted to log into the CMS.
- * Keep in sync with lib/roleAccess.ts → UserRole union.
- */
-const VALID_ROLES = new Set([
-  "superadmin",
-  "admin",
-  "director",
-  // ── PD roles (added with RBAC implementation) ─────
-  "pd_manager",
-  "pd_engineer",
-  "pd", // legacy alias
-  "project_sales",
-  "office_sales",
-  // ── Other staff roles ─────────────────────────────
-  "warehouse",
-  "staff",
-  "inventory",
-  "hr",
-  "seo",
-  "csr",
-  "ecomm",
-  "marketing",
-]);
+function friendlyAuthError(code: string): string {
+  switch (code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Invalid email or password. Please try again.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    case "auth/too-many-requests":
+      return "Too many failed attempts. Please wait a few minutes and try again.";
+    case "auth/user-disabled":
+      return "This account has been disabled. Contact your administrator.";
+    case "auth/network-request-failed":
+      return "Network error. Please check your connection.";
+    case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
+      return "";
+    case "auth/popup-blocked":
+      return "Pop-up was blocked by your browser. Please allow pop-ups and try again.";
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists with this email using a different sign-in method.";
+    default:
+      return "Login failed. Please try again.";
+  }
+}
 
-export function LoginForm({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function GoogleIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 48 48"
+      width="16"
+      height="16"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        fill="#FFC107"
+        d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"
+      />
+      <path
+        fill="#FF3D00"
+        d="M6.3 14.7l6.6 4.8C14.7 16 19.1 13 24 13c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"
+      />
+      <path
+        fill="#4CAF50"
+        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.3 0-9.7-3.3-11.3-7.9l-6.5 5C9.6 39.5 16.3 44 24 44z"
+      />
+      <path
+        fill="#1976D2"
+        d="M43.6 20.5H42V20H24v8h11.3c-.9 2.4-2.5 4.5-4.6 5.9l6.2 5.2C40.9 36.2 44 30.5 44 24c0-1.2-.1-2.4-.4-3.5z"
+      />
+    </svg>
+  );
+}
+
+export function LoginForm() {
   const router = useRouter();
-  const { user: authedUser, isLoading: authLoading } = useAuth();
-  const searchParams = useSearchParams();
+  const { login } = useAuth();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  /* =========================
-      SHARED CMS AUTH CHECK
-     ========================= */
-  const authorizeCMSUser = async (user: any, loginToast: any) => {
-    const userDoc = await getDoc(doc(db, "adminaccount", user.uid));
+  async function finalizeLogin(
+    firebaseUser: {
+      uid: string;
+      email: string | null;
+      displayName: string | null;
+    },
+    onError: (msg: string) => void,
+    onDone: () => void,
+  ) {
+    const userSnap = await getDoc(doc(db, "adminaccount", firebaseUser.uid));
 
-    if (!userDoc.exists()) {
-      throw new Error("user_not_registered");
-    }
-
-    const userData = userDoc.data();
-    const role = String(userData.role || "")
-      .toLowerCase()
-      .trim();
-    const status = String(userData.status || "")
-      .toLowerCase()
-      .trim();
-
-    if (status !== "active") {
-      throw new Error("account_disabled");
-    }
-
-    // Role gate — covers all existing AND new RBAC roles
-    if (!VALID_ROLES.has(role)) {
-      throw new Error("unauthorized_role");
-    }
-
-    // ── RBAC: resolve scopeAccess ─────────────────────────────────────────
-    // Prefer the value stored in Firestore (written at account creation/edit).
-    // Fall back to deriving from role for older accounts that lack this field.
-    const scopeAccess: string[] =
-      Array.isArray(userData.scopeAccess) && userData.scopeAccess.length > 0
-        ? userData.scopeAccess
-        : getScopeAccessForRole(role);
-
-    // Resolve legacy accessLevel with RBAC-aware helper
-    const accessLevel = userData.accessLevel || getAccessLevelForRole(role);
-
-    // ── Build session payload ─────────────────────────────────────────────
-    const sessionData = {
-      uid: user.uid,
-      name: userData.fullName || userData.name || "Internal Staff",
-      email: user.email,
-      role,
-      accessLevel,
-      scopeAccess,
-    };
-
-    const sessionResponse = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sessionData),
-    });
-
-    if (!sessionResponse.ok) {
-      throw new Error("Failed to create session");
-    }
-
-    // Also store in localStorage for client-side access
-    const loginAt = Date.now();
-    localStorage.setItem(LOGIN_MARKER_KEY, String(loginAt));
-    localStorage.setItem("disruptive_admin_user", JSON.stringify(sessionData));
-
-    toast.success(`Access Authorized: ${role.toUpperCase()}`, {
-      id: loginToast,
-    });
-
-    const redirectPath = getPrimaryRouteForRole(role);
-    router.replace(redirectPath);
-  };
-
-  /* =========================
-      ERROR HANDLER HELPER
-     ========================= */
-  const handleAuthError = async (error: any, loginToast: string | number) => {
-    await signOut(auth);
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      // ignore
-    }
-    localStorage.removeItem("disruptive_admin_user");
-
-    if (error?.code === "auth/popup-closed-by-user") {
-      toast.dismiss(loginToast);
+    if (!userSnap.exists()) {
+      onError("Account not found. Please contact your administrator.");
+      onDone();
       return;
     }
 
-    const messages: Record<string, string> = {
-      user_not_registered:
-        "This account is not registered. Please sign up first.",
-      unauthorized_role: "Access denied: Invalid or unrecognised role.",
-      account_disabled: "Account is disabled.",
-      "auth/invalid-credential": "Invalid email or password.",
-    };
+    const data = userSnap.data();
 
-    toast.error(
-      messages[error.message] ||
-        messages[error.code] ||
-        "Authentication failed.",
-      { id: loginToast },
-    );
-  };
+    if (data.status === "inactive") {
+      onError("Your account is inactive. Please contact your administrator.");
+      onDone();
+      return;
+    }
 
-  /* =========================
-      HANDLERS
-     ========================= */
-  const handleLogin = async (e: React.FormEvent) => {
+    const role = String(data.role || "")
+      .toLowerCase()
+      .trim();
+    const fullName = data.fullName || firebaseUser.displayName || "User";
+
+    const sessionRes = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        uid: firebaseUser.uid,
+        email: firebaseUser.email ?? "",
+        name: fullName,
+        role,
+      }),
+    });
+
+    if (!sessionRes.ok) {
+      const errData = await sessionRes.json().catch(() => ({}));
+      onError(errData.error || "Session creation failed. Please try again.");
+      onDone();
+      return;
+    }
+
+    const sessionData = await sessionRes.json();
+    const resolvedUser: User = sessionData.user;
+
+    // Mark login time for the verifySession retry guard
+    localStorage.setItem(LOGIN_MARKER_KEY, String(Date.now()));
+
+    // ── Critical: update AuthContext BEFORE navigating ──────────────────────
+    // AuthProvider is mounted at the root and does NOT re-run verifySession on
+    // navigation. Without this call, RouteProtection sees user=null and
+    // immediately redirects back to /auth/login.
+    login(resolvedUser);
+
+    const destination = getPrimaryRouteForRole(resolvedUser.role);
+    toast.success(`Welcome back, ${fullName.split(" ")[0]}!`);
+    router.replace(destination);
+  }
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) return toast.error("Please fill in all fields");
-
+    if (!email || !password) {
+      setError("Please enter your email and password.");
+      return;
+    }
     setIsLoading(true);
-    const loginToast = toast.loading("Checking Internal Access...");
-
+    setError("");
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      await authorizeCMSUser(cred.user, loginToast);
-    } catch (error: any) {
-      handleAuthError(error, loginToast);
-    } finally {
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password,
+      );
+      await finalizeLogin(
+        credential.user,
+        (msg) => setError(msg),
+        () => setIsLoading(false),
+      );
+    } catch (err: any) {
+      const msg = friendlyAuthError(err?.code ?? "");
+      if (msg) setError(msg);
       setIsLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
-    setIsLoading(true);
-    const loginToast = toast.loading("Waiting for Google authentication...");
-
+    setIsGoogleLoading(true);
+    setError("");
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      const result = await signInWithPopup(auth, provider);
-      await authorizeCMSUser(result.user, loginToast);
-    } catch (error: any) {
-      handleAuthError(error, loginToast);
-    } finally {
-      setIsLoading(false);
+      const credential = await signInWithPopup(auth, provider);
+      await finalizeLogin(
+        credential.user,
+        (msg) => setError(msg),
+        () => setIsGoogleLoading(false),
+      );
+    } catch (err: any) {
+      const msg = friendlyAuthError(err?.code ?? "");
+      if (msg) setError(msg);
+      setIsGoogleLoading(false);
     }
   };
 
+  const anyLoading = isLoading || isGoogleLoading;
+
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader className="text-center">
-          <div className="flex justify-center pb-4">
-            <Image
-              src="/logo-full.png"
-              alt="Company Logo"
-              width={180}
-              height={60}
-              priority
-              className="object-contain"
-            />
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="text-center space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">JarIS CMS</h1>
+          <p className="text-sm text-muted-foreground">
+            Sign in to your account
+          </p>
+        </div>
+
+        <div className="bg-background border rounded-none shadow-sm p-6 space-y-4">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full rounded-none h-10 gap-2 font-medium text-sm"
+            onClick={handleGoogleLogin}
+            disabled={anyLoading}
+          >
+            {isGoogleLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <GoogleIcon />
+            )}
+            Continue with Google
+          </Button>
+
+          <div className="flex items-center gap-3">
+            <Separator className="flex-1" />
+            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest">
+              or
+            </span>
+            <Separator className="flex-1" />
           </div>
-          <CardTitle className="text-xl">Welcome back</CardTitle>
-          <CardDescription>
-            Login with your Company Email or Google account
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin}>
-            <FieldGroup>
-              <Field>
-                <Button
-                  variant="outline"
-                  type="button"
-                  className="w-full"
-                  onClick={handleGoogleLogin}
-                  disabled={isLoading}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    className="w-4 h-4 mr-2"
-                  >
-                    <path
-                      d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.827 16.08 0 12.48 0 5.868 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"
-                      fill="currentColor"
-                    />
-                  </svg>
-                  Login with Google
-                </Button>
-              </Field>
 
-              <FieldSeparator />
-
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
+          <form onSubmit={handleEmailLogin} className="space-y-4">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="email"
+                className="text-[10px] font-bold uppercase tracking-wider opacity-60"
+              >
+                Email
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="email"
                   type="email"
-                  placeholder="m@example.com"
-                  required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={isLoading}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setError("");
+                  }}
+                  placeholder="name@company.com"
+                  className="pl-9 rounded-none h-10 text-sm"
+                  autoComplete="email"
+                  disabled={anyLoading}
+                  required
                 />
-              </Field>
+              </div>
+            </div>
 
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pr-10"
-                    disabled={isLoading}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-                <FieldDescription>
-                  Contact your administrator if you forgot your credentials.
-                </FieldDescription>
-              </Field>
+            <div className="space-y-1.5">
+              <label
+                htmlFor="password"
+                className="text-[10px] font-bold uppercase tracking-wider opacity-60"
+              >
+                Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError("");
+                  }}
+                  placeholder="Your password"
+                  className="pl-9 pr-10 rounded-none h-10 text-sm"
+                  autoComplete="current-password"
+                  disabled={anyLoading}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                  disabled={anyLoading}
+                >
+                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
 
-              <Field>
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Verifying…
-                    </>
-                  ) : (
-                    "Login"
-                  )}
-                </Button>
-              </Field>
-            </FieldGroup>
+            {error && (
+              <p className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-none px-3 py-2">
+                {error}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              disabled={anyLoading}
+              className="w-full rounded-none h-10 uppercase font-bold text-[10px] tracking-widest"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing in…
+                </>
+              ) : (
+                "Sign In"
+              )}
+            </Button>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+
+        <p className="text-center text-[10px] text-muted-foreground">
+          Contact your administrator if you need access.
+        </p>
+      </div>
     </div>
   );
 }

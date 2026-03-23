@@ -1,25 +1,5 @@
 "use client";
 
-/**
- * components/notifications/notifications-dropdown.tsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Global header notifications bell — dual-mode.
- *
- * VERIFIER MODE  (verify:products | verify:* | superadmin)
- *   - Shows ALL pending requests system-wide
- *   - Badge = total pending count
- *   - Inline Approve / Reject actions on each item
- *   - Header: "Pending Approvals"
- *
- * SUBMITTER MODE  (write:products only — no verify)
- *   - Shows only the current user's OWN requests (all statuses)
- *   - Badge = only THEIR pending ones (items still awaiting review)
- *   - Read-only — no approve/reject, just Preview
- *   - Status chip (Pending / Approved / Rejected) on each row
- *   - Header: "My Requests"
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import {
@@ -31,18 +11,17 @@ import {
   Inbox,
   Clock,
   Package,
+  ExternalLink,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 
 import { db } from "@/lib/firebase";
@@ -63,8 +42,6 @@ import {
   rejectRequest,
 } from "@/lib/requestService";
 import { RequestPreviewModal } from "./request-preview-modal";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function relativeTime(ts: Timestamp | null | undefined): string {
   if (!ts) return "";
@@ -98,7 +75,6 @@ function TypeChip({ type }: { type: string }) {
   );
 }
 
-// Mini status chip used in submitter mode rows
 function StatusChip({ status }: { status: string }) {
   if (status === "pending")
     return (
@@ -122,8 +98,6 @@ function StatusChip({ status }: { status: string }) {
   );
 }
 
-// ─── Display name / subtitle resolvers ────────────────────────────────────────
-
 function getRequestDisplayName(req: PendingRequest): string {
   const meta = req.meta ?? {};
   if (meta.productName) return meta.productName;
@@ -141,8 +115,6 @@ function getRequestSubtitle(req: PendingRequest): string | null {
   if (meta.productFamily) parts.push(meta.productFamily);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
-
-// ─── Verifier notification row (with Approve / Reject) ───────────────────────
 
 function VerifierNotificationItem({
   req,
@@ -261,8 +233,6 @@ function VerifierNotificationItem({
   );
 }
 
-// ─── Submitter notification row (view-only, shows status) ─────────────────────
-
 function SubmitterNotificationItem({
   req,
   onPreview,
@@ -299,7 +269,6 @@ function SubmitterNotificationItem({
             <p className="text-[10px] text-muted-foreground">
               {relativeTime(req.createdAt)}
             </p>
-            {/* Show who reviewed it if already resolved */}
             {req.status !== "pending" && req.reviewedByName && (
               <p className="text-[10px] text-muted-foreground">
                 by {req.reviewedByName}
@@ -323,8 +292,6 @@ function SubmitterNotificationItem({
   );
 }
 
-// ─── Main dropdown ────────────────────────────────────────────────────────────
-
 export function NotificationsDropdown() {
   const { user } = useAuth();
   const [requests, setRequests] = useState<PendingRequest[]>([]);
@@ -332,9 +299,6 @@ export function NotificationsDropdown() {
   const [open, setOpen] = useState(false);
 
   const visible = canSeeNotifications(user);
-
-  // isVerifier: can approve/reject — sees all pending requests
-  // isSubmitter: can only write — sees only their own requests (all statuses)
   const isVerifier = hasAccess(user, "verify", "products");
   const isSubmitter = !isVerifier && hasAccess(user, "write", "products");
 
@@ -342,17 +306,13 @@ export function NotificationsDropdown() {
     if (!visible || !user) return;
 
     let q;
-
     if (isVerifier) {
-      // All pending requests — for approval workflow
       q = query(
         collection(db, "requests"),
         where("status", "==", "pending"),
         orderBy("createdAt", "desc"),
       );
     } else {
-      // Own requests only (all statuses) — sorted client-side to avoid
-      // needing a composite Firestore index on requestedBy + createdAt
       q = query(
         collection(db, "requests"),
         where("requestedBy", "==", user.uid),
@@ -365,8 +325,6 @@ export function NotificationsDropdown() {
         let docs = snap.docs.map(
           (d) => ({ id: d.id, ...d.data() }) as PendingRequest,
         );
-
-        // For submitter mode: sort newest-first client-side
         if (isSubmitter) {
           docs = docs.sort((a, b) => {
             const ta = a.createdAt?.toMillis?.() ?? 0;
@@ -374,7 +332,6 @@ export function NotificationsDropdown() {
             return tb - ta;
           });
         }
-
         setRequests(docs);
       },
       (err) => {
@@ -387,19 +344,12 @@ export function NotificationsDropdown() {
 
   if (!visible) return null;
 
-  // Badge count:
-  //   Verifier  → all pending (same as before)
-  //   Submitter → only THEIR pending items (the ones still awaiting action)
   const badgeCount = isVerifier
     ? requests.length
     : requests.filter((r) => r.status === "pending").length;
 
   const reviewer = { uid: user?.uid ?? "", name: user?.name };
-
   const headerTitle = isVerifier ? "Pending Approvals" : "My Requests";
-  const emptyMessage = isVerifier
-    ? "No pending requests"
-    : "No requests submitted yet";
 
   return (
     <>
@@ -425,31 +375,44 @@ export function NotificationsDropdown() {
           className="w-80 p-0 shadow-lg"
           sideOffset={8}
         >
-          {/* Header */}
-          <div className="flex items-center justify-between px-3 py-2.5">
-            <div className="flex items-center gap-2">
-              <Bell className="w-3.5 h-3.5 text-muted-foreground" />
-              <DropdownMenuLabel className="p-0 text-sm font-semibold">
-                {headerTitle}
-              </DropdownMenuLabel>
+          {/* ── STICKY HEADER ── */}
+          <div className="sticky top-0 z-10 bg-popover border-b">
+            <div className="flex items-center justify-between px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <Bell className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-sm font-semibold">{headerTitle}</span>
+                {badgeCount > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="text-[10px] font-bold h-5 px-1.5"
+                  >
+                    {badgeCount}
+                  </Badge>
+                )}
+              </div>
+              {/* "View all requests" link always visible for verifiers */}
+              {isVerifier && (
+                <a
+                  href="/products/requests"
+                  className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+                  onClick={() => setOpen(false)}
+                >
+                  View all
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </div>
-            {badgeCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="text-[10px] font-bold h-5 px-1.5"
-              >
-                {badgeCount}
-              </Badge>
-            )}
           </div>
 
-          <DropdownMenuSeparator className="m-0" />
-
-          {/* Content */}
+          {/* ── CONTENT ── */}
           {requests.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
               <Inbox className="w-8 h-8 opacity-30" />
-              <p className="text-xs">{emptyMessage}</p>
+              <p className="text-xs">
+                {isVerifier
+                  ? "No pending requests"
+                  : "No requests submitted yet"}
+              </p>
             </div>
           ) : (
             <ScrollArea className="max-h-96">
@@ -478,28 +441,22 @@ export function NotificationsDropdown() {
             </ScrollArea>
           )}
 
-          {/* Footer */}
-          <DropdownMenuSeparator className="m-0" />
-          <div className="px-3 py-2">
-            {isVerifier ? (
-              <a
-                href="/products/requests"
-                className="text-[11px] text-primary hover:underline"
-              >
-                View all requests →
-              </a>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">
-                {requests.filter((r) => r.status === "pending").length > 0
-                  ? "Your requests are awaiting review by a manager."
-                  : "All your requests have been reviewed."}
-              </p>
-            )}
-          </div>
+          {/* ── FOOTER: submitter status note only ── */}
+          {isSubmitter && requests.length > 0 && (
+            <>
+              <DropdownMenuSeparator className="m-0" />
+              <div className="px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {requests.filter((r) => r.status === "pending").length > 0
+                    ? "Your requests are awaiting review by a manager."
+                    : "All your requests have been reviewed."}
+                </p>
+              </div>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Shared preview modal — read-only for submitters (canApprove is false) */}
       <RequestPreviewModal
         request={preview}
         open={!!preview}
