@@ -15,6 +15,9 @@ import {
   Inbox,
   ClipboardList,
   ShieldOff,
+  MessageSquare,
+  AlertCircle,
+  X,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -36,6 +39,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -51,7 +56,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 import { db } from "@/lib/firebase";
 import {
@@ -65,7 +79,11 @@ import {
 
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess } from "@/lib/rbac";
-import { PendingRequest, RequestStatus } from "@/lib/requestService";
+import {
+  PendingRequest,
+  RequestStatus,
+  bulkApproveRequests,
+} from "@/lib/requestService";
 import { RequestPreviewModal } from "@/components/notifications/request-preview-modal";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import { NotificationsDropdown } from "@/components/notifications/notifications-dropdown";
@@ -121,6 +139,135 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
+// ─── Bulk Approve Dialog ───────────────────────────────────────────────────────
+
+function BulkApproveDialog({
+  open,
+  onOpenChange,
+  count,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  count: number;
+  onConfirm: (remarks: string) => Promise<void>;
+}) {
+  const [remarks, setRemarks] = useState("");
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRemarks("");
+      setError(false);
+    }
+  }, [open]);
+
+  const handleConfirm = async () => {
+    if (!remarks.trim()) {
+      setError(true);
+      return;
+    }
+    setLoading(true);
+    try {
+      await onConfirm(remarks.trim());
+      onOpenChange(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !loading && onOpenChange(v)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">Bulk Approve</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                Approve{" "}
+                <span className="font-semibold text-foreground">{count}</span>{" "}
+                pending request{count !== 1 ? "s" : ""} at once.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
+              <MessageSquare className="w-3 h-3" />
+              Shared Remarks <span className="text-destructive">*</span>
+            </label>
+            <Textarea
+              autoFocus
+              value={remarks}
+              onChange={(e) => {
+                setRemarks(e.target.value);
+                if (e.target.value.trim()) setError(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  handleConfirm();
+                }
+              }}
+              placeholder="Enter approval remarks applied to all selected requests…"
+              className={cn(
+                "resize-none min-h-[80px] text-sm",
+                error && "border-destructive focus-visible:ring-destructive/30",
+              )}
+              disabled={loading}
+            />
+            {error && (
+              <p className="flex items-center gap-1.5 text-xs text-destructive">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                Remarks are required before approving.
+              </p>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              This remark will be saved to all {count} selected request
+              {count !== 1 ? "s" : ""}. Press Ctrl+Enter / ⌘+Enter to confirm.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className={cn(
+              "gap-1.5",
+              remarks.trim()
+                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                : "bg-emerald-200 text-emerald-400 cursor-not-allowed",
+            )}
+            onClick={handleConfirm}
+            disabled={loading || !remarks.trim()}
+          >
+            {loading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            )}
+            {loading ? "Approving…" : `Approve ${count}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProductRequestsPage() {
@@ -140,7 +287,11 @@ export default function ProductRequestsPage() {
   );
   const [page, setPage] = useState(0);
 
-  // ── Remarks-gated approve/reject ──────────────────────────────────────────
+  // ── Bulk selection state ───────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+
+  // ── Remarks-gated single approve/reject ──────────────────────────────────
   const { setRemarksTarget, RemarksDialog } = useRemarksAction({ reviewer });
 
   // ── Firestore listener ────────────────────────────────────────────────────
@@ -197,10 +348,18 @@ export default function ProductRequestsPage() {
     });
   }, [allRequests, statusFilter, search]);
 
-  useEffect(() => setPage(0), [statusFilter, search]);
+  // Clear selection and reset page when filters change
+  useEffect(() => {
+    setPage(0);
+    setSelectedIds(new Set());
+  }, [statusFilter, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  // Pending rows on current page (for bulk selection)
+  const pendingOnPage = paged.filter((r) => r.status === "pending");
+
   const pendingCount = allRequests.filter((r) => r.status === "pending").length;
   const approvedCount = allRequests.filter(
     (r) => r.status === "approved",
@@ -208,6 +367,68 @@ export default function ProductRequestsPage() {
   const rejectedCount = allRequests.filter(
     (r) => r.status === "rejected",
   ).length;
+
+  // ── Selection helpers ─────────────────────────────────────────────────────
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (
+      pendingOnPage.length > 0 &&
+      pendingOnPage.every((r) => selectedIds.has(r.id))
+    ) {
+      // Deselect all pending on page
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pendingOnPage.forEach((r) => next.delete(r.id));
+        return next;
+      });
+    } else {
+      // Select all pending on page
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pendingOnPage.forEach((r) => next.add(r.id));
+        return next;
+      });
+    }
+  };
+
+  const allPagePendingSelected =
+    pendingOnPage.length > 0 &&
+    pendingOnPage.every((r) => selectedIds.has(r.id));
+  const somePendingSelected =
+    pendingOnPage.some((r) => selectedIds.has(r.id)) && !allPagePendingSelected;
+
+  // ── Bulk approve handler ──────────────────────────────────────────────────
+  const handleBulkApprove = async (remarks: string) => {
+    const ids = Array.from(selectedIds);
+    const t = toast.loading(
+      `Approving ${ids.length} request${ids.length !== 1 ? "s" : ""}…`,
+    );
+    try {
+      const { succeeded, failed } = await bulkApproveRequests(
+        ids,
+        reviewer,
+        remarks,
+      );
+      if (failed === 0) {
+        toast.success(
+          `${succeeded} request${succeeded !== 1 ? "s" : ""} approved.`,
+          { id: t },
+        );
+      } else {
+        toast.warning(`${succeeded} approved, ${failed} failed.`, { id: t });
+      }
+      setSelectedIds(new Set());
+    } catch (err: any) {
+      toast.error(err.message || "Bulk approval failed.", { id: t });
+    }
+  };
 
   // ── Access denied ─────────────────────────────────────────────────────────
   if (!canAccess) {
@@ -232,6 +453,9 @@ export default function ProductRequestsPage() {
       </ProtectedLayout>
     );
   }
+
+  // Number of columns in the table (used for colspan)
+  const colCount = isVerifier ? 10 : 6; // +1 for checkbox column (verifier only)
 
   return (
     <ProtectedLayout>
@@ -319,6 +543,36 @@ export default function ProductRequestsPage() {
                 </div>
               </div>
 
+              {/* ── Bulk actions bar (verifiers only, when items selected) ── */}
+              {isVerifier && selectedIds.size > 0 && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800 px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+                      {selectedIds.size} pending request
+                      {selectedIds.size !== 1 ? "s" : ""} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 text-xs text-muted-foreground"
+                      onClick={() => setSelectedIds(new Set())}
+                    >
+                      <X className="w-3 h-3" /> Clear
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+                      onClick={() => setBulkApproveOpen(true)}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Approve {selectedIds.size}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Toolbar */}
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative flex-1 min-w-48 max-w-xs">
@@ -356,6 +610,23 @@ export default function ProductRequestsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/30">
+                      {/* Checkbox column — verifiers only, selects pending rows */}
+                      {isVerifier && (
+                        <TableHead className="w-10">
+                          <Checkbox
+                            checked={
+                              allPagePendingSelected
+                                ? true
+                                : somePendingSelected
+                                  ? "indeterminate"
+                                  : false
+                            }
+                            onCheckedChange={toggleSelectAll}
+                            disabled={pendingOnPage.length === 0}
+                            aria-label="Select all pending on page"
+                          />
+                        </TableHead>
+                      )}
                       <TableHead className="text-[10px] font-bold uppercase">
                         Product
                       </TableHead>
@@ -395,7 +666,7 @@ export default function ProductRequestsPage() {
                     {loading ? (
                       <TableRow>
                         <TableCell
-                          colSpan={isVerifier ? 9 : 6}
+                          colSpan={colCount}
                           className="text-center py-12"
                         >
                           <div className="flex items-center justify-center gap-2 text-muted-foreground">
@@ -407,7 +678,7 @@ export default function ProductRequestsPage() {
                     ) : paged.length === 0 ? (
                       <TableRow>
                         <TableCell
-                          colSpan={isVerifier ? 9 : 6}
+                          colSpan={colCount}
                           className="text-center py-12"
                         >
                           <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -420,6 +691,7 @@ export default function ProductRequestsPage() {
                       paged.map((req) => {
                         const isPending = req.status === "pending";
                         const canAct = isPending && isVerifier;
+                        const isSelected = selectedIds.has(req.id);
 
                         const productName =
                           (req.meta?.productName as string) ||
@@ -433,9 +705,26 @@ export default function ProductRequestsPage() {
                         return (
                           <TableRow
                             key={req.id}
-                            className="cursor-pointer hover:bg-muted/30 transition-colors"
+                            data-state={isSelected && "selected"}
+                            className={cn(
+                              "cursor-pointer hover:bg-muted/30 transition-colors",
+                              isSelected &&
+                                "bg-emerald-50/40 dark:bg-emerald-950/10",
+                            )}
                             onClick={() => setPreview(req)}
                           >
+                            {/* Checkbox — only for pending rows when verifier */}
+                            {isVerifier && (
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                {isPending && (
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={() => toggleSelect(req.id)}
+                                    aria-label={`Select request for ${productName}`}
+                                  />
+                                )}
+                              </TableCell>
+                            )}
                             <TableCell>
                               <p className="text-xs font-medium truncate max-w-[200px]">
                                 {productName}
@@ -586,8 +875,16 @@ export default function ProductRequestsPage() {
         onActionComplete={() => setPreview(null)}
       />
 
-      {/* Remarks-gated confirm dialog */}
+      {/* Single remarks-gated confirm dialog */}
       <RemarksDialog />
+
+      {/* Bulk approve dialog */}
+      <BulkApproveDialog
+        open={bulkApproveOpen}
+        onOpenChange={setBulkApproveOpen}
+        count={selectedIds.size}
+        onConfirm={handleBulkApprove}
+      />
     </ProtectedLayout>
   );
 }

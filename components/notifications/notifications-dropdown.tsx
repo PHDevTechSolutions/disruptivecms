@@ -126,7 +126,6 @@ function getRequestSubtitle(req: PendingRequest): string | null {
 }
 
 // ─── Verifier notification row ──────────────────────────────────────────────────
-// Approve / Reject buttons open the RemarksConfirmDialog via setRemarksTarget.
 
 function VerifierNotificationItem({
   req,
@@ -145,18 +144,19 @@ function VerifierNotificationItem({
       className="px-3 py-2.5 hover:bg-muted/40 transition-colors border-b last:border-b-0 cursor-pointer"
       onClick={() => onPreview(req)}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="flex items-start gap-2">
         <div className="mt-0.5 h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
         </div>
         <div className="flex-1 min-w-0 space-y-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <TypeChip type={req.type} />
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground truncate">
               {req.resource}
             </span>
           </div>
-          <p className="text-xs font-medium leading-tight truncate">
+          {/* Product name — truncated to prevent layout break */}
+          <p className="text-xs font-medium leading-tight truncate max-w-full">
             {displayName}
           </p>
           {subtitle && (
@@ -164,11 +164,15 @@ function VerifierNotificationItem({
               {subtitle}
             </p>
           )}
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] text-muted-foreground">
+          <div className="flex items-center justify-between gap-1 flex-wrap">
+            <p className="text-[10px] text-muted-foreground shrink-0">
               {req.requestedByName || "Unknown"} · {relativeTime(req.createdAt)}
             </p>
-            <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+            {/* Action buttons — stop propagation so click doesn't open preview */}
+            <div
+              className="flex gap-1 shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
               {/* Preview */}
               <Button
                 size="sm"
@@ -179,7 +183,7 @@ function VerifierNotificationItem({
                 <Eye className="w-3 h-3" />
               </Button>
 
-              {/* Approve — opens RemarksConfirmDialog */}
+              {/* Approve */}
               <Button
                 size="sm"
                 variant="outline"
@@ -192,7 +196,7 @@ function VerifierNotificationItem({
                 Approve
               </Button>
 
-              {/* Reject — opens RemarksConfirmDialog */}
+              {/* Reject */}
               <Button
                 size="sm"
                 variant="outline"
@@ -229,7 +233,7 @@ function SubmitterNotificationItem({
       className="px-3 py-2.5 hover:bg-muted/40 transition-colors border-b last:border-b-0 cursor-pointer"
       onClick={() => onPreview(req)}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="flex items-start gap-2">
         <div className="mt-0.5 h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
         </div>
@@ -238,7 +242,8 @@ function SubmitterNotificationItem({
             <TypeChip type={req.type} />
             <StatusChip status={req.status} />
           </div>
-          <p className="text-xs font-medium leading-tight truncate">
+          {/* Product name — truncated */}
+          <p className="text-xs font-medium leading-tight truncate max-w-full">
             {displayName}
           </p>
           {subtitle && (
@@ -281,7 +286,6 @@ export function NotificationsDropdown() {
   const [preview, setPreview] = useState<PendingRequest | null>(null);
   const [open, setOpen] = useState(false);
 
-  // Remarks dialog state — null when closed
   const [remarksTarget, setRemarksTarget] = useState<RemarksTarget | null>(
     null,
   );
@@ -324,7 +328,6 @@ export function NotificationsDropdown() {
     ? requests.length
     : requests.filter((r) => r.status === "pending").length;
 
-  // ── Confirm handler — executed after user fills in remarks ─────────────────
   const handleRemarksConfirm = async (
     action: RemarksAction,
     requestId: string,
@@ -337,7 +340,6 @@ export function NotificationsDropdown() {
       } else {
         await rejectRequest(requestId, reviewer);
       }
-      // Persist remarks
       await updateDoc(doc(db, "requests", requestId), {
         reviewRemarks: remarks,
       }).catch(() => {});
@@ -351,11 +353,9 @@ export function NotificationsDropdown() {
       toast.error(
         err.message ||
           `${action === "approve" ? "Approval" : "Rejection"} failed.`,
-        {
-          id: t,
-        },
+        { id: t },
       );
-      throw err; // re-throw so dialog stays open on error
+      throw err;
     }
   };
 
@@ -378,9 +378,14 @@ export function NotificationsDropdown() {
           </Button>
         </DropdownMenuTrigger>
 
+        {/*
+          Increased from w-80 (320px) to w-[26rem] (416px) so the
+          Approve / Reject buttons always have enough room to render
+          side-by-side without wrapping or overflowing.
+        */}
         <DropdownMenuContent
           align="end"
-          className="w-80 p-0 shadow-lg"
+          className="w-[26rem] p-0 shadow-lg"
           sideOffset={8}
         >
           {/* Sticky header */}
@@ -435,7 +440,7 @@ export function NotificationsDropdown() {
                       setOpen(false);
                     }}
                     onRequestAction={(target) => {
-                      setOpen(false); // close dropdown while dialog is open
+                      setOpen(false);
                       setRemarksTarget(target);
                     }}
                   />
@@ -476,7 +481,7 @@ export function NotificationsDropdown() {
         onActionComplete={() => setPreview(null)}
       />
 
-      {/* Remarks-gated approve/reject dialog — triggered from inline buttons */}
+      {/* Remarks-gated approve/reject dialog */}
       <RemarksConfirmDialog
         target={remarksTarget}
         open={!!remarksTarget}

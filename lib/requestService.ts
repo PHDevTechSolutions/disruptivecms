@@ -118,10 +118,6 @@ export function resolveProductMeta(
 
 /**
  * Determines the best TDS brand from a product's brand field.
- *
- * A flexible check — "Ecoshift Corporation", "ECOSHIFT", "ecoshift" all resolve
- * to ECOSHIFT. Everything else defaults to LIT (matching the bulk-uploader
- * and tdsGenerator.normaliseBrand contract).
  */
 function resolveTdsBrand(raw?: string | null): "LIT" | "ECOSHIFT" {
   const upper = String(raw ?? "")
@@ -132,7 +128,6 @@ function resolveTdsBrand(raw?: string | null): "LIT" | "ECOSHIFT" {
 
 /**
  * Resolves the best display code for a TDS filename.
- * Priority: litItemCode → ecoItemCode → productId
  */
 function resolveTdsCode(data: Record<string, any>, fallback: string): string {
   const isBlank = (v?: string) =>
@@ -145,25 +140,13 @@ function resolveTdsCode(data: Record<string, any>, fallback: string): string {
 }
 
 /**
- * regenerateTdsAfterUpdate
- * ─────────────────────────────────────────────────────────────────────────────
- * Fired (void / fire-and-forget) immediately after a product update doc is
- * written to Firestore. Re-generates the TDS PDF from the new product data and
- * writes the resulting Cloudinary URL back to the product document.
- *
- * Design decisions:
- *  • Dynamic import of tdsGenerator to avoid pulling jsPDF into the SSR bundle.
- *  • All errors are caught and logged — TDS regeneration is best-effort; it
- *    must NEVER cause the approval itself to fail or roll back.
- *  • Skips generation if technicalSpecs is empty after filtering N/A values,
- *    matching the behaviour of the bulk importer and product forms.
+ * regenerateTdsAfterUpdate — fire-and-forget TDS regeneration after approval.
  */
 async function regenerateTdsAfterUpdate(
   productId: string,
   productData: Record<string, any>,
 ): Promise<void> {
   try {
-    // ── 1. Build filtered technicalSpecs (exclude N/A and empty values) ──────
     const technicalSpecs = (productData.technicalSpecs ?? [])
       .map((group: any) => ({
         specGroup: String(group.specGroup ?? group.name ?? "")
@@ -187,8 +170,6 @@ async function regenerateTdsAfterUpdate(
       }))
       .filter((g: any) => g.specs.length > 0);
 
-    // Skip entirely if there are no meaningful specs — a TDS without specs
-    // would be a nearly-blank PDF, which is worse than keeping the old one.
     if (technicalSpecs.length === 0) {
       console.info(
         `[requestService] TDS skipped for ${productId} — no non-N/A specs after approval.`,
@@ -196,19 +177,13 @@ async function regenerateTdsAfterUpdate(
       return;
     }
 
-    // ── 2. Dynamic import (keeps jsPDF out of the SSR bundle) ────────────────
     const { generateTdsPdf, uploadTdsPdf } = await import("@/lib/tdsGenerator");
 
-    // ── 3. Resolve Cloudinary config from env (with sensible defaults) ───────
     const cloudName =
       process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
     const uploadPreset =
       process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? "taskflow_preset";
 
-    // ── 4. Map product image fields → TDS generator input ───────────────────
-    //    Field names are normalised across the three product schemas:
-    //      JARIS bulk   : dimensionalDrawingImage, recommendedMountingHeightImage, …
-    //      All-products  : same, plus legacy dimensionDrawingImage alias
     const p = productData as any;
 
     const tdsBlob = await generateTdsPdf({
@@ -217,11 +192,7 @@ async function regenerateTdsAfterUpdate(
       ecoItemCode: p.ecoItemCode,
       technicalSpecs,
       brand: resolveTdsBrand(p.brand),
-
-      // Product images — fall back across known field aliases
       mainImageUrl: p.mainImage || p.rawImage || undefined,
-
-      // Technical drawing images
       dimensionalDrawingUrl:
         p.dimensionalDrawingImage || p.dimensionDrawingImage || undefined,
       recommendedMountingHeightUrl:
@@ -237,7 +208,6 @@ async function regenerateTdsAfterUpdate(
       typeOfPlugUrl: p.typeOfPlugImage || undefined,
     });
 
-    // ── 5. Upload PDF to Cloudinary ──────────────────────────────────────────
     const filename = `${resolveTdsCode(p, productId)}_TDS.pdf`;
     const tdsUrl = await uploadTdsPdf(
       tdsBlob,
@@ -253,7 +223,6 @@ async function regenerateTdsAfterUpdate(
       return;
     }
 
-    // ── 6. Persist the new TDS URL back to the product document ─────────────
     await updateDoc(doc(db, "products", productId), {
       tdsFileUrl: tdsUrl,
       updatedAt: serverTimestamp(),
@@ -263,9 +232,6 @@ async function regenerateTdsAfterUpdate(
       `[requestService] TDS auto-regenerated for product ${productId} → ${tdsUrl}`,
     );
   } catch (err: any) {
-    // ── Non-fatal — log and continue ─────────────────────────────────────────
-    // The request was already approved and the product doc updated.
-    // A failed TDS regeneration must not surface as an error to the approver.
     console.warn(
       `[requestService] TDS auto-regeneration failed for product ${productId}:`,
       err?.message ?? err,
@@ -282,21 +248,11 @@ export async function createRequest(data: {
   payload: Record<string, any>;
   requestedBy: string;
   requestedByName?: string;
-  /**
-   * meta is merged with auto-resolved product identifiers when resource="products".
-   * Callers should pass { productName, source, page, ... }; this function will
-   * enrich it with litItemCode / ecoItemCode from payload when missing.
-   */
   meta?: Record<string, any>;
 }): Promise<string> {
-  // ── Auto-enrich meta with canonical product fields ─────────────────────────
   let enrichedMeta = data.meta ?? {};
 
   if (data.resource === "products") {
-    // Determine the relevant product doc to extract identifiers from.
-    // For update requests the identifiers live in payload.before (original values).
-    // For delete requests they live in payload.productSnapshot.
-    // For create requests they live at the payload root.
     const sourceDoc =
       data.payload?.before ??
       data.payload?.productSnapshot ??
@@ -306,8 +262,8 @@ export async function createRequest(data: {
     const productMeta = resolveProductMeta(sourceDoc);
 
     enrichedMeta = {
-      ...productMeta, // litItemCode, ecoItemCode, productFamily, brand, productName (from doc)
-      ...enrichedMeta, // caller-supplied values take precedence (e.g. explicit productName)
+      ...productMeta,
+      ...enrichedMeta,
     };
   }
 
@@ -331,22 +287,9 @@ export async function createRequest(data: {
 
 // ─── executeRequest ───────────────────────────────────────────────────────────
 
-/**
- * Execute the actual Firestore mutation described by a request.
- *
- * Idempotency: re-reads status before executing — throws if already resolved.
- *
- * Product update payload shape: { before: ProductDoc, after: ProductDoc }
- *   → only payload.after is written to Firestore.
- *   → TDS is automatically regenerated from payload.after (fire-and-forget).
- *
- * Product delete payload shape: { productSnapshot, deletedBy, originPage }
- *   → soft-delete: move to recycle_bin, delete from products.
- */
 export async function executeRequest(request: PendingRequest): Promise<void> {
   const { type, resource, resourceId, payload } = request;
 
-  // Idempotency guard — re-read from Firestore before mutating.
   const snap = await getDoc(requestRef(request.id));
   if (!snap.exists()) throw new Error("Request not found");
   const current = snap.data() as PendingRequest;
@@ -355,7 +298,6 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
   }
 
   switch (type) {
-    // ── CREATE ──────────────────────────────────────────────────────────────
     case "create": {
       const newRef = doc(collection(db, resource));
       await setDoc(newRef, {
@@ -366,22 +308,10 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
       break;
     }
 
-    // ── UPDATE ──────────────────────────────────────────────────────────────
     case "update": {
       if (!resourceId) throw new Error("resourceId required for update");
 
       const targetRef = doc(db, resource, resourceId);
-
-      /**
-       * IMPORTANT — product update payloads have the shape:
-       *   { before: <original product fields>, after: <new product fields> }
-       *
-       * We must apply payload.after — NOT spread the outer payload object
-       * (which would write "before" and "after" as document fields).
-       *
-       * For non-product resources that store the update data flat (no before/after
-       * wrapper) we fall back to spreading payload directly.
-       */
       const updateData = payload.after !== undefined ? payload.after : payload;
 
       await updateDoc(targetRef, {
@@ -389,13 +319,6 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
         updatedAt: serverTimestamp(),
       });
 
-      // ── Auto-regenerate TDS for product updates ────────────────────────────
-      // Fired as void (fire-and-forget) so TDS generation — which can take
-      // 5–20 s due to image fetching and PDF rendering — never blocks the
-      // approval confirmation from reaching the reviewer.
-      //
-      // Errors are swallowed inside regenerateTdsAfterUpdate and logged to the
-      // console; they will NOT cause the approval to fail or roll back.
       if (resource === "products") {
         void regenerateTdsAfterUpdate(resourceId, updateData);
       }
@@ -403,24 +326,12 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
       break;
     }
 
-    // ── DELETE ──────────────────────────────────────────────────────────────
     case "delete": {
       if (!resourceId) throw new Error("resourceId required for delete");
 
       if (resource === "products") {
-        /**
-         * Products use soft-delete:
-         *   1. Copy snapshot into recycle_bin/{resourceId}
-         *   2. Delete from products/{resourceId}
-         *
-         * Payload shape: { productSnapshot, deletedBy, originPage }
-         * The productSnapshot must use the canonical schema fields
-         * (itemDescription, litItemCode, ecoItemCode, etc.) exactly as stored.
-         */
         const snapshot =
           payload.productSnapshot ??
-          // Fallback: older requests stored the snapshot flat at payload root
-          // (minus the wrapper keys) — reconstruct it.
           (() => {
             const { deletedBy: _d, originPage: _o, ...rest } = payload as any;
             return Object.keys(rest).length > 0 ? rest : null;
@@ -444,7 +355,6 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
         }
       }
 
-      // Generic hard-delete for all other resources.
       await deleteDoc(doc(db, resource, resourceId));
       break;
     }
@@ -456,23 +366,6 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
 
 // ─── approveRequest ───────────────────────────────────────────────────────────
 
-/**
- * Approve a pending request.
- *
- * @param requestId    - Firestore document ID in the "requests" collection
- * @param reviewer     - { uid, name } of the approving user
- * @param skipExecution - When true the document mutation is skipped (use when
- *                        the caller already applied it directly — audit trail only)
- *
- * Note on TDS:
- *   When skipExecution is false (the normal path), executeRequest fires TDS
- *   regeneration automatically in the background for product updates.
- *
- *   When skipExecution is true (privileged direct-write path in useProductWorkflow),
- *   the caller has already written the product doc via updateDoc. In this case
- *   we also fire TDS regeneration here so that direct writes from privileged
- *   users are equally covered.
- */
 export async function approveRequest(
   requestId: string,
   reviewer: { uid: string; name?: string },
@@ -484,10 +377,6 @@ export async function approveRequest(
     const request = { id: requestId, ...snap.data() } as PendingRequest;
     await executeRequest(request);
   } else {
-    // ── skipExecution = true: caller wrote the doc directly ─────────────────
-    // Re-read the request to determine if TDS regeneration is needed.
-    // This covers the privileged path in useProductWorkflow.submitProductUpdate
-    // where updateDoc is called outside executeRequest.
     try {
       const snap = await getDoc(requestRef(requestId));
       if (snap.exists()) {
@@ -517,10 +406,6 @@ export async function approveRequest(
 
 // ─── rejectRequest ────────────────────────────────────────────────────────────
 
-/**
- * Reject a pending request without executing it.
- * The underlying resource document is left untouched.
- */
 export async function rejectRequest(
   requestId: string,
   reviewer: { uid: string; name?: string },
@@ -539,4 +424,45 @@ export async function rejectRequest(
     reviewedByName: reviewer.name ?? null,
     reviewedAt: serverTimestamp(),
   });
+}
+
+// ─── bulkApproveRequests ─────────────────────────────────────────────────────
+
+/**
+ * Approve multiple pending requests in parallel with a single shared remark.
+ *
+ * Runs all approvals concurrently. Individual failures are swallowed so that
+ * one bad request does not block the others. The caller receives a count of
+ * successes and failures so it can surface an appropriate toast message.
+ *
+ * @param requestIds - Array of request document IDs to approve
+ * @param reviewer   - { uid, name } of the approving user
+ * @param remarks    - Shared review remarks saved to every request
+ */
+export async function bulkApproveRequests(
+  requestIds: string[],
+  reviewer: { uid: string; name?: string },
+  remarks: string,
+): Promise<{ succeeded: number; failed: number }> {
+  let succeeded = 0;
+  let failed = 0;
+
+  await Promise.all(
+    requestIds.map(async (id) => {
+      try {
+        await approveRequest(id, reviewer);
+        if (remarks.trim()) {
+          await updateDoc(doc(db, REQUESTS_COL, id), {
+            reviewRemarks: remarks.trim(),
+          }).catch(() => {});
+        }
+        succeeded++;
+      } catch (err) {
+        console.warn(`[bulkApproveRequests] Failed for request ${id}:`, err);
+        failed++;
+      }
+    }),
+  );
+
+  return { succeeded, failed };
 }

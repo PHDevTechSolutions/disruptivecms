@@ -2086,7 +2086,9 @@ export default function AddNewProduct({
       }
 
       toast.success("Product Saved!", { id: tid });
-      if (onFinished) onFinished();
+      // For new products, navigate back to the list.
+      // For edits, keep the user on the form so they can make further changes.
+      if (!editData?.id && onFinished) onFinished();
 
       // ── END REPLACEMENT ───────────────────────────────────────────────────────────
     } catch (err) {

@@ -2183,6 +2183,28 @@ export default function AllProductsPage() {
             className="flex items-center justify-end gap-1"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* View TDS — visible to all users with page access */}
+            {product.tdsFileUrl && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-red-600 hover:bg-red-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTdsPreviewProduct(product);
+                    }}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  View TDS
+                </TooltipContent>
+              </Tooltip>
+            )}
+
             {/* Pending indicator dot */}
             <PendingRowIndicator status={pendingStatus} />
 
