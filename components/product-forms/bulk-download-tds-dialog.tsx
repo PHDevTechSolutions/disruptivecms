@@ -475,7 +475,7 @@ export function BulkDownloadTdsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[72rem] h-[82vh] flex flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-6xl h-[82vh] flex flex-col p-0 gap-0 overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-4 border-b shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-sky-50 border border-sky-200 flex items-center justify-center shrink-0">
@@ -544,7 +544,7 @@ export function BulkDownloadTdsDialog({ open, onOpenChange }: Props) {
                       />
                       {/* FIX: added onWheel and specific max-h classes to ensure scrolling works in modal */}
                       <CommandList
-                        className="max-h-[250px] overflow-y-auto overflow-x-hidden"
+                        className="max-h-62.5 overflow-y-auto overflow-x-hidden"
                         onWheel={(e) => e.stopPropagation()}
                       >
                         <CommandEmpty>No families found.</CommandEmpty>
@@ -646,7 +646,7 @@ export function BulkDownloadTdsDialog({ open, onOpenChange }: Props) {
                           />
                           {/* FIX: added onWheel and specific max-h classes to ensure scrolling works in modal */}
                           <CommandList
-                            className="max-h-[300px] overflow-y-auto overflow-x-hidden"
+                            className="max-h-75 overflow-y-auto overflow-x-hidden"
                             onWheel={(e) => e.stopPropagation()}
                           >
                             <CommandEmpty>No products found.</CommandEmpty>

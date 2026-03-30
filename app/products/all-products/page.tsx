@@ -1770,7 +1770,7 @@ export default function AllProductsPage() {
       cell: ({ row }) => {
         const codes = resolveItemCodes(row.original);
         return (
-          <div className="min-w-[120px]">
+          <div className="min-w-30">
             <ItemCodesDisplay itemCodes={codes} size="sm" maxVisible={3} />
           </div>
         );

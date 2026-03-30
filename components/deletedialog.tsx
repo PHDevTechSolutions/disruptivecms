@@ -306,7 +306,7 @@ export function DeleteToRecycleBinDialog({
                 size="sm"
                 disabled={isLoading}
                 className={cn(
-                  "rounded-none relative select-none min-w-[200px]",
+                  "rounded-none relative select-none min-w-50",
                   requestMode && "bg-amber-600 hover:bg-amber-700 text-white",
                 )}
                 onMouseDown={startPress}
