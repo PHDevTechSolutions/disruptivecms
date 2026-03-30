@@ -1,5 +1,18 @@
 "use client";
 
+/**
+ * components/product-forms/bulk-uploader.tsx  (REFACTORED)
+ *
+ * Changes from original:
+ *  - Excel parsing now uses column headers (not fixed row positions) to detect fields
+ *  - Supports new `itemCodes` schema ({ ECOSHIFT?, LIT?, LUMERA?, OKO?, ZUMTOBEL? })
+ *  - At least one itemCode must be filled per row (rows without codes are skipped)
+ *  - Legacy litItemCode / ecoItemCode columns still recognised and migrated
+ *  - Duplicate check updated to use itemCodes
+ *  - TDS generation uses new plain-tabular default (includeBrandAssets = false)
+ *  - All existing Shopify import logic, Firestore writes, and audit trails preserved
+ */
+
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { db } from "@/lib/firebase";
@@ -15,10 +28,6 @@ import {
 } from "firebase/firestore";
 import ExcelJS from "exceljs";
 
-// ─── TDS lib ──────────────────────────────────────────────────────────────────
-// generateTdsPdf  → builds a filled product TDS PDF from scratch (no template needed)
-// uploadTdsPdf    → uploads the resulting Blob to Cloudinary as a raw PDF
-// normaliseBrand  → converts a raw brand string to a valid TdsBrand ("LIT" | "ECOSHIFT")
 import {
   generateTdsPdf,
   uploadTdsPdf,
@@ -49,7 +58,6 @@ import {
   FileUp,
   FileSpreadsheet,
   ChevronRight,
-  Layers,
   RefreshCw,
   XCircle,
   FileText,
@@ -62,6 +70,19 @@ import {
   Info,
   Stamp,
 } from "lucide-react";
+
+import type {
+  ItemCodes,
+  ItemCodeBrand,
+} from "@/types/product";
+import {
+  ALL_BRANDS,
+  ITEM_CODE_BRAND_CONFIG,
+  getFilledItemCodes,
+  hasAtLeastOneItemCode,
+  migrateToItemCodes,
+} from "@/types/product";
+import { ItemCodesDisplay } from "@/components/ItemCodesDisplay";
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
 
@@ -78,15 +99,14 @@ type ShopifyMode = "draft" | "public";
 
 interface ParsedProduct {
   itemDescription: string;
+  // New schema
+  itemCodes: ItemCodes;
+  // Legacy fields kept for backward compat & duplicate checking
   ecoItemCode: string;
   litItemCode: string;
   productFamily: string;
   productClass: string;
   productUsage: string[];
-  /**
-   * Brand parsed from the optional "BRAND" column in the Excel file.
-   * Defaults to "LIT" when the column is absent or the value is unrecognised.
-   */
   brand: TdsBrand;
   mainImageUrl: string;
   rawImageUrl: string;
@@ -150,7 +170,6 @@ interface TechnicalSpec {
   specGroup: string;
   specs: { name: string; value: string }[];
 }
-
 interface ImportStats {
   total: number;
   success: number;
@@ -159,9 +178,7 @@ interface ImportStats {
 }
 type PreviewTab = "files" | "categories" | "products";
 
-// ─── JARIS Excel column constants ────────────────────────────────────────────
-
-const IDENTITY_COL_COUNT = 6;
+// ─── Image header map (unchanged from original) ───────────────────────────────
 
 const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
   "MAIN IMAGE": "mainImageUrl",
@@ -178,6 +195,26 @@ const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
   "TERMINAL LAYOUT": "terminalLayoutUrl",
   ACCESSORIES: "accessoriesImageUrl",
   "TYPE OF PLUG": "typeOfPlugUrl",
+};
+
+// Column headers that map to itemCodes brands
+const ITEM_CODE_HEADER_MAP: Record<string, ItemCodeBrand> = {
+  "ECOSHIFT ITEM CODE": "ECOSHIFT",
+  "ECO ITEM CODE": "ECOSHIFT",
+  "ECOITEMCODE": "ECOSHIFT",
+  "LIT ITEM CODE": "LIT",
+  "LITITEMCODE": "LIT",
+  "LIT CODE": "LIT",
+  "LUMERA ITEM CODE": "LUMERA",
+  "LUMERAITEMCODE": "LUMERA",
+  "OKO ITEM CODE": "OKO",
+  "OKOITEMCODE": "OKO",
+  "ZUMTOBEL ITEM CODE": "ZUMTOBEL",
+  "ZUMTOBELITEMCODE": "ZUMTOBEL",
+  // Legacy column names
+  "ECO CODE": "ECOSHIFT",
+  "ECOSHIFT CODE": "ECOSHIFT",
+  "LIT BRAND CODE": "LIT",
 };
 
 function normaliseProductClass(raw: string): "spf" | "standard" | "" {
@@ -203,8 +240,6 @@ function parseGalleryUrls(raw: string): string[] {
     .filter(Boolean);
 }
 
-// ─── Excel cell helper ────────────────────────────────────────────────────────
-
 function cellStr(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "object" && "text" in (v as any))
@@ -219,7 +254,7 @@ function cellStr(v: unknown): string {
 function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   const map: Record<number, string> = {};
   let current = "";
-  for (let i = IDENTITY_COL_COUNT; i < groupRow.length; i++) {
+  for (let i = 0; i < groupRow.length; i++) {
     const cell = groupRow[i];
     if (cell && cell.trim()) current = cell.trim();
     if (current) map[i] = current;
@@ -227,13 +262,13 @@ function buildGroupMap(groupRow: (string | null)[]): Record<number, string> {
   return map;
 }
 
-// ─── Parse workbook ───────────────────────────────────────────────────────────
+// ─── UPDATED: Parse workbook — header-based field detection ──────────────────
 
 async function parseWorkbook(file: File): Promise<{
   sheetName: string;
   products: ParsedProduct[];
   warnings: string[];
-  hasBrandColumn: boolean;
+  brandCounts: Record<ItemCodeBrand, number>;
 }> {
   const buffer = await file.arrayBuffer();
   const wb = new ExcelJS.Workbook();
@@ -249,8 +284,6 @@ async function parseWorkbook(file: File): Promise<{
   ws.eachRow({ includeEmpty: true }, (row) => {
     const cells: (string | null)[] = [];
     row.eachCell({ includeEmpty: true }, (cell) => {
-      // Prefer the hyperlink href over the display text so that Google Drive
-      // URLs embedded as Excel hyperlinks are extracted correctly.
       const hyperlink =
         typeof (cell as any).hyperlink === "string"
           ? ((cell as any).hyperlink as string).trim()
@@ -265,112 +298,152 @@ async function parseWorkbook(file: File): Promise<{
     throw new Error("Sheet must have at least a header row.");
 
   const headerRow = allRows[0];
+  // Row 2 is spec group row (unchanged from original)
   const groupRow = allRows[1];
   const dataRows = allRows.slice(2);
 
-  // ── Step 0: detect optional BRAND column ────────────────────────────────────
-  // The "BRAND" column header is case-insensitive and can appear anywhere in
-  // row 1.  It is NOT an image field and NOT a spec field — it sits outside
-  // the identity block as a standalone metadata column.
-  let brandColIndex = -1;
-  headerRow.forEach((h, i) => {
-    if (!h) return;
-    if (
-      h
-        .replace(/[\r\n\t]+/g, " ")
-        .trim()
-        .toUpperCase() === "BRAND"
-    ) {
-      brandColIndex = i;
-    }
-  });
-  const hasBrandColumn = brandColIndex >= 0;
+  // ── Detect column roles from header names ─────────────────────────────────
+  // This replaces the fixed identity column approach with header-based detection
 
-  // ── Step 1: scan ALL header columns for image fields by name ────────────────
-  // imgColMap  : col index → ParsedProduct image field
-  // imgColSet  : set of col indices that are image cols (excluded from specs)
+  let itemDescriptionCol = -1;
+  let productUsageCol = -1;
+  let productFamilyCol = -1;
+  let productClassCol = -1;
+  let brandCol = -1;
+
+  const itemCodeCols: Record<ItemCodeBrand, number> = {
+    ECOSHIFT: -1,
+    LIT: -1,
+    LUMERA: -1,
+    OKO: -1,
+    ZUMTOBEL: -1,
+  };
+
   const imgColMap: Record<number, keyof ParsedProduct> = {};
   const imgColSet = new Set<number>();
 
   headerRow.forEach((h, i) => {
     if (!h) return;
-    // Skip the brand column — it is neither an image field nor a spec
-    if (i === brandColIndex) return;
-    const upper = h
-      .replace(/[\r\n\t]+/g, " ")
-      .trim()
-      .toUpperCase();
-    const field = IMG_HEADER_TO_FIELD[upper];
-    if (field) {
-      imgColMap[i] = field;
+    const upper = h.replace(/[\r\n\t]+/g, " ").trim().toUpperCase();
+
+    // Item codes — new schema
+    const itemCodeBrand = ITEM_CODE_HEADER_MAP[upper];
+    if (itemCodeBrand) {
+      itemCodeCols[itemCodeBrand] = i;
+      return;
+    }
+
+    // Image fields
+    const imgField = IMG_HEADER_TO_FIELD[upper];
+    if (imgField) {
+      imgColMap[i] = imgField;
       imgColSet.add(i);
+      return;
+    }
+
+    // Core metadata columns (detected by header name)
+    if (upper === "ITEM DESCRIPTION" || upper === "ITEMDESCRIPTION" || upper === "DESCRIPTION") {
+      itemDescriptionCol = i;
+    } else if (upper === "PRODUCT USAGE" || upper === "USAGE" || upper === "PRODUCTUSAGE") {
+      productUsageCol = i;
+    } else if (
+      upper === "PRODUCT FAMILY" ||
+      upper === "PRODUCTFAMILY" ||
+      upper === "FAMILY" ||
+      upper === "CATEGORY"
+    ) {
+      productFamilyCol = i;
+    } else if (upper === "PRODUCT CLASS" || upper === "PRODUCTCLASS" || upper === "CLASS") {
+      productClassCol = i;
+    } else if (upper === "BRAND") {
+      brandCol = i;
     }
   });
 
-  // ── Step 2: build spec-group carry-forward map from row 2 ──────────────────
+  // Spec group map from row 2
   const groupMap = buildGroupMap(groupRow as string[]);
 
-  // ── Step 3: build spec label map — skip identity cols AND image cols ─────────
+  // Spec label map — skip identity, image, and item-code cols
+  const knownNonSpecCols = new Set<number>([
+    itemDescriptionCol,
+    productUsageCol,
+    productFamilyCol,
+    productClassCol,
+    brandCol,
+    ...Object.values(itemCodeCols).filter((c) => c >= 0),
+    ...imgColSet,
+  ]);
+
   const specLabelMap: Record<number, string> = {};
   headerRow.forEach((h, i) => {
-    if (i < IDENTITY_COL_COUNT) return; // fixed identity block
-    if (i === brandColIndex) return; // brand metadata column
-    if (imgColSet.has(i)) return; // image column — never a spec
-    if (!h || !groupMap[i]) return; // no group header → not a spec column
+    if (knownNonSpecCols.has(i)) return;
+    if (imgColSet.has(i)) return;
+    if (!h || !groupMap[i]) return;
     specLabelMap[i] = h.replace(/[\r\n\t]+/g, " ").trim();
   });
 
-  // ── Step 4: pre-compute per-field column indices for single-value img fields ─
-  // galleryImageUrls is handled separately (comma-split).
-  const colOf = (field: keyof ParsedProduct): number => {
-    const entry = Object.entries(imgColMap).find(([, f]) => f === field);
-    return entry ? Number(entry[0]) : -1;
-  };
-  const mainImageCol = colOf("mainImageUrl");
-  const rawImageCol = colOf("rawImageUrl");
-  const galleryCol = colOf("galleryImageUrls");
+  const galleryCol = Object.entries(imgColMap).find(
+    ([, f]) => f === "galleryImageUrls",
+  )?.[0];
 
-  // ── Step 5: parse data rows ──────────────────────────────────────────────────
   const products: ParsedProduct[] = [];
   const warnings: string[] = [];
+  const brandCounts: Record<ItemCodeBrand, number> = {
+    ECOSHIFT: 0,
+    LIT: 0,
+    LUMERA: 0,
+    OKO: 0,
+    ZUMTOBEL: 0,
+  };
 
   for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
     const row = dataRows[rowIdx];
     if (!row || row.every((c) => c == null || c === "")) continue;
 
-    const g = (col: number) => (col >= 0 ? (row[col]?.trim() ?? "") : "");
+    const g = (col: number) =>
+      col >= 0 ? (row[col]?.trim() ?? "") : "";
 
-    const itemDescription = g(5);
-    const ecoItemCode = g(3);
-    const litItemCode = g(4);
+    const itemDescription =
+      itemDescriptionCol >= 0 ? g(itemDescriptionCol) : "";
+
+    // Build itemCodes from all detected columns
+    const itemCodes: ItemCodes = {};
+    ALL_BRANDS.forEach((brand) => {
+      const col = itemCodeCols[brand];
+      if (col >= 0) {
+        const val = g(col);
+        if (val && val.toUpperCase() !== "N/A") {
+          itemCodes[brand] = val.toUpperCase();
+        }
+      }
+    });
 
     if (!itemDescription) {
       warnings.push(`Row ${rowIdx + 3}: skipped — missing Item Description`);
       continue;
     }
-    // Only hard-reject blank values; "N/A" passes through so duplicate-check
-    // can apply its bypass logic (both N/A → always upload).
-    if (!ecoItemCode) {
+
+    if (!hasAtLeastOneItemCode(itemCodes)) {
       warnings.push(
-        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing ECO Item Code`,
-      );
-      continue;
-    }
-    if (!litItemCode) {
-      warnings.push(
-        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — missing LIT Item Code`,
+        `Row ${rowIdx + 3} ("${itemDescription}"): skipped — no item codes found`,
       );
       continue;
     }
 
-    // ── Brand — read from BRAND column if present; default to "LIT" ─────────
-    const rowBrandRaw =
-      hasBrandColumn && brandColIndex >= 0
-        ? (row[brandColIndex]?.trim() ?? "")
-        : "";
-    const brand = normaliseBrand(rowBrandRaw);
+    // Track brand counts
+    getFilledItemCodes(itemCodes).forEach(({ brand }) => {
+      brandCounts[brand] = (brandCounts[brand] ?? 0) + 1;
+    });
 
-    // ── Specs ────────────────────────────────────────────────────────────────
+    // Legacy fields for backward compat
+    const ecoItemCode = itemCodes.ECOSHIFT ?? "";
+    const litItemCode = itemCodes.LIT ?? "";
+
+    // Brand for TDS
+    const rowBrandRaw = brandCol >= 0 ? g(brandCol) : "";
+    const brand = normaliseBrand(rowBrandRaw || (litItemCode ? "LIT" : "ECOSHIFT"));
+
+    // Specs
     const specsByGroup: Record<string, { label: string; value: string }[]> = {};
     for (const [colStr, label] of Object.entries(specLabelMap)) {
       const col = Number(colStr);
@@ -382,25 +455,34 @@ async function parseWorkbook(file: File): Promise<{
       specsByGroup[group].push({ label, value: val });
     }
 
-    // ── Single-value image fields (all matched by header name) ───────────────
+    // Single-value image fields
     const imgVals: Partial<Record<keyof ParsedProduct, string>> = {};
     for (const [colStr, field] of Object.entries(imgColMap)) {
-      if (field === "galleryImageUrls") continue; // handled below
+      if (field === "galleryImageUrls") continue;
       imgVals[field] = row[Number(colStr)]?.trim() ?? "";
     }
 
     products.push({
       itemDescription,
+      itemCodes,
       ecoItemCode,
       litItemCode,
-      productFamily: g(1).toUpperCase() || "UNCATEGORISED",
-      productClass: normaliseProductClass(g(2)),
-      productUsage: parseProductUsage(g(0)),
+      productFamily:
+        (productFamilyCol >= 0 ? g(productFamilyCol) : "").toUpperCase() ||
+        "UNCATEGORISED",
+      productClass: normaliseProductClass(
+        productClassCol >= 0 ? g(productClassCol) : "",
+      ),
+      productUsage: parseProductUsage(
+        productUsageCol >= 0 ? g(productUsageCol) : "",
+      ),
       brand,
-      // Image fields — all resolved by header name, never by hard-coded index
       mainImageUrl: imgVals.mainImageUrl ?? "",
       rawImageUrl: imgVals.rawImageUrl ?? "",
-      galleryImageUrls: galleryCol >= 0 ? parseGalleryUrls(g(galleryCol)) : [],
+      galleryImageUrls:
+        galleryCol !== undefined && Number(galleryCol) >= 0
+          ? parseGalleryUrls(g(Number(galleryCol)))
+          : [],
       dimensionalDrawingUrl: imgVals.dimensionalDrawingUrl ?? "",
       recommendedMountingHeightUrl: imgVals.recommendedMountingHeightUrl ?? "",
       driverCompatibilityUrl: imgVals.driverCompatibilityUrl ?? "",
@@ -416,10 +498,10 @@ async function parseWorkbook(file: File): Promise<{
     });
   }
 
-  return { sheetName: ws.name, products, warnings, hasBrandColumn };
+  return { sheetName: ws.name, products, warnings, brandCounts };
 }
 
-// ─── Cloudinary helpers ───────────────────────────────────────────────────────
+// ─── Cloudinary helpers (unchanged from original) ─────────────────────────────
 
 async function uploadUrlToCloudinary(url: string): Promise<string> {
   if (!url) return "";
@@ -475,7 +557,52 @@ async function uploadManyUrls(
   return out;
 }
 
-// ─── Shopify helpers ──────────────────────────────────────────────────────────
+// ─── UPDATED: Duplicate check using itemCodes ─────────────────────────────────
+
+function isNaValue(code: string): boolean {
+  return !code || code.trim().toUpperCase() === "N/A";
+}
+
+async function checkDuplicate(itemCodes: ItemCodes): Promise<{
+  isDuplicate: boolean;
+  reason: string;
+}> {
+  const filled = getFilledItemCodes(itemCodes);
+
+  // If all codes are N/A or empty, bypass
+  if (filled.length === 0) return { isDuplicate: false, reason: "" };
+
+  for (const { brand, code } of filled) {
+    // Check both new schema and legacy fields
+    const fieldToCheck = brand === "ECOSHIFT" ? "ecoItemCode" : brand === "LIT" ? "litItemCode" : null;
+
+    // Check new schema field
+    const snapNew = await getDocs(
+      query(
+        collection(db, "products"),
+        where(`itemCodes.${brand}`, "==", code),
+      ),
+    );
+    if (!snapNew.empty)
+      return { isDuplicate: true, reason: `${brand} item code "${code}"` };
+
+    // Legacy field check
+    if (fieldToCheck) {
+      const snapLegacy = await getDocs(
+        query(
+          collection(db, "products"),
+          where(fieldToCheck, "==", code),
+        ),
+      );
+      if (!snapLegacy.empty)
+        return { isDuplicate: true, reason: `${brand} item code "${code}" (legacy)` };
+    }
+  }
+
+  return { isDuplicate: false, reason: "" };
+}
+
+// ─── Shopify helpers (unchanged from original) ────────────────────────────────
 
 function toSlugShopify(str: string): string {
   return str
@@ -507,7 +634,9 @@ function extractRawSpecs(product: ShopifyProduct): RawSpec[] {
       !mf.namespace || mf.namespace === "custom" || mf.namespace === "global";
     specs.push({
       groupName: isUngrouped ? null : mf.namespace.toUpperCase(),
-      label: mf.key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      label: mf.key
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
       value: mf.value,
     });
   }
@@ -538,7 +667,7 @@ function extractRawSpecs(product: ShopifyProduct): RawSpec[] {
   return specs;
 }
 
-// ─── Shared Firestore helpers ─────────────────────────────────────────────────
+// ─── Shared Firestore helpers (unchanged from original) ───────────────────────
 
 async function findDoc(
   col: string,
@@ -682,6 +811,7 @@ async function upsertProductFamily(
   return ref.id;
 }
 
+// Shopify spec resolution (unchanged from original)
 async function upsertStandaloneSpecItem(label: string): Promise<void> {
   const existingId = await findDoc("specItems", "label", label);
   if (existingId) return;
@@ -755,7 +885,7 @@ async function normalizeShopifyProduct(
   log: (msg: string) => void,
 ) {
   const pv = product.variants[0];
-  const ecoItemCode = pv?.sku?.trim() || String(product.id);
+  const skuCode = pv?.sku?.trim() || String(product.id);
   const productFamily = (
     product.product_type?.trim() || "UNCATEGORISED"
   ).toUpperCase();
@@ -785,7 +915,6 @@ async function normalizeShopifyProduct(
     name: product.images[idx + 2]?.alt || `image-${idx}`,
   }));
   const imageMatches = autoMatchImages(imageFiles);
-  const galleryImages = uploaded.slice(2);
 
   log(`  → Extracting specs...`);
   const rawSpecs = extractRawSpecs(product);
@@ -800,12 +929,17 @@ async function normalizeShopifyProduct(
     familySpecItemsByGroupId,
   );
 
+  // Build itemCodes for Shopify products (SKU maps to ECOSHIFT by convention)
+  const itemCodes: ItemCodes = {};
+  if (skuCode) itemCodes.ECOSHIFT = skuCode;
+
   return {
     productClass: "" as const,
     itemDescription,
     shortDescription,
     slug,
-    ecoItemCode,
+    itemCodes,
+    ecoItemCode: skuCode,
     litItemCode: "",
     regularPrice,
     salePrice,
@@ -813,7 +947,7 @@ async function normalizeShopifyProduct(
     mainImage,
     rawImage,
     qrCodeImage: "",
-    galleryImages,
+    galleryImages: uploaded.slice(2),
     dimensionalDrawingImage: imageMatches.dimensionalDrawing || "",
     recommendedMountingHeightImage: imageMatches.mountingHeight || "",
     driverCompatibilityImage: imageMatches.driverCompatibility || "",
@@ -841,70 +975,6 @@ async function normalizeShopifyProduct(
     importSource: "shopify-importer" as const,
     shopifyProductId: product.id,
   };
-}
-
-// ─── Duplicate check ──────────────────────────────────────────────────────────
-
-function isNaValue(code: string): boolean {
-  return !code || code.trim().toUpperCase() === "N/A";
-}
-
-async function checkJarisDuplicate(
-  ecoItemCode: string,
-  litItemCode: string,
-): Promise<{ isDuplicate: boolean; reason: string }> {
-  // If both codes are N/A or empty, bypass duplicate check entirely
-  if (isNaValue(ecoItemCode) && isNaValue(litItemCode)) {
-    return { isDuplicate: false, reason: "" };
-  }
-
-  // Only check ecoItemCode if it has a real (non-N/A) value
-  if (ecoItemCode && !isNaValue(ecoItemCode)) {
-    const snap = await getDocs(
-      query(
-        collection(db, "products"),
-        where("ecoItemCode", "==", ecoItemCode),
-      ),
-    );
-    if (!snap.empty)
-      return { isDuplicate: true, reason: `ecoItemCode "${ecoItemCode}"` };
-  }
-
-  // Only check litItemCode if it has a real (non-N/A) value
-  if (litItemCode && !isNaValue(litItemCode)) {
-    const snap = await getDocs(
-      query(
-        collection(db, "products"),
-        where("litItemCode", "==", litItemCode),
-      ),
-    );
-    if (!snap.empty)
-      return { isDuplicate: true, reason: `litItemCode "${litItemCode}"` };
-  }
-
-  return { isDuplicate: false, reason: "" };
-}
-
-// ─── Brand badge helper ───────────────────────────────────────────────────────
-
-function BrandBadge({ brand }: { brand: TdsBrand }) {
-  return brand === "ECOSHIFT" ? (
-    <Badge
-      variant="outline"
-      className="text-[10px] gap-1 border-green-400 text-green-600 dark:border-green-600 dark:text-green-400"
-    >
-      <Stamp className="w-2.5 h-2.5" />
-      ECOSHIFT
-    </Badge>
-  ) : (
-    <Badge
-      variant="outline"
-      className="text-[10px] gap-1 border-blue-400 text-blue-600 dark:border-blue-600 dark:text-blue-400"
-    >
-      <Stamp className="w-2.5 h-2.5" />
-      LIT
-    </Badge>
-  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -951,8 +1021,7 @@ function FilesPanel({
     productCount: number;
     families: Set<string>;
     warnings: string[];
-    hasBrandColumn: boolean;
-    brandCounts: Record<TdsBrand, number>;
+    brandCounts: Record<ItemCodeBrand, number>;
   }[];
 }) {
   return (
@@ -971,30 +1040,29 @@ function FilesPanel({
             </Badge>
           </div>
 
-          {/* Brand column detected notice */}
-          {file.hasBrandColumn ? (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {(Object.entries(file.brandCounts) as [TdsBrand, number][])
-                .filter(([, count]) => count > 0)
-                .map(([brand, count]) => (
+          {/* Brand counts */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {(ALL_BRANDS as ItemCodeBrand[])
+              .filter((b) => (file.brandCounts[b] ?? 0) > 0)
+              .map((brand) => {
+                const config = ITEM_CODE_BRAND_CONFIG[brand];
+                return (
                   <div key={brand} className="flex items-center gap-1">
-                    <BrandBadge brand={brand} />
+                    <span
+                      className={`inline-flex items-center gap-1 border rounded px-1.5 py-0.5 text-[9px] font-bold ${config.badgeClass}`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${config.dotClass}`}
+                      />
+                      {config.label}
+                    </span>
                     <span className="text-[10px] text-muted-foreground">
-                      {count}
+                      {file.brandCounts[brand]}
                     </span>
                   </div>
-                ))}
-              <span className="text-[10px] text-muted-foreground self-center ml-1">
-                — from BRAND column
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 mb-2 text-[10px] text-muted-foreground">
-              <Info className="w-2.5 h-2.5 shrink-0" />
-              No BRAND column — TDS will use <BrandBadge brand="LIT" /> by
-              default
-            </div>
-          )}
+                );
+              })}
+          </div>
 
           <div className="flex flex-wrap gap-1 mb-2">
             {Array.from(file.families).map((f) => (
@@ -1074,11 +1142,10 @@ function ExcelProductsPanel({
 }) {
   return (
     <div className="h-full flex flex-col rounded-lg border overflow-hidden">
-      <div className="grid grid-cols-[1fr_100px_90px_56px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
+      <div className="grid grid-cols-[1fr_100px_140px_32px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-3 py-2 border-b shrink-0">
         <span>Item Description</span>
         <span>Family</span>
-        <span>ECO / LIT Code</span>
-        <span>Brand</span>
+        <span>Item Codes</span>
         <span className="text-center">Img</span>
       </div>
       <div className="flex-1 overflow-y-auto divide-y">
@@ -1086,32 +1153,17 @@ function ExcelProductsPanel({
           file.products.map((p, prodIdx) => (
             <div
               key={`${fileIdx}-${prodIdx}`}
-              className="grid grid-cols-[1fr_100px_90px_56px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
+              className="grid grid-cols-[1fr_100px_140px_32px] items-center px-3 py-2 text-xs hover:bg-muted/30 transition-colors"
             >
               <div className="min-w-0 pr-2">
                 <p className="font-medium truncate">{p.itemDescription}</p>
-                <p className="text-muted-foreground font-mono text-[10px]">
-                  {p.ecoItemCode || p.litItemCode}
-                </p>
               </div>
               <span className="text-muted-foreground text-[10px] truncate pr-2">
                 {p.productFamily}
               </span>
               <div className="pr-2">
-                {p.ecoItemCode && (
-                  <p className="font-mono text-muted-foreground text-[10px] truncate">
-                    ECO: {p.ecoItemCode}
-                  </p>
-                )}
-                {p.litItemCode && (
-                  <p className="font-mono text-muted-foreground text-[10px] truncate">
-                    LIT: {p.litItemCode}
-                  </p>
-                )}
+                <ItemCodesDisplay itemCodes={p.itemCodes} size="sm" maxVisible={2} />
               </div>
-              <span>
-                <BrandBadge brand={p.brand} />
-              </span>
               <span className="flex justify-center">
                 {p.mainImageUrl ? (
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
@@ -1232,7 +1284,7 @@ export default function BulkUploader({
       sheetName: string;
       products: ParsedProduct[];
       warnings: string[];
-      hasBrandColumn: boolean;
+      brandCounts: Record<ItemCodeBrand, number>;
     }[]
   >([]);
   const [shopifyMode, setShopifyMode] = useState<ShopifyMode>("draft");
@@ -1255,29 +1307,28 @@ export default function BulkUploader({
     [],
   );
 
-  // ── Excel dropzone ────────────────────────────────────────────────────────
-
   const handleFileDrop = useCallback(async (files: File[]) => {
     if (!files.length) return;
     addLog("info", `📂 Parsing ${files.length} file(s)...`);
     const parsed: typeof uploadedFiles = [];
     for (const file of files) {
       try {
-        const { sheetName, products, warnings, hasBrandColumn } =
+        const { sheetName, products, warnings, brandCounts } =
           await parseWorkbook(file);
         parsed.push({
           name: file.name,
           sheetName,
           products,
           warnings,
-          hasBrandColumn,
+          brandCounts,
         });
-        const brandNote = hasBrandColumn
-          ? ` — BRAND column detected`
-          : ` — no BRAND column (defaulting to LIT)`;
+        const brandSummary = (ALL_BRANDS as ItemCodeBrand[])
+          .filter((b) => brandCounts[b] > 0)
+          .map((b) => `${ITEM_CODE_BRAND_CONFIG[b].label}: ${brandCounts[b]}`)
+          .join(", ");
         addLog(
           "info",
-          `  ✅ ${file.name}: ${products.length} products${brandNote}`,
+          `  ✅ ${file.name}: ${products.length} products${brandSummary ? ` [${brandSummary}]` : ""}`,
         );
         warnings.forEach((w) => addLog("warn", `  ⚠️  ${w}`));
       } catch (err: any) {
@@ -1309,8 +1360,6 @@ export default function BulkUploader({
     multiple: true,
     disabled: importSource !== "excel" || step !== "idle" || importing,
   });
-
-  // ── Shopify fetch ─────────────────────────────────────────────────────────
 
   const handleShopifyFetch = async () => {
     setFetching(true);
@@ -1360,7 +1409,7 @@ export default function BulkUploader({
     );
   };
 
-  // ── Run JARIS Excel import ─────────────────────────────────────────────────
+  // ── UPDATED: Run JARIS Excel import with new itemCodes schema ──────────────
 
   const runExcelImport = async () => {
     const allProducts = uploadedFiles.flatMap((f) => f.products);
@@ -1376,7 +1425,7 @@ export default function BulkUploader({
       `🚀 Starting JARIS import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
     );
 
-    // ── Phase 1: Upsert spec groups ──────────────────────────────────────────
+    // Phase 1: Upsert spec groups (unchanged)
     const allSpecGroups: Record<string, Set<string>> = {};
     const familyToGroups: Record<string, Set<string>> = {};
     const familySpecItems: Record<string, FamilySpecItemsByGroupId> = {};
@@ -1413,7 +1462,7 @@ export default function BulkUploader({
       }
     }
 
-    // ── Phase 2: Upsert product families ─────────────────────────────────────
+    // Phase 2: Upsert product families (unchanged)
     addLog(
       "info",
       `📦 Upserting ${Object.keys(familyToGroups).length} product famil(ies)...`,
@@ -1441,7 +1490,7 @@ export default function BulkUploader({
       }
     }
 
-    // ── Phase 3: Import products ──────────────────────────────────────────────
+    // Phase 3: Import products
     addLog("info", `\n📝 Importing products...`);
 
     for (let i = 0; i < allProducts.length; i++) {
@@ -1456,15 +1505,14 @@ export default function BulkUploader({
       }
 
       const p = allProducts[i];
-      const displayCode = `${p.ecoItemCode} / ${p.litItemCode}`;
+      const displayCode = getFilledItemCodes(p.itemCodes)
+        .map(({ brand, code }) => `${brand}:${code}`)
+        .join(" / ") || "NO CODE";
       setCurrentItem(`${displayCode} — ${p.itemDescription}`);
 
       try {
-        // Duplicate check
-        const { isDuplicate, reason } = await checkJarisDuplicate(
-          p.ecoItemCode,
-          p.litItemCode,
-        );
+        // UPDATED: Use new itemCodes-based duplicate check
+        const { isDuplicate, reason } = await checkDuplicate(p.itemCodes);
         if (isDuplicate) {
           addLog(
             "skip",
@@ -1476,7 +1524,6 @@ export default function BulkUploader({
           continue;
         }
 
-        // Upload images
         addLog("info", `  → Uploading images for "${p.itemDescription}"...`);
         const [
           mainImage,
@@ -1513,12 +1560,8 @@ export default function BulkUploader({
           (m) => addLog("info", m),
         );
 
-        // ── rawImage fallback: use mainImage if rawImage upload is empty ──────
         const rawImage = rawImageUploaded || mainImage || "";
 
-        // ── Build technicalSpecs — filter out N/A and empty values ────────────
-        // Entries with value "N/A" (case-insensitive) or empty are excluded from
-        // both Firestore storage and TDS PDF generation.
         const technicalSpecs = Object.entries(p.specs)
           .map(([specGroup, entries]) => ({
             specGroup: specGroup.toUpperCase().trim(),
@@ -1534,14 +1577,19 @@ export default function BulkUploader({
           }))
           .filter((group) => group.specs.length > 0);
 
-        const slug = p.ecoItemCode.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        const slug = (p.ecoItemCode || p.litItemCode || p.itemDescription)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-");
 
-        // Save product document
+        // UPDATED: Save with new itemCodes field + legacy fields for compat
         const docRef = await addDoc(collection(db, "products"), {
           productClass: p.productClass,
           itemDescription: p.itemDescription,
           shortDescription: "",
           slug,
+          // New schema
+          itemCodes: p.itemCodes,
+          // Legacy fields preserved for backward compat
           ecoItemCode: p.ecoItemCode,
           litItemCode: p.litItemCode,
           regularPrice: 0,
@@ -1584,23 +1632,22 @@ export default function BulkUploader({
 
         addLog("info", `  → Saved product doc ${docRef.id}`);
 
-        // ── TDS PDF generation ─────────────────────────────────────────────────
-        // technicalSpecs already has N/A filtered out above.
-        // tdsGenerator also independently filters N/A as a safety net.
-        // Brand is read from the parsed product (per-row from the BRAND column,
-        // or "LIT" if the column was absent).
+        // UPDATED: TDS generation — plain tabular (no brand assets) by default
         if (technicalSpecs.length > 0) {
           try {
             addLog(
               "info",
-              `  → Generating TDS PDF [${p.brand}] for "${p.itemDescription}"...`,
+              `  → Generating TDS PDF for "${p.itemDescription}"...`,
             );
 
             const tdsBlob = await generateTdsPdf({
               itemDescription: p.itemDescription,
+              itemCodes: p.itemCodes,
               litItemCode: p.litItemCode,
               technicalSpecs,
               brand: p.brand,
+              // Default: plain tabular output (no brand assets)
+              includeBrandAssets: false,
               mainImageUrl: mainImage || undefined,
               rawImageUrl: rawImageUploaded || undefined,
               dimensionalDrawingUrl: dimensionalDrawingImage || undefined,
@@ -1617,9 +1664,10 @@ export default function BulkUploader({
               accessoriesImageUrl: accessoriesImage || undefined,
             });
 
+            const primaryCode = getFilledItemCodes(p.itemCodes)[0]?.code || p.itemDescription;
             const tdsFileUrl = await uploadTdsPdf(
               tdsBlob,
-              `${p.itemDescription}_TDS.pdf`,
+              `${primaryCode}_TDS.pdf`,
               CLOUDINARY_CLOUD_NAME,
               CLOUDINARY_UPLOAD_PRESET,
             );
@@ -1631,7 +1679,7 @@ export default function BulkUploader({
               });
               addLog(
                 "ok",
-                `  ✅ TDS PDF [${p.brand}] generated for "${p.itemDescription}"`,
+                `  ✅ TDS PDF generated for "${p.itemDescription}"`,
               );
             }
           } catch (tdsErr: any) {
@@ -1658,6 +1706,7 @@ export default function BulkUploader({
             collection: "products",
           },
           metadata: {
+            itemCodes: p.itemCodes,
             ecoItemCode: p.ecoItemCode || null,
             litItemCode: p.litItemCode || null,
             productFamily: p.productFamily,
@@ -1679,7 +1728,7 @@ export default function BulkUploader({
     finishImport();
   };
 
-  // ── Run Shopify import ────────────────────────────────────────────────────
+  // ── Run Shopify import (updated to include itemCodes) ─────────────────────
 
   const runShopifyImport = async () => {
     if (!shopifyProducts.length) return;
@@ -1746,6 +1795,7 @@ export default function BulkUploader({
             collection: "products",
           },
           metadata: {
+            itemCodes: normalized.itemCodes,
             ecoItemCode: normalized.ecoItemCode,
             shopifyProductId: normalized.shopifyProductId,
           },
@@ -1803,54 +1853,31 @@ export default function BulkUploader({
     {},
   );
 
-  // Per-file brand distribution counts for the Files panel
-  const fileSummary = uploadedFiles.map((file) => {
-    const brandCounts: Record<TdsBrand, number> = { LIT: 0, ECOSHIFT: 0 };
-    file.products.forEach((p) => {
-      brandCounts[p.brand] = (brandCounts[p.brand] ?? 0) + 1;
-    });
-    return {
-      name: file.name,
-      sheetName: file.sheetName,
-      productCount: file.products.length,
-      families: new Set(file.products.map((p) => p.productFamily)),
-      warnings: file.warnings,
-      hasBrandColumn: file.hasBrandColumn,
-      brandCounts,
-    };
-  });
+  const fileSummary = uploadedFiles.map((file) => ({
+    name: file.name,
+    sheetName: file.sheetName,
+    productCount: file.products.length,
+    families: new Set(file.products.map((p) => p.productFamily)),
+    warnings: file.warnings,
+    brandCounts: file.brandCounts,
+  }));
 
-  const shopifyCategorySummary = shopifyProducts.reduce<Record<string, number>>(
-    (acc, p) => {
-      const fam = (p.product_type?.trim() || "UNCATEGORISED").toUpperCase();
-      acc[fam] = (acc[fam] || 0) + 1;
-      return acc;
-    },
-    {},
-  );
   const previewProductCount =
     importSource === "shopify"
       ? shopifyProducts.length
       : excelAllProducts.length;
   const previewCategoryCount =
     importSource === "shopify"
-      ? Object.keys(shopifyCategorySummary).length
+      ? new Set(
+          shopifyProducts.map((p) =>
+            (p.product_type?.trim() || "UNCATEGORISED").toUpperCase(),
+          ),
+        ).size
       : Object.keys(excelFamilySummary).length;
   const totalWarnings = uploadedFiles.reduce(
     (s, f) => s + f.warnings.length,
     0,
   );
-
-  // Brand distribution across all parsed Excel products
-  const excelBrandCounts = excelAllProducts.reduce<Record<TdsBrand, number>>(
-    (acc, p) => {
-      acc[p.brand] = (acc[p.brand] ?? 0) + 1;
-      return acc;
-    },
-    { LIT: 0, ECOSHIFT: 0 },
-  );
-  const hasMultipleBrands =
-    excelBrandCounts.LIT > 0 && excelBrandCounts.ECOSHIFT > 0;
 
   const logColor = (type: string) => {
     if (type === "ok") return "text-emerald-400";
@@ -1881,7 +1908,7 @@ export default function BulkUploader({
       </DialogTrigger>
 
       <DialogContent className="sm:max-w-190 h-[88vh] flex flex-col p-0 overflow-hidden">
-        {/* ── Header ── */}
+        {/* Header */}
         <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -1896,9 +1923,8 @@ export default function BulkUploader({
                 <code className="font-mono bg-muted px-1 rounded">
                   JARIS .xlsx
                 </code>{" "}
-                template or Shopify. All products are saved as{" "}
-                <strong>Draft</strong> — TDS PDFs auto-generated from spec
-                values.
+                or Shopify. Supports multi-brand item codes (ECOSHIFT, LIT, LUMERA, OKO, ZUMTOBEL).
+                TDS generated as plain tabular output by default.
               </DialogDescription>
             </div>
           </div>
@@ -1936,9 +1962,9 @@ export default function BulkUploader({
           </div>
         </DialogHeader>
 
-        {/* ── Body ── */}
+        {/* Body */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {/* ════ IDLE ════ */}
+          {/* IDLE */}
           {step === "idle" && (
             <div className="h-full overflow-y-auto">
               <div className="p-6 space-y-5">
@@ -1948,9 +1974,7 @@ export default function BulkUploader({
                     <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
                       1
                     </div>
-                    <p className="text-sm font-semibold">
-                      Select Import Source
-                    </p>
+                    <p className="text-sm font-semibold">Select Import Source</p>
                   </div>
                   <div className="p-4">
                     <div className="grid grid-cols-2 gap-3">
@@ -1958,20 +1982,18 @@ export default function BulkUploader({
                         {
                           value: "excel" as const,
                           label: "JARIS Excel Template",
-                          desc: "Upload .xlsx using the standard CMS template",
+                          desc: "Upload .xlsx — field detection by column headers",
                           icon: <FileSpreadsheet className="w-4 h-4" />,
                           color: "text-blue-600",
-                          activeBg:
-                            "border-blue-500 bg-blue-50 dark:bg-blue-950/20",
+                          activeBg: "border-blue-500 bg-blue-50 dark:bg-blue-950/20",
                         },
                         {
                           value: "shopify" as const,
                           label: "Shopify Store",
-                          desc: "Fetch products directly from your Shopify Admin API",
+                          desc: "Fetch products from Shopify Admin API",
                           icon: <ShoppingBag className="w-4 h-4" />,
                           color: "text-emerald-600",
-                          activeBg:
-                            "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
+                          activeBg: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
                         },
                       ].map((opt) => {
                         const active = importSource === opt.value;
@@ -1982,33 +2004,18 @@ export default function BulkUploader({
                             onClick={() => {
                               setImportSource(opt.value);
                               setActiveTab(
-                                opt.value === "shopify"
-                                  ? "categories"
-                                  : "files",
+                                opt.value === "shopify" ? "categories" : "files",
                               );
                             }}
                             className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? `${opt.activeBg} ${opt.color} font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
                           >
-                            <span
-                              className={
-                                active ? opt.color : "text-muted-foreground"
-                              }
-                            >
+                            <span className={active ? opt.color : "text-muted-foreground"}>
                               {opt.icon}
                             </span>
                             <div>
-                              <p className="text-xs font-semibold">
-                                {opt.label}
-                              </p>
-                              <p className="text-[10px] font-normal opacity-70 mt-0.5">
-                                {opt.desc}
-                              </p>
+                              <p className="text-xs font-semibold">{opt.label}</p>
+                              <p className="text-[10px] font-normal opacity-70 mt-0.5">{opt.desc}</p>
                             </div>
-                            {active && (
-                              <CheckCircle
-                                className={`w-4 h-4 ml-auto shrink-0 ${opt.color}`}
-                              />
-                            )}
                           </button>
                         );
                       })}
@@ -2016,118 +2023,58 @@ export default function BulkUploader({
                   </div>
                 </div>
 
-                {/* Excel config */}
                 {importSource === "excel" && (
                   <>
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
-                          2
+                    {/* Info about new schema */}
+                    <div className="flex items-start gap-2 text-xs px-3 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700">
+                      <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-semibold">Multi-brand item codes supported</p>
+                        <p>Column headers detected automatically. Use any of:</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {(ALL_BRANDS as ItemCodeBrand[]).map((b) => (
+                            <span
+                              key={b}
+                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${ITEM_CODE_BRAND_CONFIG[b].badgeClass}`}
+                            >
+                              {ITEM_CODE_BRAND_CONFIG[b].label} Item Code
+                            </span>
+                          ))}
                         </div>
-                        <p className="text-sm font-semibold">
-                          Upload JARIS CMS Template
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
-                        <EyeOff className="w-3.5 h-3.5 shrink-0" />
-                        <span>
-                          Products saved as <strong>Draft</strong>. TDS PDFs
-                          auto-generated from each product's spec values.
-                        </span>
-                      </div>
-                      <div
-                        {...getRootProps()}
-                        className={`border-2 border-dashed rounded-2xl p-10 text-center flex flex-col items-center justify-center gap-3 transition-all duration-200 ${isDragActive ? "border-primary bg-primary/8 scale-[1.01] cursor-copy" : "border-border hover:border-primary/40 hover:bg-primary/3 cursor-pointer"}`}
-                      >
-                        <input {...getInputProps()} />
-                        <div
-                          className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDragActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                        >
-                          {isDragActive ? (
-                            <FileUp className="w-7 h-7 animate-bounce" />
-                          ) : (
-                            <Upload className="w-7 h-7" />
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">
-                            {isDragActive
-                              ? "Release to parse"
-                              : "Drop JARIS template files here"}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            or{" "}
-                            <span className="text-primary underline underline-offset-2 cursor-pointer">
-                              browse
-                            </span>{" "}
-                            — accepts multiple .xlsx files
-                          </p>
-                        </div>
+                        <p className="text-[10px] opacity-80">At least one item code column per row is required.</p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                        <p className="font-semibold flex items-center gap-1.5 text-primary">
-                          <Layers className="w-3.5 h-3.5" /> Template Columns
-                          (Row 1)
-                        </p>
-                        {[
-                          "A — Product Usage (INDOOR/OUTDOOR/SOLAR)",
-                          "B — Product Family",
-                          "C — Product Class (spf/standard)",
-                          "D — ECO Item Code ✱",
-                          "E — LIT Item Code ✱",
-                          "F — Item Description ✱",
-                          "G — Raw Image URL",
-                          "H — Main Image URL",
-                          "I — Gallery URLs (comma-sep)",
-                          "J–S — Technical Drawing URLs",
-                          "T+ — Spec values (grouped by Row 2)",
-                          "BRAND — TDS brand header (optional, LIT or ECOSHIFT)",
-                        ].map((c) => (
-                          <div key={c} className="flex items-start gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0 mt-1" />
-                            <code className="font-mono leading-tight">{c}</code>
-                          </div>
-                        ))}
-                        <p className="text-[10px] text-muted-foreground mt-1">
-                          ✱ Required — rows missing any will be skipped
-                        </p>
+                    <div
+                      {...getRootProps()}
+                      className={`border-2 border-dashed rounded-2xl p-10 text-center flex flex-col items-center justify-center gap-3 transition-all duration-200 ${isDragActive ? "border-primary bg-primary/8 scale-[1.01] cursor-copy" : "border-border hover:border-primary/40 hover:bg-primary/3 cursor-pointer"}`}
+                    >
+                      <input {...getInputProps()} />
+                      <div
+                        className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDragActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                      >
+                        {isDragActive ? (
+                          <FileUp className="w-7 h-7 animate-bounce" />
+                        ) : (
+                          <Upload className="w-7 h-7" />
+                        )}
                       </div>
-                      <div className="rounded-lg border p-3 space-y-1.5 bg-card">
-                        <p className="font-semibold flex items-center gap-1.5 text-emerald-600">
-                          <FileText className="w-3.5 h-3.5" /> What happens on
-                          import
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {isDragActive ? "Release to parse" : "Drop JARIS template files here"}
                         </p>
-                        {[
-                          "Images uploaded to Cloudinary automatically",
-                          "Spec groups upserted from Row 2 headers (ALL CAPS)",
-                          "Product families created / updated",
-                          "N/A spec values excluded from TDS and storage",
-                          "Raw image falls back to main image if missing",
-                          "Duplicate check: ecoItemCode AND litItemCode",
-                          "BRAND column sets TDS header/footer per row (defaults to LIT)",
-                        ].map((c) => (
-                          <div key={c} className="flex items-start gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1" />
-                            <span className="text-muted-foreground">{c}</span>
-                          </div>
-                        ))}
-                        <div className="mt-2 p-2 rounded bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
-                          <p className="text-[10px] text-blue-700 dark:text-blue-400 flex items-start gap-1">
-                            <Info className="w-3 h-3 shrink-0 mt-0.5" />
-                            Row 2 defines spec group names (e.g. LAMP DETAILS,
-                            ELECTRICAL SPECIFICATION). The BRAND column can be
-                            placed anywhere in Row 1.
-                          </p>
-                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          or{" "}
+                          <span className="text-primary underline underline-offset-2 cursor-pointer">
+                            browse
+                          </span>{" "}
+                          — accepts multiple .xlsx files
+                        </p>
                       </div>
                     </div>
                   </>
                 )}
 
-                {/* Shopify config */}
                 {importSource === "shopify" && (
                   <>
                     <div className="rounded-xl border bg-card overflow-hidden">
@@ -2135,34 +2082,26 @@ export default function BulkUploader({
                         <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
                           2
                         </div>
-                        <p className="text-sm font-semibold">
-                          Select Shopify Fetch Mode
-                        </p>
+                        <p className="text-sm font-semibold">Select Fetch Mode</p>
                       </div>
                       <div className="p-4">
-                        <p className="text-xs text-muted-foreground mb-3">
-                          Choose which Shopify products to fetch based on their
-                          publish status.
-                        </p>
                         <div className="grid grid-cols-2 gap-3">
                           {[
                             {
                               value: "draft" as const,
                               label: "Draft / Archived",
-                              desc: "Fetch products with draft or archived status",
+                              desc: "Fetch draft or archived products",
                               icon: <EyeOff className="w-4 h-4" />,
                               color: "text-amber-600",
-                              activeBg:
-                                "border-amber-500 bg-amber-50 dark:bg-amber-950/20",
+                              activeBg: "border-amber-500 bg-amber-50 dark:bg-amber-950/20",
                             },
                             {
                               value: "public" as const,
                               label: "Active / Published",
-                              desc: "Fetch products with active (published) status",
+                              desc: "Fetch active (published) products",
                               icon: <Eye className="w-4 h-4" />,
                               color: "text-emerald-600",
-                              activeBg:
-                                "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
+                              activeBg: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
                             },
                           ].map((opt) => {
                             const active = shopifyMode === opt.value;
@@ -2173,55 +2112,21 @@ export default function BulkUploader({
                                 onClick={() => setShopifyMode(opt.value)}
                                 className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? `${opt.activeBg} ${opt.color} font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
                               >
-                                <span
-                                  className={
-                                    active ? opt.color : "text-muted-foreground"
-                                  }
-                                >
+                                <span className={active ? opt.color : "text-muted-foreground"}>
                                   {opt.icon}
                                 </span>
                                 <div>
-                                  <p className="text-xs font-semibold">
-                                    {opt.label}
-                                  </p>
-                                  <p className="text-[10px] font-normal opacity-70 mt-0.5">
-                                    {opt.desc}
-                                  </p>
+                                  <p className="text-xs font-semibold">{opt.label}</p>
+                                  <p className="text-[10px] font-normal opacity-70 mt-0.5">{opt.desc}</p>
                                 </div>
-                                {active && (
-                                  <CheckCircle
-                                    className={`w-4 h-4 ml-auto shrink-0 ${opt.color}`}
-                                  />
-                                )}
                               </button>
                             );
                           })}
                         </div>
-                        <div className="mt-3 flex items-center gap-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-400">
-                          <EyeOff className="w-3.5 h-3.5 shrink-0" />
-                          <span>
-                            Regardless of Shopify status, all products will be
-                            saved as <strong>Draft</strong>.
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-xl border bg-card overflow-hidden">
-                      <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
-                          3
-                        </div>
-                        <p className="text-sm font-semibold">Fetch Products</p>
-                      </div>
-                      <div className="p-4 space-y-3">
-                        <p className="text-xs text-muted-foreground">
-                          Fetches all matching products from your Shopify store
-                          including images and metafields.
-                        </p>
                         <Button
                           onClick={handleShopifyFetch}
                           disabled={fetching}
-                          className="gap-2 w-full"
+                          className="gap-2 w-full mt-4"
                         >
                           {fetching ? (
                             <>
@@ -2231,11 +2136,7 @@ export default function BulkUploader({
                           ) : (
                             <>
                               <ShoppingBag className="w-4 h-4" />
-                              Fetch{" "}
-                              {shopifyMode === "draft"
-                                ? "Draft / Archived"
-                                : "Active"}{" "}
-                              Products
+                              Fetch Products
                             </>
                           )}
                         </Button>
@@ -2251,10 +2152,7 @@ export default function BulkUploader({
                     </div>
                     <div className="bg-slate-950 px-4 py-3 font-mono text-[11px] space-y-1 max-h-32 overflow-y-auto">
                       {logs.map((log, i) => (
-                        <div
-                          key={i}
-                          className={`flex gap-2.5 ${logColor(log.type)}`}
-                        >
+                        <div key={i} className={`flex gap-2.5 ${logColor(log.type)}`}>
                           <span className="text-slate-600 shrink-0 select-none tabular-nums">
                             [{String(i + 1).padStart(3, "0")}]
                           </span>
@@ -2269,91 +2167,31 @@ export default function BulkUploader({
             </div>
           )}
 
-          {/* ════ PREVIEW ════ */}
+          {/* PREVIEW */}
           {step === "preview" && (
             <div className="h-full flex flex-col">
               <div className="px-6 py-3 border-b shrink-0 bg-muted/20 space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold">
-                      <span className="text-primary font-bold">
-                        {previewProductCount}
-                      </span>{" "}
+                      <span className="text-primary font-bold">{previewProductCount}</span>{" "}
                       product{previewProductCount !== 1 ? "s" : ""} ready across{" "}
-                      {previewCategoryCount} famil
-                      {previewCategoryCount !== 1 ? "ies" : "y"}
+                      {previewCategoryCount} famil{previewCategoryCount !== 1 ? "ies" : "y"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Duplicates skipped · Saved as <strong>Draft</strong> · TDS
-                      auto-generated · N/A values excluded
+                      Duplicates skipped · Saved as Draft · TDS plain tabular · N/A values excluded
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={reset}
-                    className="gap-1.5 text-xs h-7 shrink-0 ml-4"
-                  >
+                  <Button variant="ghost" size="sm" onClick={reset} className="gap-1.5 text-xs h-7 shrink-0 ml-4">
                     <RefreshCw className="w-3 h-3" /> Change
                   </Button>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">
-                    Source:
-                  </span>
-                  <Badge variant="secondary" className="text-[10px] gap-1">
-                    {importSource === "shopify" ? (
-                      <ShoppingBag className="w-2.5 h-2.5" />
-                    ) : (
-                      <FileSpreadsheet className="w-2.5 h-2.5" />
-                    )}
-                    {importSource === "shopify" ? "Shopify" : "JARIS Excel"}
+                {totalWarnings > 0 && (
+                  <Badge variant="outline" className="text-[10px] gap-1 border-orange-400 text-orange-600">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    {totalWarnings} row{totalWarnings !== 1 ? "s" : ""} skipped
                   </Badge>
-                  {importSource === "shopify" && (
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] gap-1 ml-1 border-slate-300 text-slate-500"
-                    >
-                      {shopifyMode === "draft" ? "Draft/Archived" : "Active"}
-                    </Badge>
-                  )}
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] gap-1 ml-1 border-amber-400 text-amber-600"
-                  >
-                    <EyeOff className="w-2.5 h-2.5" />
-                    Saving as Draft
-                  </Badge>
-                  {/* Brand summary for Excel imports */}
-                  {importSource === "excel" && (
-                    <>
-                      {hasMultipleBrands ? (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] gap-1 ml-1 border-purple-400 text-purple-600"
-                        >
-                          <Stamp className="w-2.5 h-2.5" />
-                          Mixed brands ({excelBrandCounts.LIT} LIT ·{" "}
-                          {excelBrandCounts.ECOSHIFT} ECOSHIFT)
-                        </Badge>
-                      ) : excelBrandCounts.ECOSHIFT > 0 ? (
-                        <BrandBadge brand="ECOSHIFT" />
-                      ) : (
-                        <BrandBadge brand="LIT" />
-                      )}
-                    </>
-                  )}
-                  {totalWarnings > 0 && (
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] gap-1 ml-1 border-orange-400 text-orange-600"
-                    >
-                      <AlertCircle className="w-2.5 h-2.5" />
-                      {totalWarnings} row{totalWarnings !== 1 ? "s" : ""}{" "}
-                      skipped
-                    </Badge>
-                  )}
-                </div>
+                )}
               </div>
 
               <div className="px-6 py-2.5 border-b shrink-0 flex items-center gap-1 bg-background">
@@ -2405,10 +2243,8 @@ export default function BulkUploader({
             </div>
           )}
 
-          {/* ════ IMPORTING / DONE / CANCELLED ════ */}
-          {(step === "importing" ||
-            step === "done" ||
-            step === "cancelled") && (
+          {/* IMPORTING / DONE / CANCELLED */}
+          {(step === "importing" || step === "done" || step === "cancelled") && (
             <div className="h-full flex flex-col p-6 gap-4">
               <div className="space-y-2 shrink-0">
                 <div className="flex justify-between text-sm font-semibold">
@@ -2438,41 +2274,14 @@ export default function BulkUploader({
 
               <div className="grid grid-cols-4 gap-2.5 shrink-0">
                 {[
-                  {
-                    label: "Total",
-                    val: stats.total,
-                    cls: "text-blue-600",
-                    bg: "bg-blue-50 border-blue-100",
-                  },
-                  {
-                    label: "Success",
-                    val: stats.success,
-                    cls: "text-emerald-600",
-                    bg: "bg-emerald-50 border-emerald-100",
-                  },
-                  {
-                    label: "Failed",
-                    val: stats.failed,
-                    cls: "text-red-600",
-                    bg: "bg-red-50 border-red-100",
-                  },
-                  {
-                    label: "Skipped",
-                    val: stats.skipped,
-                    cls: "text-amber-600",
-                    bg: "bg-amber-50 border-amber-100",
-                  },
+                  { label: "Total", val: stats.total, cls: "text-blue-600", bg: "bg-blue-50 border-blue-100" },
+                  { label: "Success", val: stats.success, cls: "text-emerald-600", bg: "bg-emerald-50 border-emerald-100" },
+                  { label: "Failed", val: stats.failed, cls: "text-red-600", bg: "bg-red-50 border-red-100" },
+                  { label: "Skipped", val: stats.skipped, cls: "text-amber-600", bg: "bg-amber-50 border-amber-100" },
                 ].map((s) => (
-                  <div
-                    key={s.label}
-                    className={`${s.bg} border rounded-xl p-3 text-center`}
-                  >
-                    <p className={`text-2xl font-black tabular-nums ${s.cls}`}>
-                      {s.val}
-                    </p>
-                    <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mt-0.5">
-                      {s.label}
-                    </p>
+                  <div key={s.label} className={`${s.bg} border rounded-xl p-3 text-center`}>
+                    <p className={`text-2xl font-black tabular-nums ${s.cls}`}>{s.val}</p>
+                    <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mt-0.5">{s.label}</p>
                   </div>
                 ))}
               </div>
@@ -2483,10 +2292,7 @@ export default function BulkUploader({
                 </div>
                 <div className="flex-1 min-h-0 bg-slate-950 rounded-xl p-4 font-mono text-[11px] overflow-y-auto space-y-1 border border-slate-800 shadow-inner">
                   {logs.map((log, i) => (
-                    <div
-                      key={i}
-                      className={`flex gap-2.5 ${logColor(log.type)}`}
-                    >
+                    <div key={i} className={`flex gap-2.5 ${logColor(log.type)}`}>
                       <span className="text-slate-600 shrink-0 select-none tabular-nums">
                         [{String(i + 1).padStart(3, "0")}]
                       </span>
@@ -2503,15 +2309,12 @@ export default function BulkUploader({
           )}
         </div>
 
-        {/* ── Footer ── */}
+        {/* Footer */}
         <div className="border-t px-6 py-3 flex justify-between items-center shrink-0 bg-muted/20">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setOpen(false);
-              reset();
-            }}
+            onClick={() => { setOpen(false); reset(); }}
             className="text-xs h-8"
           >
             Close
@@ -2520,9 +2323,7 @@ export default function BulkUploader({
             {step === "preview" && (
               <Button
                 size="sm"
-                onClick={
-                  importSource === "shopify" ? runShopifyImport : runExcelImport
-                }
+                onClick={importSource === "shopify" ? runShopifyImport : runExcelImport}
                 disabled={importing}
                 className="gap-2 h-8 text-xs font-semibold"
               >
@@ -2543,12 +2344,7 @@ export default function BulkUploader({
               </Button>
             )}
             {(step === "done" || step === "cancelled") && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={reset}
-                className="gap-2 h-8 text-xs"
-              >
+              <Button size="sm" variant="outline" onClick={reset} className="gap-2 h-8 text-xs">
                 <RefreshCw className="w-3.5 h-3.5" /> Import Another
               </Button>
             )}

@@ -1,7 +1,17 @@
 "use client";
 
+/**
+ * app/products/product-families/page.tsx  (REFACTORED)
+ *
+ * Changes from original:
+ *  - Added Application Assignment: users can assign product families to applications
+ *  - Multiple application selections allowed (multi-select like spec group/item selection)
+ *  - Updates products schema (applications field) when assignment changes
+ *  - All existing spec group, spec item, product usage, image, and TDS logic preserved
+ */
+
 import * as React from "react";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useDropzone } from "react-dropzone";
 import { db } from "@/lib/firebase";
 import {
@@ -14,6 +24,9 @@ import {
   query,
   serverTimestamp,
   updateDoc,
+  where,
+  getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import {
   Check,
@@ -24,9 +37,10 @@ import {
   Loader2,
   Pencil,
   RotateCcw,
-  Sun,
   Trash2,
   X,
+  Globe,
+  Briefcase,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -77,11 +91,7 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 
-// ─── TDS lib ──────────────────────────────────────────────────────────────────
-import {
-  generateTdsTemplatePdf,
-  uploadTdsPdf,
-} from "@/lib/tdsGenerator";
+import { generateTdsTemplatePdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -100,6 +110,14 @@ type SpecGroupDoc = {
   isActive?: boolean;
 };
 
+type ApplicationDoc = {
+  id: string;
+  title?: string;
+  name?: string;
+  imageUrl?: string;
+  websites?: string[];
+};
+
 type ProductFamilyDoc = {
   id: string;
   title?: string;
@@ -109,6 +127,8 @@ type ProductFamilyDoc = {
   specs?: ProductFamilySpecs[];
   specifications?: string[];
   productUsage?: ProductUsage[];
+  // NEW: assigned applications
+  applications?: string[];
   isActive?: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -118,7 +138,7 @@ function buildSpecItemId(specGroupId: string, label: string) {
   return `${specGroupId}:${label.toUpperCase().trim()}`;
 }
 
-// ─── Usage pill button ────────────────────────────────────────────────────────
+// ─── Usage pill button (unchanged from original) ──────────────────────────────
 
 function UsagePill({
   label,
@@ -153,6 +173,74 @@ function UsagePill({
   );
 }
 
+// ─── Application selector (NEW) ───────────────────────────────────────────────
+
+function ApplicationSelector({
+  applications,
+  selectedApplicationIds,
+  onToggle,
+  open,
+  onOpenChange,
+}: {
+  applications: ApplicationDoc[];
+  selectedApplicationIds: string[];
+  onToggle: (id: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full justify-between rounded-none h-10 text-[10px] font-bold uppercase"
+        >
+          {selectedApplicationIds.length > 0
+            ? `${selectedApplicationIds.length} APPLICATION${selectedApplicationIds.length !== 1 ? "S" : ""} SELECTED`
+            : "SELECT APPLICATIONS…"}
+          <Briefcase className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-(--radix-popover-trigger-width) p-0 rounded-none"
+        align="start"
+      >
+        <Command>
+          <CommandInput
+            placeholder="Search applications…"
+            className="h-9 text-xs"
+          />
+          <CommandList>
+            <CommandEmpty>No applications found.</CommandEmpty>
+            <CommandGroup>
+              {applications.map((app) => {
+                const name = (app.title ?? app.name ?? "").toUpperCase();
+                const isSelected = selectedApplicationIds.includes(app.id);
+                return (
+                  <CommandItem
+                    key={app.id}
+                    onSelect={() => onToggle(app.id)}
+                    className="text-[10px] uppercase font-bold"
+                  >
+                    <Check
+                      className={cn(
+                        "mr-2 h-3 w-3",
+                        isSelected ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    {name}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProductFamiliesPage() {
@@ -161,9 +249,10 @@ export default function ProductFamiliesPage() {
 
   const [families, setFamilies] = useState<ProductFamilyDoc[]>([]);
   const [specGroups, setSpecGroups] = useState<SpecGroupDoc[]>([]);
+  const [applications, setApplications] = useState<ApplicationDoc[]>([]);
   const [loadingFamilies, setLoadingFamilies] = useState(true);
 
-  // ── List search/filter/selection ──────────────────────────────────────────
+  // List search/filter/selection
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<
     "all" | "active" | "inactive"
@@ -171,7 +260,7 @@ export default function ProductFamiliesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  // ── Form state ────────────────────────────────────────────────────────────
+  // Form state
   const [editId, setEditId] = useState<string | null>(null);
   const [isSubmitLoading, setIsSubmitLoading] = useState(false);
 
@@ -193,16 +282,20 @@ export default function ProductFamiliesPage() {
     {},
   );
 
-  // ── Firestore listeners ───────────────────────────────────────────────────
+  // NEW: Application assignment state
+  const [openApplications, setOpenApplications] = useState(false);
+  const [selectedApplicationIds, setSelectedApplicationIds] = useState<
+    string[]
+  >([]);
+
+  // Firestore listeners
   useEffect(() => {
     const q = query(
       collection(db, "productfamilies"),
       orderBy("createdAt", "desc"),
     );
     return onSnapshot(q, (snap) => {
-      setFamilies(
-        snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
-      );
+      setFamilies(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
       setLoadingFamilies(false);
     });
   }, []);
@@ -210,13 +303,21 @@ export default function ProductFamiliesPage() {
   useEffect(() => {
     const q = query(collection(db, "specs"), orderBy("createdAt", "desc"));
     return onSnapshot(q, (snap) => {
-      setSpecGroups(
+      setSpecGroups(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+  }, []);
+
+  // NEW: Listen to applications collection
+  useEffect(() => {
+    const q = query(collection(db, "applications"), orderBy("title", "asc"));
+    return onSnapshot(q, (snap) => {
+      setApplications(
         snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
       );
     });
   }, []);
 
-  // ── Image dropzone ─────────────────────────────────────────────────────────
+  // Image dropzone (unchanged)
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { "image/*": [] },
     multiple: false,
@@ -234,6 +335,12 @@ export default function ProductFamiliesPage() {
     return m;
   }, [specGroups]);
 
+  const applicationById = useMemo(() => {
+    const m = new Map<string, ApplicationDoc>();
+    for (const a of applications) m.set(a.id, a);
+    return m;
+  }, [applications]);
+
   const selectedSpecsForSave: ProductFamilySpecs[] = useMemo(() => {
     return selectedSpecGroupIds
       .map((specGroupId) => {
@@ -241,12 +348,12 @@ export default function ProductFamiliesPage() {
         const labels = (group?.items ?? [])
           .map((i) => i.label)
           .filter(Boolean)
-          .map((l) => l.toUpperCase().trim()); // ALL CAPS
+          .map((l) => l.toUpperCase().trim());
         const chosenItemIds = new Set(specItemSelections[specGroupId] ?? []);
         const chosenItems: SpecItemRef[] = labels
           .map((label) => ({
             id: buildSpecItemId(specGroupId, label),
-            name: label, // already ALL CAPS
+            name: label,
           }))
           .filter((item) => chosenItemIds.has(item.id));
         return { specGroupId, specItems: chosenItems };
@@ -264,6 +371,7 @@ export default function ProductFamiliesPage() {
     setSelectedSpecGroupIds([]);
     setSpecItemSelections({});
     setSpecItemSearch({});
+    setSelectedApplicationIds([]);
   }, []);
 
   const toggleSelect = (id: string) => {
@@ -318,6 +426,15 @@ export default function ProductFamiliesPage() {
     });
   };
 
+  // NEW: Toggle application assignment
+  const handleToggleApplication = (applicationId: string) => {
+    setSelectedApplicationIds((prev) =>
+      prev.includes(applicationId)
+        ? prev.filter((id) => id !== applicationId)
+        : [...prev, applicationId],
+    );
+  };
+
   const toggleSpecItem = (specGroupId: string, itemId: string) => {
     setSpecItemSelections((prev) => {
       const cur = new Set(prev[specGroupId] ?? []);
@@ -332,7 +449,7 @@ export default function ProductFamiliesPage() {
     const labels = (group?.items ?? [])
       .map((i) => i.label)
       .filter(Boolean)
-      .map((l) => l.toUpperCase().trim()); // ALL CAPS
+      .map((l) => l.toUpperCase().trim());
     const ids = labels.map((label) => buildSpecItemId(specGroupId, label));
     setSpecItemSelections((prev) => ({
       ...prev,
@@ -364,7 +481,7 @@ export default function ProductFamiliesPage() {
 
     setIsSubmitLoading(true);
     try {
-      // ── Upload image ──────────────────────────────────────────────────────
+      // Upload image
       let finalImageUrl = previewUrl;
       if (imageFile) {
         const fd = new FormData();
@@ -378,20 +495,21 @@ export default function ProductFamiliesPage() {
         finalImageUrl = json?.secure_url ?? "";
       }
 
-      // ── Normalise title to ALL CAPS ───────────────────────────────────────
       const normalisedTitle = title.trim().toUpperCase();
 
       const payload: any = {
         title: normalisedTitle,
         specs: selectedSpecsForSave,
         productUsage,
+        // NEW: save applications assignment
+        applications: selectedApplicationIds,
         updatedAt: serverTimestamp(),
       };
       const desc = description.trim();
       if (desc) payload.description = desc.toUpperCase();
       if (finalImageUrl) payload.image = finalImageUrl;
 
-      // ── Save / update productFamily document ──────────────────────────────
+      // Save / update productFamily document
       let familyDocId: string = editId ?? "";
       if (editId) {
         await updateDoc(doc(db, "productfamilies", editId), payload);
@@ -404,9 +522,33 @@ export default function ProductFamiliesPage() {
         familyDocId = ref.id;
       }
 
-      // ── Generate & save TDS template PDF ─────────────────────────────────
+      // NEW: Update products that belong to this family to reflect application changes
+      if (selectedApplicationIds.length > 0 && normalisedTitle) {
+        try {
+          const productsSnap = await getDocs(
+            query(
+              collection(db, "products"),
+              where("productFamily", "==", normalisedTitle),
+            ),
+          );
+          if (!productsSnap.empty) {
+            const batch = writeBatch(db);
+            productsSnap.docs.forEach((productDoc) => {
+              batch.update(productDoc.ref, {
+                applications: selectedApplicationIds,
+                updatedAt: serverTimestamp(),
+              });
+            });
+            await batch.commit();
+          }
+        } catch (err) {
+          console.warn("Failed to propagate applications to products:", err);
+          // Non-fatal — family was still saved
+        }
+      }
+
+      // Generate & save TDS template PDF (unchanged from original)
       try {
-        // Build spec groups for the template using ALL CAPS labels
         const specGroupsForTemplate = selectedSpecGroupIds
           .map((gid) => {
             const group = specGroupById.get(gid);
@@ -428,11 +570,11 @@ export default function ProductFamiliesPage() {
           .filter((g) => g.items.length > 0);
 
         if (specGroupsForTemplate.length > 0) {
-          toast.loading("Generating TDS template…", {
-            id: "tds-template",
-          });
+          toast.loading("Generating TDS template…", { id: "tds-template" });
+          // Plain tabular template (no brand assets by default)
           const blob = await generateTdsTemplatePdf({
             specGroups: specGroupsForTemplate,
+            includeBrandAssets: false,
           });
           const tplUrl = await uploadTdsPdf(
             blob,
@@ -449,10 +591,11 @@ export default function ProductFamiliesPage() {
       } catch (tplErr: any) {
         toast.dismiss("tds-template");
         console.warn("TDS template generation failed:", tplErr);
-        // Non-fatal — family was still saved
       }
 
-      toast.success(editId ? "Product family updated" : "Product family created");
+      toast.success(
+        editId ? "Product family updated" : "Product family created",
+      );
       resetForm();
     } catch {
       toast.error("Error processing request");
@@ -503,21 +646,20 @@ export default function ProductFamiliesPage() {
                 Product Families
               </h1>
               <p className="text-sm text-muted-foreground">
-                Create and manage product families and their specs. A blank TDS
-                template PDF is auto-generated on each save.
+                Create and manage product families, specs, and application
+                assignments. A blank TDS template PDF is auto-generated on each
+                save.
               </p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              {/* ══════════════ FORM COLUMN ══════════════ */}
+              {/* ══ FORM COLUMN ══ */}
               <div className="lg:col-span-4 sticky top-6 z-10">
                 <Card className="rounded-none shadow-none border-foreground/10 max-h-[calc(100vh-6rem)] overflow-y-auto">
                   <CardHeader className="border-b">
                     <div className="flex items-center justify-between gap-3">
                       <CardTitle className="text-xs font-black uppercase tracking-widest">
-                        {editId
-                          ? "Edit Product Family"
-                          : "Add Product Family"}
+                        {editId ? "Edit Product Family" : "Add Product Family"}
                       </CardTitle>
                       {editId && (
                         <Button
@@ -651,7 +793,55 @@ export default function ProductFamiliesPage() {
                         </div>
                       </div>
 
-                      {/* Spec groups selection */}
+                      {/* ── NEW: Application Assignment ── */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase opacity-60 flex items-center gap-1.5">
+                          <Briefcase size={10} />
+                          Applications{" "}
+                          <span className="opacity-60">(optional)</span>
+                        </label>
+                        <ApplicationSelector
+                          applications={applications}
+                          selectedApplicationIds={selectedApplicationIds}
+                          onToggle={handleToggleApplication}
+                          open={openApplications}
+                          onOpenChange={setOpenApplications}
+                        />
+                        {selectedApplicationIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {selectedApplicationIds.map((appId) => {
+                              const app = applicationById.get(appId);
+                              const name = app?.title ?? app?.name ?? appId;
+                              return (
+                                <Badge
+                                  key={appId}
+                                  variant="outline"
+                                  className="rounded-none text-[8px] font-black uppercase px-2 h-5 gap-1"
+                                >
+                                  {name.toUpperCase()}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleApplication(appId)
+                                    }
+                                    className="hover:text-destructive"
+                                  >
+                                    <X size={8} />
+                                  </button>
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {selectedApplicationIds.length > 0 && (
+                          <p className="text-[9px] text-muted-foreground uppercase font-bold">
+                            Products in this family will be tagged with the
+                            selected applications
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Spec groups selection (unchanged) */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase opacity-60">
                           Spec Groups{" "}
@@ -730,7 +920,7 @@ export default function ProductFamiliesPage() {
                         )}
                       </div>
 
-                      {/* Spec items per group */}
+                      {/* Spec items per group (unchanged) */}
                       {selectedSpecGroupIds.length > 0 && (
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
@@ -820,8 +1010,7 @@ export default function ProductFamiliesPage() {
                                       onChange={(evt) =>
                                         setSpecItemSearch((prev) => ({
                                           ...prev,
-                                          [gid]:
-                                            evt.target.value.toUpperCase(),
+                                          [gid]: evt.target.value.toUpperCase(),
                                         }))
                                       }
                                       placeholder="FILTER ITEMS…"
@@ -861,9 +1050,7 @@ export default function ProductFamiliesPage() {
                                                     : "bg-background",
                                                 )}
                                               >
-                                                {checked && (
-                                                  <Check size={12} />
-                                                )}
+                                                {checked && <Check size={12} />}
                                               </span>
                                               <span className="text-[10px] font-black uppercase text-muted-foreground">
                                                 {label}
@@ -954,7 +1141,7 @@ export default function ProductFamiliesPage() {
                 </Card>
               </div>
 
-              {/* ══════════════ LIST VIEW ══════════════ */}
+              {/* ══ LIST VIEW ══ */}
               <div className="lg:col-span-8">
                 {!loadingFamilies && families.length > 0 && (
                   <div className="space-y-3 mb-6">
@@ -1069,8 +1256,7 @@ export default function ProductFamiliesPage() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredFamilies.map((f) => {
-                      const img =
-                        f.image || f.imageUrl || "/placeholder.png";
+                      const img = f.image || f.imageUrl || "/placeholder.png";
                       const groupCount = Array.isArray(f.specs)
                         ? f.specs.length
                         : Array.isArray(f.specifications)
@@ -1081,6 +1267,9 @@ export default function ProductFamiliesPage() {
                             (sum, g) => sum + (g.specItems?.length ?? 0),
                             0,
                           )
+                        : 0;
+                      const appCount = Array.isArray(f.applications)
+                        ? f.applications.length
                         : 0;
 
                       return (
@@ -1121,10 +1310,12 @@ export default function ProductFamiliesPage() {
                                   setProductUsage(
                                     (f.productUsage as ProductUsage[]) ?? [],
                                   );
-                                  setPreviewUrl(
-                                    f.image ?? f.imageUrl ?? "",
-                                  );
+                                  setPreviewUrl(f.image ?? f.imageUrl ?? "");
                                   setImageFile(null);
+                                  // Restore application assignments
+                                  setSelectedApplicationIds(
+                                    f.applications ?? [],
+                                  );
                                   if (
                                     Array.isArray(f.specs) &&
                                     f.specs.length > 0
@@ -1145,9 +1336,7 @@ export default function ProductFamiliesPage() {
                                     Array.isArray(f.specifications) &&
                                     f.specifications.length > 0
                                   ) {
-                                    setSelectedSpecGroupIds(
-                                      f.specifications,
-                                    );
+                                    setSelectedSpecGroupIds(f.specifications);
                                     setSpecItemSelections({});
                                   } else {
                                     setSelectedSpecGroupIds([]);
@@ -1236,6 +1425,14 @@ export default function ProductFamiliesPage() {
                                   </span>
                                 ))}
                               </div>
+                            )}
+                            {/* NEW: Applications display */}
+                            {appCount > 0 && (
+                              <p className="text-[8px] text-muted-foreground/60 uppercase font-bold flex items-center gap-1">
+                                <Briefcase size={8} />
+                                {appCount} APPLICATION
+                                {appCount !== 1 ? "S" : ""}
+                              </p>
                             )}
                             {groupCount > 0 && (
                               <p className="text-[8px] text-muted-foreground/60 uppercase font-bold">

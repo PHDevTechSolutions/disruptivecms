@@ -1,35 +1,22 @@
 /**
- * lib/tdsGenerator.ts
+ * lib/tdsGenerator.ts  (REFACTORED)
  *
- * No-UI, reusable TDS PDF generator.
- * - generateTdsPdf()         → filled product TDS (spec values from technicalSpecs)
- * - generateTdsTemplatePdf() → blank template with placeholders (for productFamily saves)
- * - uploadTdsPdf()           → uploads a PDF Blob to Cloudinary raw endpoint
- *
- * Supports two brands: LIT (default) and ECOSHIFT.
- * Header  : /public/templates/lit-header.png       (LIT brand)
- *           /public/templates/ecoshift-header.png  (ECOSHIFT brand)
- * Footer  : /public/templates/lit-footer.png       (LIT brand)
- *           /public/templates/ecoshift-footer.png  (ECOSHIFT brand)
- * All text is normalised to ALL CAPS.
- * A4 portrait. Output filename: {itemDescription}_TDS.pdf
- *
- * Layout strategy (single-page guarantee):
- *   1. Reserve MIN_DRAWING_IMG_H × rows as a hard floor for images so specs
- *      are given a realistic budget without hogging all the space.
- *   2. Run the font-shrink loop against that budget (min readable: 6.5 pt).
- *   3. After the table renders, measure the ACTUAL tableEndY and divide the
- *      remaining vertical space across all drawing rows — strictly bounded
- *      above FOOTER_RESERVE_H so drawings never bleed into the footer.
- *      Images always fill available room without ever spilling onto a second page.
+ * Changes from original:
+ *  - Supports new `itemCodes` schema ({ ECOSHIFT?, LIT?, LUMERA?, OKO?, ZUMTOBEL? })
+ *  - Legacy litItemCode / ecoItemCode still accepted as fallback
+ *  - Default output is plain tabular (no header image, no footer image, no background)
+ *  - Brand images are now OPTIONAL — set `includeBrandAssets: true` to add header/footer
+ *  - All existing logic/layout constants preserved
  */
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { ItemCodes, ItemCodeBrand } from "../types/product";
+import { getFilledItemCodes, getPrimaryItemCode } from "../types/product";
 
 // ─── Brand type ───────────────────────────────────────────────────────────────
 
-export type TdsBrand = "LIT" | "ECOSHIFT";
+export type TdsBrand = "LIT" | "ECOSHIFT" | "LUMERA" | "OKO" | "ZUMTOBEL";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -46,13 +33,26 @@ export interface TdsTechnicalSpec {
 /** Input for a filled product TDS */
 export interface GenerateTdsInput {
   itemDescription: string;
-  /** Primary item code. If blank or "N/A", ecoItemCode is used instead. */
+  /**
+   * New schema: preferred source of item codes.
+   * If provided, takes priority over legacy fields.
+   */
+  itemCodes?: ItemCodes;
+  /** Legacy fallback — used when itemCodes is absent */
   litItemCode?: string;
-  /** Fallback item code used when litItemCode is blank or "N/A". */
   ecoItemCode?: string;
   technicalSpecs: TdsTechnicalSpec[];
-  /** Brand determines which header/footer images are used. Defaults to "LIT". */
+  /**
+   * Brand determines which header/footer images are used (only when includeBrandAssets=true).
+   * Defaults to "LIT".
+   */
   brand?: TdsBrand;
+  /**
+   * Whether to include brand header/footer images.
+   * Default: FALSE (plain tabular output).
+   * Set to true only for branded export (PD role).
+   */
+  includeBrandAssets?: boolean;
   // ── Product image ─────────────────────────────────────────────────────────
   mainImageUrl?: string;
   rawImageUrl?: string;
@@ -78,8 +78,8 @@ export interface TdsTemplateSpecGroup {
 
 export interface GenerateTdsTemplateInput {
   specGroups: TdsTemplateSpecGroup[];
-  /** Brand determines which header/footer images are used. Defaults to "LIT". */
   brand?: TdsBrand;
+  includeBrandAssets?: boolean;
 }
 
 // ─── Drawing slot definition ──────────────────────────────────────────────────
@@ -91,16 +91,27 @@ interface DrawingSlot {
 
 // ─── Brand asset resolver ─────────────────────────────────────────────────────
 
-/**
- * Returns the header and footer template paths for a given brand.
- * Paths are relative to /public/templates/.
- */
 function brandAssets(brand: TdsBrand): { header: string; footer: string } {
   switch (brand) {
     case "ECOSHIFT":
       return {
         header: "/templates/ecoshift-header.png",
         footer: "/templates/ecoshift-footer.png",
+      };
+    case "LUMERA":
+      return {
+        header: "/templates/lumera-header.png",
+        footer: "/templates/lumera-footer.png",
+      };
+    case "OKO":
+      return {
+        header: "/templates/oko-header.png",
+        footer: "/templates/oko-footer.png",
+      };
+    case "ZUMTOBEL":
+      return {
+        header: "/templates/zumtobel-header.png",
+        footer: "/templates/zumtobel-footer.png",
       };
     case "LIT":
     default:
@@ -113,28 +124,14 @@ function brandAssets(brand: TdsBrand): { header: string; footer: string } {
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
 
-/**
- * Sanitise text for jsPDF's built-in Latin-1 fonts.
- *
- * jsPDF's Helvetica only covers Latin-1 (ISO-8859-1, codepoints 0x00–0xFF).
- * Any character outside that range is silently rendered as a '#', a blank, or
- * — worse — causes extra letter-spacing on the entire line.  This function:
- *
- *  • Replaces ⌀ (U+2300 DIAMETER SIGN) with Ø (U+00D8), which IS in Latin-1
- *    and is visually indistinguishable in engineering contexts.
- *  • Normalises typographic quotes and dashes to plain ASCII so they never
- *    trigger jsPDF's fallback spacing / glyph-substitution path.
- *  • Strips any remaining non-Latin-1 characters rather than letting them
- *    corrupt the rendered line.
- */
 function sanitize(s?: string | null): string {
   return (s ?? "")
-    .replace(/⌀/g, "\u00D8") // ⌀ DIAMETER SIGN  → Ø  (Latin-1)
-    .replace(/\u2013/g, "-") // en-dash           → hyphen
-    .replace(/\u2014/g, "-") // em-dash           → hyphen
-    .replace(/[\u2018\u2019]/g, "'") // curly single quotes → apostrophe
-    .replace(/[\u201C\u201D]/g, '"') // curly double quotes → straight quote
-    .replace(/[^\x00-\xFF]/g, ""); // strip remaining non-Latin-1
+    .replace(/⌀/g, "\u00D8")
+    .replace(/\u2013/g, "-")
+    .replace(/\u2014/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[^\x00-\xFF]/g, "");
 }
 
 function caps(s?: string | null): string {
@@ -146,10 +143,6 @@ function isExcludedSpecValue(value?: string | null): boolean {
   return !trimmed || trimmed.toUpperCase() === "N/A";
 }
 
-/**
- * Returns true if a code field should be treated as missing.
- * Catches empty strings, whitespace-only, and any casing of "N/A".
- */
 function isBlankCode(v?: string | null): boolean {
   return !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
 }
@@ -196,71 +189,27 @@ const BOX_PAD = 8;
 const GAP_IMG_TEXT = 24;
 
 const DRAWINGS_PER_ROW = 3;
-
-/** Maximum (ideal) image height per drawing slot when space is plentiful */
 const DRAWING_IMG_H = 165;
-
-/**
- * Absolute minimum image height used in the BUDGET phase (before the table is
- * rendered).  After the table renders we use the actual remaining space, so
- * this value only affects how much room the font-shrink loop reserves.
- */
 const MIN_DRAWING_IMG_H = 60;
-
 const DRAWING_LABEL_H = 16;
 const DRAWING_ROW_GAP = 8;
 const DRAWING_SECTION_TOP_GAP = 10;
 const DRAWING_IMG_PAD = 3;
-
-/** Space reserved at the bottom of the page for the footer image */
 const FOOTER_RESERVE_H = 72;
-
-/**
- * Readable minimum font size. Going below this makes spec text hard to read,
- * so we clamp here and let image height absorb any remaining overflow instead.
- */
 const MIN_FONT_SIZE = 6.5;
 const MAX_FONT_SIZE = 8.5;
 const FONT_SHRINK_STEP = 0.25;
 
-/**
- * Height occupied by the drawings section for a given slot count + image height.
- */
-function drawingSectionHeight(slotCount: number, imgH: number): number {
+function budgetDrawingHeight(slotCount: number): number {
   if (slotCount === 0) return 0;
   const rows = Math.ceil(slotCount / DRAWINGS_PER_ROW);
+  const imgH = rows === 1 ? 120 : rows === 2 ? 90 : rows === 3 ? 72 : 62;
   return (
     DRAWING_SECTION_TOP_GAP + rows * (DRAWING_LABEL_H + imgH + DRAWING_ROW_GAP)
   );
 }
 
-/**
- * Returns the drawing section height to RESERVE as a table budget, using
- * a tiered target image height so the table shrinks proportionally with the
- * number of drawing rows rather than always using the hard minimum.
- *
- *   1 row  (1-3 slots)  → 120 pt images  — comfortable
- *   2 rows (4-6 slots)  →  90 pt images  — compact but readable
- *   3 rows (7-9 slots)  →  72 pt images  — tight but still clear
- *   4 rows (10-11 slots)→  62 pt images  — dense layout, min viable
- */
-function budgetDrawingHeight(slotCount: number): number {
-  if (slotCount === 0) return 0;
-  const rows = Math.ceil(slotCount / DRAWINGS_PER_ROW);
-  const imgH = rows === 1 ? 120 : rows === 2 ? 90 : rows === 3 ? 72 : 62;
-  return drawingSectionHeight(slotCount, imgH);
-}
-
-/**
- * Cell padding that compresses aggressively as font shrinks, giving back
- * as much vertical space as possible without becoming cramped.
- */
-function cellPaddingForFontSize(fontSize: number): {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-} {
+function cellPaddingForFontSize(fontSize: number) {
   if (fontSize >= 8.0) return { top: 3, bottom: 3, left: 5, right: 5 };
   if (fontSize >= 7.5) return { top: 2, bottom: 2, left: 5, right: 5 };
   if (fontSize >= 7.0) return { top: 2, bottom: 2, left: 4, right: 4 };
@@ -294,8 +243,6 @@ function probeTableHeight(
       fontSize,
       cellPadding: cellPaddingForFontSize(fontSize),
       overflow: "linebreak",
-      // Explicit left-align prevents jsPDF from applying inter-letter spacing
-      // on wrapped lines (visible as characters spread across the cell width).
       halign: "left",
     },
     columnStyles: {
@@ -316,6 +263,7 @@ async function buildTdsPdf(
   resolvedItemCode: string,
   tableRows: unknown[],
   brand: TdsBrand = "LIT",
+  includeBrandAssets: boolean = false,
   mainImageUrl?: string,
   drawingSlots: DrawingSlot[] = [],
 ): Promise<Blob> {
@@ -330,26 +278,22 @@ async function buildTdsPdf(
   const PH = pdf.internal.pageSize.getHeight();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
-  // Resolve brand-specific asset paths
-  const assets = brandAssets(brand);
-
   const TABLE_W = PW - MARGIN_L - MARGIN_R;
   const COL_LABEL = 210;
   const COL_VALUE = TABLE_W - COL_LABEL;
-  const TOP_BLOCK_Y = HEADER_H + 24;
+
+  // When brand assets are included, reserve header space; otherwise start closer to top
+  const effectiveHeaderH = includeBrandAssets ? HEADER_H : 20;
+  const TOP_BLOCK_Y = effectiveHeaderH + 24;
   const TABLE_Y = TOP_BLOCK_Y + BOX_H + 20;
+  const effectiveFooterReserve = includeBrandAssets ? FOOTER_RESERVE_H : 20;
 
   const activeSlots = drawingSlots.filter((s) => !!s.url.trim());
-  const numDrawingRows = Math.ceil(activeSlots.length / DRAWINGS_PER_ROW);
 
-  // ── Spec table budget ───────────────────────────────────────────────────
-  // Reserve a tiered drawing budget (more rows = more reserved space, so
-  // the table shrinks proportionally rather than always using the hard min).
-  const availableH = PH - TABLE_Y - FOOTER_RESERVE_H;
+  const availableH = PH - TABLE_Y - effectiveFooterReserve;
   const tieredDrawH = budgetDrawingHeight(activeSlots.length);
   const maxTableH = Math.max(availableH - tieredDrawH, 60);
 
-  // ── Font-shrink loop ────────────────────────────────────────────────────
   let fontSize = MAX_FONT_SIZE;
   while (fontSize >= MIN_FONT_SIZE) {
     const measured = probeTableHeight(
@@ -365,10 +309,13 @@ async function buildTdsPdf(
   }
   fontSize = Math.max(fontSize, MIN_FONT_SIZE);
 
-  // Header — brand-specific
-  const headerB64 = await urlToBase64(`${origin}${assets.header}`);
-  if (headerB64) {
-    pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
+  // ── Optional brand header ─────────────────────────────────────────────────
+  if (includeBrandAssets) {
+    const assets = brandAssets(brand);
+    const headerB64 = await urlToBase64(`${origin}${assets.header}`);
+    if (headerB64) {
+      pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
+    }
   }
 
   // Product image box
@@ -433,8 +380,6 @@ async function buildTdsPdf(
       lineWidth: 0.4,
       textColor: [30, 30, 30],
       valign: "middle",
-      // Explicit left-align prevents jsPDF's inter-letter-spacing artefact
-      // that appears on wrapped lines when no halign is specified.
       halign: "left",
     },
     columnStyles: {
@@ -466,31 +411,14 @@ async function buildTdsPdf(
     body: tableRows as any[],
   });
 
-  // ── Drawings section ──────────────────────────────────────────────────────
+  // Drawings section
   if (activeSlots.length > 0) {
     const tableEndY = (pdf as any).lastAutoTable.finalY as number;
-
-    // Compute how much vertical space remains between the table bottom and the
-    // footer reserve zone.  Divide evenly across drawing rows to get the
-    // adaptive image height.
-    //
-    // Key constraint: effectiveImgH must be chosen so that the entire drawings
-    // section fits strictly within [tableEndY + DRAWING_SECTION_TOP_GAP,
-    // PH - FOOTER_RESERVE_H].  We achieve this by deriving effectiveImgH
-    // directly from the available space rather than using a hard minimum that
-    // could push images past the footer.
-    //
-    // A floor of 25 pt is kept so images remain legible.  In extreme edge
-    // cases (very tall spec table + many drawing rows) images will be small
-    // thumbnails; this is preferable to bleeding into the footer band.
     const remainingH =
-      PH - FOOTER_RESERVE_H - tableEndY - DRAWING_SECTION_TOP_GAP;
+      PH - effectiveFooterReserve - tableEndY - DRAWING_SECTION_TOP_GAP;
+    const numDrawingRows = Math.ceil(activeSlots.length / DRAWINGS_PER_ROW);
     const perRowBudget = numDrawingRows > 0 ? remainingH / numDrawingRows : 0;
     const rawImgH = perRowBudget - DRAWING_LABEL_H - DRAWING_ROW_GAP;
-
-    // Clamp between a small legible floor and the ideal maximum.
-    // Unlike the previous MIN_DRAWING_IMG_H = 60 floor, we use 25 pt here
-    // so that strict footer bounding takes priority over a fixed minimum.
     const effectiveImgH = Math.max(25, Math.min(DRAWING_IMG_H, rawImgH));
 
     const rowBlockH = DRAWING_LABEL_H + effectiveImgH + DRAWING_ROW_GAP;
@@ -498,7 +426,6 @@ async function buildTdsPdf(
 
     const perColW = TABLE_W / DRAWINGS_PER_ROW;
     const slotImgW = perColW - DRAWING_IMG_PAD * 2;
-
     const allB64 = await Promise.all(
       activeSlots.map((slot) => urlToBase64(slot.url)),
     );
@@ -509,8 +436,7 @@ async function buildTdsPdf(
       rowStart += DRAWINGS_PER_ROW
     ) {
       const rowSlots = activeSlots.slice(rowStart, rowStart + DRAWINGS_PER_ROW);
-      const count = rowSlots.length;
-      const groupW = count * perColW;
+      const groupW = rowSlots.length * perColW;
       const groupOffX = MARGIN_L + (TABLE_W - groupW) / 2;
 
       pdf.setFont("helvetica", "bold");
@@ -547,27 +473,76 @@ async function buildTdsPdf(
     }
   }
 
-  // Footer — brand-specific, rendered last so it always sits on top of any
-  // edge-case overflow
-  const footerB64 = await urlToBase64(`${origin}${assets.footer}`);
-  if (footerB64) {
-    const { w: fw, h: fh } = await getImageDimensions(footerB64);
-    const ratio = PW / fw;
-    const finalH = fh * ratio;
-    pdf.addImage(footerB64, imgFormat(footerB64), 0, PH - finalH, PW, finalH);
+  // ── Optional brand footer ─────────────────────────────────────────────────
+  if (includeBrandAssets) {
+    const assets = brandAssets(brand);
+    const footerB64 = await urlToBase64(`${origin}${assets.footer}`);
+    if (footerB64) {
+      const { w: fw, h: fh } = await getImageDimensions(footerB64);
+      const ratio = PW / fw;
+      const finalH = fh * ratio;
+      pdf.addImage(footerB64, imgFormat(footerB64), 0, PH - finalH, PW, finalH);
+    }
   }
 
   return pdf.output("blob");
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Item code resolution from new schema ─────────────────────────────────────
 
 /**
- * Builds the ordered list of drawing slots from a GenerateTdsInput.
- * Only slots with a non-empty URL survive.
- * The order here is fixed and intentional — it must never change so that
- * bulk-uploaded and manually-added products produce identical slot ordering.
+ * Resolve the best display code for the TDS from itemCodes (new schema)
+ * or legacy litItemCode / ecoItemCode fields.
  */
+function resolveItemCodeForTds(input: {
+  itemCodes?: ItemCodes;
+  litItemCode?: string;
+  ecoItemCode?: string;
+  fallback?: string;
+}): string {
+  // New schema takes priority
+  if (input.itemCodes) {
+    const primary = getPrimaryItemCode(input.itemCodes);
+    if (primary) return primary.code;
+  }
+  // Legacy fallback
+  if (!isBlankCode(input.litItemCode)) return input.litItemCode!;
+  if (!isBlankCode(input.ecoItemCode)) return input.ecoItemCode!;
+  return input.fallback ?? "";
+}
+
+/**
+ * Build item code rows for the TDS table showing all brands.
+ */
+function buildItemCodeRows(input: {
+  itemCodes?: ItemCodes;
+  litItemCode?: string;
+  ecoItemCode?: string;
+}): unknown[] {
+  const rows: unknown[] = [];
+
+  if (input.itemCodes) {
+    const filled = getFilledItemCodes(input.itemCodes);
+    if (filled.length > 0) {
+      filled.forEach(({ brand, code }) => {
+        rows.push([`${brand} ITEM CODE :`, caps(code)]);
+      });
+      return rows;
+    }
+  }
+
+  // Legacy fallback
+  if (!isBlankCode(input.litItemCode)) {
+    rows.push(["LIT ITEM CODE :", caps(input.litItemCode)]);
+  }
+  if (!isBlankCode(input.ecoItemCode)) {
+    rows.push(["ECOSHIFT ITEM CODE :", caps(input.ecoItemCode)]);
+  }
+  return rows;
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
   return [
     { label: "Dimensional Drawing", url: input.dimensionalDrawingUrl ?? "" },
@@ -587,37 +562,35 @@ function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
   ].filter((s) => !!s.url.trim());
 }
 
-/**
- * Normalise and validate a raw brand string to a TdsBrand.
- * Returns "LIT" for any unrecognised or empty value.
- */
 export function normaliseBrand(raw?: string | null): TdsBrand {
   const upper = (raw ?? "").trim().toUpperCase();
   if (upper === "ECOSHIFT") return "ECOSHIFT";
+  if (upper === "LUMERA") return "LUMERA";
+  if (upper === "OKO") return "OKO";
+  if (upper === "ZUMTOBEL") return "ZUMTOBEL";
   return "LIT";
 }
 
 /**
  * Generate a filled product TDS PDF.
  *
- * Item code resolution order (skips blank / "N/A" values):
- *   1. litItemCode
- *   2. ecoItemCode
- *   3. empty string (graceful fallback)
+ * Default output: plain tabular (no brand assets).
+ * Set `includeBrandAssets: true` for branded output (PD role).
  */
 export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
   const brand = normaliseBrand(input.brand);
-
-  // ── Resolve the best available item code ─────────────────────────────────
-  const resolvedItemCode =
-    (!isBlankCode(input.litItemCode) ? input.litItemCode : null) ??
-    (!isBlankCode(input.ecoItemCode) ? input.ecoItemCode : null) ??
-    "";
+  const includeBrandAssets = input.includeBrandAssets ?? false;
 
   const rows: unknown[] = [];
 
-  rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
-  rows.push(["ITEM CODE :", caps(resolvedItemCode)]);
+  // Item code rows (supports new multi-brand schema)
+  const itemCodeRows = buildItemCodeRows(input);
+  rows.push(...itemCodeRows);
+
+  // Brand row (only when not already shown via itemCodes)
+  if (itemCodeRows.length === 0) {
+    rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
+  }
 
   (input.technicalSpecs ?? []).forEach((group) => {
     const validSpecs = (group.specs ?? []).filter(
@@ -646,11 +619,14 @@ export async function generateTdsPdf(input: GenerateTdsInput): Promise<Blob> {
       ? input.rawImageUrl
       : undefined;
 
+  const resolvedCode = resolveItemCodeForTds(input);
+
   return buildTdsPdf(
     input.itemDescription,
-    resolvedItemCode,
+    resolvedCode,
     rows,
     brand,
+    includeBrandAssets,
     effectiveImageUrl,
     buildDrawingSlots(input),
   );
@@ -663,6 +639,7 @@ export async function generateTdsTemplatePdf(
   input: GenerateTdsTemplateInput,
 ): Promise<Blob> {
   const brand = normaliseBrand(input.brand);
+  const includeBrandAssets = input.includeBrandAssets ?? false;
   const rows: unknown[] = [];
 
   rows.push(["BRAND :", { content: brand, styles: { fontStyle: "bold" } }]);
@@ -686,7 +663,15 @@ export async function generateTdsTemplatePdf(
     });
   });
 
-  return buildTdsPdf('"PRODUCT NAME"', "", rows, brand, undefined, []);
+  return buildTdsPdf(
+    '"PRODUCT NAME"',
+    "",
+    rows,
+    brand,
+    includeBrandAssets,
+    undefined,
+    [],
+  );
 }
 
 /**
