@@ -93,7 +93,7 @@ import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 
 // ─── New itemCodes schema ─────────────────────────────────────────────────────
-import type { ItemCodes } from "@/types/product";
+import type { ItemCodes, ItemCodeBrand } from "@/types/product";
 import {
   migrateToItemCodes,
   getPrimaryItemCode,
@@ -114,6 +114,14 @@ import {
 } from "./CreateProductFamilyDialog";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
 import { useAuth } from "@/lib/useAuth";
+
+// ─── NEW: Tab specs state hook & container ────────────────────────────────────
+import { useTabSpecsState } from "@/hooks/useTabSpecsState";
+import {
+  SpecsTabContainer,
+  type SpecItem as SpecItemType,
+  type PendingNewSpec as PendingNewSpecType,
+} from "@/components/product-forms/specs-tab-container";
 
 // ─── Download helper ──────────────────────────────────────────────────────────
 async function downloadPdf(url: string, filename: string): Promise<void> {
@@ -956,7 +964,7 @@ export default function AddNewProduct({
   const [itemDescription, setItemDescription] = useState("");
   const [shortDesc, setShortDesc] = useState("");
 
-  // ── NEW: itemCodes schema ─────────────────────────────────────────────────
+  // ── itemCodes schema ──────────────────────────────────────────────────────
   const [itemCodes, setItemCodes] = useState<ItemCodes>({});
   const [showItemCodeError, setShowItemCodeError] = useState(false);
 
@@ -996,7 +1004,11 @@ export default function AddNewProduct({
     editData?.productUsage || [],
   );
   const [appsOpen, setAppsOpen] = useState(false);
-  const [specValues, setSpecValues] = useState<Record<string, string>>({});
+
+  // ── NEW: Tab-aware spec state via hook ────────────────────────────────────
+  const tabSpecs = useTabSpecsState(itemCodes);
+  // Keep backward-compat alias for handlePublish
+  const specValues = tabSpecs.currentSpecValues;
 
   // ── Image state ────────────────────────────────────────────────────────────
   const [mainImage, setMainImage] = useState<File | null>(null);
@@ -1306,7 +1318,6 @@ export default function AddNewProduct({
     setItemDescription(editData.itemDescription || "");
     setShortDesc(editData.shortDescription || "");
 
-    // Hydrate itemCodes — prefer new schema, migrate from legacy if needed
     const migratedCodes = migrateToItemCodes({
       itemCodes: editData.itemCodes,
       litItemCode: editData.litItemCode,
@@ -1350,6 +1361,7 @@ export default function AddNewProduct({
     setExistingTypeOfPlugImage(editData.typeOfPlugImage || "");
   }, [editData]);
 
+  // ── UPDATED: Hydrate spec values via hook instead of setSpecValues ─────────
   useEffect(() => {
     if (!editData || !editData.technicalSpecs || availableSpecs.length === 0)
       return;
@@ -1364,7 +1376,8 @@ export default function AddNewProduct({
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
-    setSpecValues(values);
+    // Hydrate as unified on load (preserves existing behavior)
+    tabSpecs.hydrateFromSaved(values, true);
   }, [editData, availableSpecs]);
 
   useEffect(() => {
@@ -1638,7 +1651,6 @@ export default function AddNewProduct({
     if (!itemDescription)
       return toast.error("Please enter an item description!");
 
-    // Validate itemCodes — at least one required
     if (!hasAtLeastOneItemCode(itemCodes)) {
       setShowItemCodeError(true);
       return toast.error("At least one item code is required.");
@@ -1648,7 +1660,6 @@ export default function AddNewProduct({
     setIsPublishing(true);
     const tid = toast.loading("Validating...");
     try {
-      // Derive legacy fields from itemCodes for backward compat
       const resolvedLitItemCode = itemCodes.LIT || "";
       const resolvedEcoItemCode = itemCodes.ECOSHIFT || "";
       const resolvedPrimaryCode =
@@ -1749,9 +1760,18 @@ export default function AddNewProduct({
         : existingTypeOfPlugImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
+      // ── UPDATED: Merge all spec values from the hook for save ─────────────
+      const allSpecData = tabSpecs.getAllSpecValuesForSave(tabSpecs.unified);
+      const mergedSpecValues: Record<string, string> = {};
+      allSpecData.forEach(({ values }) => {
+        Object.entries(values).forEach(([k, v]) => {
+          if (v && !mergedSpecValues[k]) mergedSpecValues[k] = v;
+        });
+      });
+
       const specsGrouped: Record<string, { name: string; value: string }[]> =
         {};
-      Object.entries(specValues).forEach(([key, value]) => {
+      Object.entries(mergedSpecValues).forEach(([key, value]) => {
         if (!value.trim()) return;
         const s = availableSpecs.find(
           (sp) =>
@@ -1782,7 +1802,7 @@ export default function AddNewProduct({
         }
       });
       pendingNewSpecs.forEach((spec) => {
-        const value = specValues[spec.tempId];
+        const value = mergedSpecValues[spec.tempId];
         if (!value?.trim()) return;
         const resolvedGroupName =
           groupNameEdits[spec.specGroupId] || spec.specGroup;
@@ -1818,9 +1838,7 @@ export default function AddNewProduct({
         itemDescription,
         shortDescription: shortDesc,
         slug: seoData.slug,
-        // New itemCodes schema
         itemCodes,
-        // Legacy fields for backward compat
         ecoItemCode: resolvedEcoItemCode,
         litItemCode: resolvedLitItemCode,
         regularPrice: Number(regPrice) || 0,
@@ -1960,6 +1978,7 @@ export default function AddNewProduct({
       setNewSpecInputs({});
       setGroupNameEdits({});
       savedGroupNamesRef.current = {};
+      tabSpecs.resetSpecValues();
 
       // ── TDS generation ────────────────────────────────────────────────────
       if (tdsHasSpecs && technicalSpecs.length > 0 && savedDocId) {
@@ -2112,15 +2131,6 @@ export default function AddNewProduct({
     setSelectedWebs((p) =>
       p.includes(web) ? p.filter((w) => w !== web) : [...p, web],
     );
-
-  const groupedSpecs = availableSpecs.reduce(
-    (acc, spec) => {
-      if (!acc[spec.specGroup]) acc[spec.specGroup] = [];
-      acc[spec.specGroup].push(spec);
-      return acc;
-    },
-    {} as Record<string, SpecItem[]>,
-  );
 
   const selectedCatName =
     availableCats.find((c) => c.id === selectedCatId)?.name ?? "";
@@ -2315,6 +2325,7 @@ export default function AddNewProduct({
             {mediaOpen && (
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* Main Image */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">
                       Main Image
@@ -2356,6 +2367,8 @@ export default function AddNewProduct({
                       )}
                     </div>
                   </div>
+
+                  {/* Raw Image */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">
                       Raw Image
@@ -2397,6 +2410,8 @@ export default function AddNewProduct({
                       )}
                     </div>
                   </div>
+
+                  {/* QR Code */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">
                       QR Code
@@ -2413,6 +2428,8 @@ export default function AddNewProduct({
                       }}
                     />
                   </div>
+
+                  {/* Gallery */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">
                       Add Gallery
@@ -2699,6 +2716,7 @@ export default function AddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+              {/* Item Description */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">
                   Item Description <span className="text-destructive">*</span>
@@ -2716,7 +2734,7 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* ── UPDATED: Multi-brand Item Codes ─────────────────────────── */}
+              {/* Multi-brand Item Codes */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-medium">
@@ -2741,6 +2759,7 @@ export default function AddNewProduct({
                 />
               </div>
 
+              {/* Short Description */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Short Description</Label>
                 <Input
@@ -2751,278 +2770,53 @@ export default function AddNewProduct({
                 />
               </div>
 
-              {/* ── Technical Specs ── */}
+              {/* ── UPDATED: Technical Specs via SpecsTabContainer ─────────── */}
               {selectedCatId && (
                 <div className="pt-4 border-t">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Zap className="h-4 w-4 text-primary" />
-                    <Label className="text-sm font-medium">
-                      Technical Specifications
-                      {tdsHasSpecs && (
-                        <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 ml-2">
-                          (values mapped to TDS on publish)
-                        </span>
-                      )}
-                    </Label>
-                    {(pendingNewSpecs.length > 0 ||
-                      Object.keys(groupNameEdits).length > 0) && (
-                      <span className="ml-auto text-[10px] font-semibold text-amber-600 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full">
-                        {pendingNewSpecs.filter((s) => !s.saved).length > 0
-                          ? `${pendingNewSpecs.filter((s) => !s.saved).length} item(s) saving…`
-                          : "All changes synced"}
-                      </span>
-                    )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="ml-auto h-8 text-xs font-semibold gap-1.5 border-dashed border-primary/40 text-primary hover:bg-primary/5 hover:border-primary"
-                      onClick={() => setAddSpecGroupOpen(true)}
-                    >
-                      <FolderPlus className="h-3.5 w-3.5" /> Add Spec Group
-                    </Button>
-                  </div>
-
-                  {specsLoading ? (
-                    <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed flex items-center justify-center gap-3">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                      <p className="text-xs font-medium text-muted-foreground">
-                        Loading specifications…
-                      </p>
-                    </div>
-                  ) : availableSpecs.length === 0 &&
-                    pendingNewSpecs.length === 0 ? (
-                    <div className="p-8 text-center bg-muted/30 rounded-lg border-2 border-dashed space-y-3">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <Layers className="h-5 w-5 text-primary/60" />
-                        </div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          No specs attached to this product family
-                        </p>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-xs font-semibold gap-1.5 border-dashed border-primary/40 text-primary hover:bg-primary/5"
-                          onClick={() => setAddSpecGroupOpen(true)}
-                        >
-                          <FolderPlus className="h-3.5 w-3.5" /> Add a Spec
-                          Group
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      {Object.entries(groupedSpecs).map(
-                        ([groupName, specs]) => {
-                          const seenIds = new Set<string>();
-                          const uniqueSpecs = specs.filter((spec) => {
-                            if (seenIds.has(spec.id)) return false;
-                            seenIds.add(spec.id);
-                            return true;
-                          });
-                          if (uniqueSpecs.length === 0) return null;
-
-                          const specGroupId = specs[0].specGroupId;
-                          const displayGroupName =
-                            groupNameEdits[specGroupId] ?? groupName;
-                          const groupPendingSpecs = pendingNewSpecs.filter(
-                            (s) => s.specGroupId === specGroupId,
-                          );
-
-                          return (
-                            <div key={groupName} className="space-y-3">
-                              <div className="flex items-center gap-2">
-                                {editingGroupId === specGroupId ? (
-                                  <div className="flex items-center gap-2 flex-1">
-                                    <Zap className="h-3 w-3 text-primary shrink-0" />
-                                    <Input
-                                      autoFocus
-                                      className="h-7 text-sm font-semibold text-primary uppercase px-2 py-0"
-                                      value={displayGroupName}
-                                      onChange={(e) =>
-                                        setGroupNameEdits((p) => ({
-                                          ...p,
-                                          [specGroupId]:
-                                            e.target.value.toUpperCase(),
-                                        }))
-                                      }
-                                      onBlur={() => {
-                                        setEditingGroupId(null);
-                                        saveGroupRename(specGroupId);
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (
-                                          e.key === "Enter" ||
-                                          e.key === "Escape"
-                                        ) {
-                                          setEditingGroupId(null);
-                                          saveGroupRename(specGroupId);
-                                        }
-                                      }}
-                                    />
-                                  </div>
-                                ) : (
-                                  <>
-                                    <h4 className="text-sm font-semibold text-primary flex items-center gap-2 flex-1">
-                                      <Zap className="h-3 w-3" />
-                                      {displayGroupName.toUpperCase()}
-                                    </h4>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setEditingGroupId(specGroupId)
-                                      }
-                                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                                      title="Rename group"
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-
-                              <div className="space-y-3 pl-5">
-                                {uniqueSpecs.map((spec) => {
-                                  const specKey = `${spec.specGroupId}-${spec.label}`;
-                                  return (
-                                    <div
-                                      key={spec.id}
-                                      className="space-y-1.5 p-3 rounded-lg border bg-card"
-                                    >
-                                      <Label className="text-xs font-medium uppercase">
-                                        {spec.label}
-                                      </Label>
-                                      <Input
-                                        placeholder={`Enter ${spec.label}…`}
-                                        className="h-9 text-sm uppercase"
-                                        value={specValues[specKey] || ""}
-                                        onChange={(e) =>
-                                          setSpecValues((p) => ({
-                                            ...p,
-                                            [specKey]:
-                                              e.target.value.toUpperCase(),
-                                          }))
-                                        }
-                                      />
-                                    </div>
-                                  );
-                                })}
-
-                                {groupPendingSpecs.map((spec) => (
-                                  <div
-                                    key={spec.tempId}
-                                    className={cn(
-                                      "space-y-1.5 p-3 rounded-lg border",
-                                      spec.saved
-                                        ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
-                                        : "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20",
-                                    )}
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <Label
-                                        className={cn(
-                                          "text-xs font-medium uppercase flex items-center gap-1.5",
-                                          spec.saved
-                                            ? "text-emerald-700 dark:text-emerald-400"
-                                            : "text-amber-700 dark:text-amber-400",
-                                        )}
-                                      >
-                                        {spec.label}
-                                        <span
-                                          className={cn(
-                                            "text-[9px] font-bold px-1.5 py-0.5 rounded-sm",
-                                            spec.saved
-                                              ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200"
-                                              : "bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200",
-                                          )}
-                                        >
-                                          {spec.saved ? "SAVED" : "SAVING…"}
-                                        </span>
-                                      </Label>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setPendingNewSpecs((p) =>
-                                            p.filter(
-                                              (s) => s.tempId !== spec.tempId,
-                                            ),
-                                          )
-                                        }
-                                        className="text-muted-foreground hover:text-destructive transition-colors"
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </button>
-                                    </div>
-                                    <Input
-                                      placeholder={`Enter ${spec.label}…`}
-                                      className="h-9 text-sm uppercase"
-                                      value={specValues[spec.tempId] || ""}
-                                      onChange={(e) =>
-                                        setSpecValues((p) => ({
-                                          ...p,
-                                          [spec.tempId]:
-                                            e.target.value.toUpperCase(),
-                                        }))
-                                      }
-                                    />
-                                  </div>
-                                ))}
-
-                                <div className="flex gap-2 pt-1">
-                                  <Input
-                                    placeholder="Add spec item (e.g. COLOR TEMP)…"
-                                    className="h-8 text-xs"
-                                    value={newSpecInputs[specGroupId] || ""}
-                                    onChange={(e) =>
-                                      setNewSpecInputs((p) => ({
-                                        ...p,
-                                        [specGroupId]: e.target.value,
-                                      }))
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        addNewSpecItem(
-                                          specGroupId,
-                                          displayGroupName,
-                                        );
-                                      }
-                                    }}
-                                  />
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 px-2.5 shrink-0 border-dashed"
-                                    onClick={() =>
-                                      addNewSpecItem(
-                                        specGroupId,
-                                        displayGroupName,
-                                      )
-                                    }
-                                  >
-                                    <Plus className="h-3.5 w-3.5 mr-1" />
-                                    Add
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        },
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => setAddSpecGroupOpen(true)}
-                        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-foreground/10 rounded-lg text-xs font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all"
-                      >
-                        <FolderPlus className="h-3.5 w-3.5" /> Add another spec
-                        group
-                      </button>
-                    </div>
-                  )}
+                  <SpecsTabContainer
+                    itemCodes={itemCodes}
+                    availableSpecs={availableSpecs}
+                    specsLoading={specsLoading}
+                    unified={tabSpecs.unified}
+                    onToggleUnified={tabSpecs.setUnified}
+                    activeTab={tabSpecs.activeTab}
+                    onSetActiveTab={tabSpecs.setActiveTab}
+                    getSpecValues={(brand) =>
+                      brand === null
+                        ? tabSpecs.sharedSpecValues
+                        : (tabSpecs.brandSpecValues[brand] ?? {})
+                    }
+                    onSpecValueChange={(key, value, brand) => {
+                      if (brand === null) {
+                        tabSpecs.setUnified(true);
+                      }
+                      tabSpecs.setSpecValue(key, value);
+                    }}
+                    pendingNewSpecs={pendingNewSpecs}
+                    onAddNewSpecItem={(specGroupId, specGroup, brand) =>
+                      addNewSpecItem(specGroupId, specGroup)
+                    }
+                    newSpecInputs={newSpecInputs}
+                    onNewSpecInputChange={(specGroupId, value) =>
+                      setNewSpecInputs((p) => ({ ...p, [specGroupId]: value }))
+                    }
+                    onRemovePendingSpec={(tempId) =>
+                      setPendingNewSpecs((p) =>
+                        p.filter((s) => s.tempId !== tempId),
+                      )
+                    }
+                    groupNameEdits={groupNameEdits}
+                    onGroupNameChange={(specGroupId, name) =>
+                      setGroupNameEdits((p) => ({
+                        ...p,
+                        [specGroupId]: name,
+                      }))
+                    }
+                    onSaveGroupRename={saveGroupRename}
+                    editingGroupId={editingGroupId}
+                    onSetEditingGroupId={setEditingGroupId}
+                    onOpenAddSpecGroup={() => setAddSpecGroupOpen(true)}
+                  />
                 </div>
               )}
             </CardContent>
@@ -3445,6 +3239,7 @@ export default function AddNewProduct({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+              {/* Brand */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <Factory className="h-3 w-3" />
@@ -3517,6 +3312,7 @@ export default function AddNewProduct({
                 </Popover>
               </div>
 
+              {/* Applications */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-primary">
                   <Zap className="h-3 w-3" />
