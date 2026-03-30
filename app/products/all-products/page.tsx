@@ -47,6 +47,7 @@ import {
   Sun,
   Trees,
   Home,
+  Hash,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -115,7 +116,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { toast } from "sonner";
-import { getCurrentAdminUser, logAuditEvent } from "@/lib/logger";
+import { logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
 import { useAuth } from "@/lib/useAuth";
 import { canWrite as rbacCanWrite } from "@/lib/rbac";
@@ -131,6 +132,19 @@ import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
 import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
+// ── New itemCodes schema imports ──────────────────────────────────────────────
+import {
+  type ItemCodes,
+  type ItemCodeBrand,
+  ITEM_CODE_BRAND_CONFIG,
+  ALL_BRANDS,
+  getFilledItemCodes,
+  getPrimaryItemCode,
+  migrateToItemCodes,
+  hasAtLeastOneItemCode,
+} from "@/types/product";
+import { ItemCodesDisplay } from "@/components/ItemCodesDisplay";
+
 const CLOUDINARY_CLOUD_NAME =
   process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
 const CLOUDINARY_UPLOAD_PRESET =
@@ -141,6 +155,9 @@ const CLOUDINARY_UPLOAD_PRESET =
 export type Product = {
   id: string;
   itemDescription: string;
+  // New schema
+  itemCodes?: ItemCodes;
+  // Legacy fields kept for backward compat
   ecoItemCode: string;
   litItemCode: string;
   productClass: "spf" | "standard" | "";
@@ -180,7 +197,35 @@ type SortOption =
   | "oldest"
   | null;
 
-// ─── Download helper ──────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Resolve all item codes from a product, preferring new schema */
+function resolveItemCodes(product: Product): ItemCodes {
+  if (product.itemCodes && hasAtLeastOneItemCode(product.itemCodes)) {
+    return product.itemCodes;
+  }
+  return migrateToItemCodes({
+    litItemCode: product.litItemCode,
+    ecoItemCode: product.ecoItemCode,
+    itemCode: product.itemCode,
+  });
+}
+
+/** Get the primary display code string for a product */
+function getPrimaryCode(product: Product): string {
+  const codes = resolveItemCodes(product);
+  const primary = getPrimaryItemCode(codes);
+  if (primary) return primary.code;
+  return (
+    product.litItemCode || product.ecoItemCode || product.itemCode || product.id
+  );
+}
+
+/** Build a safe filename from a product */
+function safeProductFilename(product: Product): string {
+  const code = getPrimaryCode(product);
+  return code.replace(/[/\\:*?"<>|]/g, "-").trim();
+}
 
 async function downloadPdf(url: string, filename: string): Promise<void> {
   const res = await fetch(url);
@@ -196,8 +241,6 @@ async function downloadPdf(url: string, filename: string): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
-// ─── Schema builder ───────────────────────────────────────────────────────────
-
 function buildTransformedProduct(product: Product, newWebsites: string[]) {
   const existingWebsites: string[] = Array.isArray(product.websites)
     ? product.websites
@@ -208,14 +251,8 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     new Set([...existingWebsites, ...newWebsites]),
   );
 
-  const isBlankCode = (v?: string) =>
-    !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
-
-  const itemCode =
-    (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
-    (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
-    (!isBlankCode(product.itemCode) ? product.itemCode : null) ??
-    "";
+  const codes = resolveItemCodes(product);
+  const primaryCode = getPrimaryItemCode(codes)?.code ?? "";
   const name = product.itemDescription || product.name || "";
   const brand = Array.isArray(product.brands)
     ? (product.brands[0] ?? "")
@@ -228,7 +265,6 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  const now = new Date().toISOString();
 
   const rawMain =
     Array.isArray(product.rawImage) && product.rawImage.length > 0
@@ -242,7 +278,11 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     createdAt: serverTimestamp(),
     galleryImages: [],
     importSource: "bulk-assign",
-    itemCode,
+    itemCodes: codes,
+    // Legacy compat
+    ecoItemCode: codes.ECOSHIFT ?? "",
+    litItemCode: codes.LIT ?? "",
+    itemCode: primaryCode,
     mainImage,
     name,
     productFamily,
@@ -252,7 +292,7 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     seo: {
       canonical: "",
       description: "",
-      lastUpdated: now,
+      lastUpdated: new Date().toISOString(),
       ogImage: mainImage || "",
       robots: "index, follow",
       title: name,
@@ -381,7 +421,7 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   return String(value).toLowerCase().includes(filter);
 };
 
-// ─── Product-class badge ──────────────────────────────────────────────────────
+// ─── Badge components ─────────────────────────────────────────────────────────
 
 function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
   if (!value)
@@ -389,19 +429,15 @@ function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
   if (value === "spf")
     return (
       <Badge className="gap-1 bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100 text-[10px] font-semibold">
-        <Sparkles className="w-2.5 h-2.5" />
-        SPF
+        <Sparkles className="w-2.5 h-2.5" /> SPF
       </Badge>
     );
   return (
     <Badge variant="secondary" className="text-[10px] font-semibold">
-      <Package className="w-2.5 h-2.5 mr-1" />
-      Standard
+      <Package className="w-2.5 h-2.5 mr-1" /> Standard
     </Badge>
   );
 }
-
-// ─── Product-usage badge ──────────────────────────────────────────────────────
 
 function ProductUsageBadge({
   value,
@@ -426,8 +462,7 @@ function ProductUsageBadge({
               key={u}
               className="gap-1 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100 text-[10px] font-semibold"
             >
-              <Trees className="w-2.5 h-2.5" />
-              Outdoor
+              <Trees className="w-2.5 h-2.5" /> Outdoor
             </Badge>
           );
         if (u === "INDOOR")
@@ -436,8 +471,7 @@ function ProductUsageBadge({
               key={u}
               className="gap-1 bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-100 text-[10px] font-semibold"
             >
-              <Home className="w-2.5 h-2.5" />
-              Indoor
+              <Home className="w-2.5 h-2.5" /> Indoor
             </Badge>
           );
         if (u === "SOLAR")
@@ -446,8 +480,7 @@ function ProductUsageBadge({
               key={u}
               className="gap-1 bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100 text-[10px] font-semibold"
             >
-              <Sun className="w-2.5 h-2.5" />
-              Solar
+              <Sun className="w-2.5 h-2.5" /> Solar
             </Badge>
           );
         return (
@@ -495,17 +528,10 @@ function TdsPreviewDialog({
   product: Product | null;
 }) {
   const [downloading, setDownloading] = React.useState(false);
-
   if (!product) return null;
 
   const tdsUrl = product.tdsFileUrl;
-  const isBlankCode = (v?: string) =>
-    !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
-  const productName =
-    (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
-    (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
-    product.id;
-  const filename = `${productName}_TDS.pdf`;
+  const filename = `${safeProductFilename(product)}_TDS.pdf`;
 
   const handleDownload = async () => {
     if (!tdsUrl) return;
@@ -514,7 +540,6 @@ function TdsPreviewDialog({
       await downloadPdf(tdsUrl, filename);
       toast.success(`${filename} downloaded.`);
     } catch (err) {
-      console.error("TDS download failed:", err);
       toast.error("Download failed — try the View button to open it directly.");
     } finally {
       setDownloading(false);
@@ -550,8 +575,7 @@ function TdsPreviewDialog({
                     size="sm"
                     className="gap-1.5 text-xs h-8"
                   >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    View
+                    <ExternalLink className="h-3.5 w-3.5" /> View
                   </Button>
                 </a>
                 <Button
@@ -572,13 +596,12 @@ function TdsPreviewDialog({
             )}
           </div>
         </DialogHeader>
-
         <div className="flex-1 overflow-hidden bg-muted/30">
           {tdsUrl ? (
             <iframe
               src={`${tdsUrl}#toolbar=1&navpanes=0`}
               className="w-full h-full border-0"
-              title={`${productName} TDS`}
+              title={`${getPrimaryCode(product)} TDS`}
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center gap-4 text-muted-foreground p-8">
@@ -588,9 +611,7 @@ function TdsPreviewDialog({
               <div className="text-center space-y-1">
                 <p className="text-sm font-semibold">No TDS file available</p>
                 <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-                  This product doesn't have a Technical Data Sheet yet. Use
-                  "Generate TDS" to create one, or save the product from the
-                  edit form.
+                  Use "Generate TDS" to create one.
                 </p>
               </div>
             </div>
@@ -656,7 +677,7 @@ function BulkGenerateTdsDialog({
                   ? `Finished — ${done} generated, ${errors} failed`
                   : isRunning
                     ? `Generating… ${done + errors} of ${total} complete`
-                    : `${total} product${total !== 1 ? "s" : ""} queued for TDS generation`}
+                    : `${total} product${total !== 1 ? "s" : ""} queued · Plain tabular output (no brand assets)`}
               </DialogDescription>
             </div>
           </div>
@@ -665,7 +686,7 @@ function BulkGenerateTdsDialog({
         {!isRunning && !isComplete && (
           <div className="space-y-2.5">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Select Brand
+              Select Brand (for filename grouping)
             </p>
             {TDS_BRAND_OPTIONS.map((opt) => {
               const isSelected = selectedBrand === opt.value;
@@ -674,31 +695,21 @@ function BulkGenerateTdsDialog({
                   key={opt.value}
                   type="button"
                   onClick={() => setSelectedBrand(opt.value)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150 ${
-                    isSelected
-                      ? `${opt.activeColor} shadow-sm`
-                      : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"
-                  }`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all duration-150 ${isSelected ? `${opt.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
                 >
                   <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      isSelected ? opt.dot : "bg-muted-foreground/30"
-                    }`}
+                    className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? opt.dot : "bg-muted-foreground/30"}`}
                   />
                   <span className="flex flex-col flex-1">
                     <span className="text-sm font-semibold">{opt.label}</span>
                     <span
-                      className={`text-[11px] ${
-                        isSelected ? "opacity-70" : "text-muted-foreground"
-                      }`}
+                      className={`text-[11px] ${isSelected ? "opacity-70" : "text-muted-foreground"}`}
                     >
                       {opt.description}
                     </span>
                   </span>
                   <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${
-                      isSelected ? "opacity-100" : "opacity-0"
-                    }`}
+                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
                   >
                     <Check className="w-3 h-3" />
                   </span>
@@ -746,13 +757,7 @@ function BulkGenerateTdsDialog({
                 )}
               </span>
               <span
-                className={`flex-1 truncate text-xs ${
-                  job.status === "error"
-                    ? "text-destructive"
-                    : job.status === "done"
-                      ? "text-muted-foreground"
-                      : "text-foreground"
-                }`}
+                className={`flex-1 truncate text-xs ${job.status === "error" ? "text-destructive" : job.status === "done" ? "text-muted-foreground" : "text-foreground"}`}
               >
                 {job.productName}
               </span>
@@ -768,11 +773,7 @@ function BulkGenerateTdsDialog({
 
         {isComplete && (
           <div
-            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${
-              errors === 0
-                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-amber-50 border-amber-200 text-amber-700"
-            }`}
+            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${errors === 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
           >
             <p className="font-semibold">
               {errors === 0
@@ -781,7 +782,7 @@ function BulkGenerateTdsDialog({
             </p>
             <p className="opacity-80">
               {errors === 0
-                ? "tdsFileUrl has been saved to each product in Firestore."
+                ? "tdsFileUrl saved to each product in Firestore."
                 : "Failed products were skipped. Retry by selecting them again."}
             </p>
           </div>
@@ -806,13 +807,12 @@ function BulkGenerateTdsDialog({
               >
                 {isRunning ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Generating…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Generating…
                   </>
                 ) : (
                   <>
-                    <FilePlus2 className="h-4 w-4" />
-                    Generate {total} TDS PDF{total !== 1 ? "s" : ""}
+                    <FilePlus2 className="h-4 w-4" /> Generate {total} TDS PDF
+                    {total !== 1 ? "s" : ""}
                   </>
                 )}
               </Button>
@@ -877,7 +877,7 @@ function AssignToWebsiteDialog({
               <DialogTitle className="text-base">Assign to Website</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
                 {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
-                assigned to the selected websites.
+                assigned to selected websites.
               </DialogDescription>
             </div>
           </div>
@@ -926,30 +926,24 @@ function AssignToWebsiteDialog({
             {selectedTransformSites.includes("Taskflow") && (
               <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-xs text-violet-700 space-y-1">
                 <p className="font-semibold flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />{" "}
                   Taskflow schema transformation
                 </p>
                 <p className="text-violet-600 leading-snug">
-                  Products will be written to{" "}
-                  <span className="font-mono font-semibold">
-                    taskflow_products
-                  </span>{" "}
-                  with remapped item codes, names, images, and defaults for
-                  slug, SEO, pricing, and status.
+                  Products will be written with remapped item codes, names,
+                  images and defaults for slug, SEO, pricing, and status.
                 </p>
               </div>
             )}
             {selectedTransformSites.includes("Shopify") && (
               <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-xs text-green-700 space-y-1">
                 <p className="font-semibold flex items-center gap-1.5">
-                  <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
-                  Shopify schema transformation
+                  <ShoppingBag className="w-3.5 h-3.5 shrink-0" /> Shopify
+                  schema transformation
                 </p>
                 <p className="text-green-600 leading-snug">
-                  Products tagged <span className="font-semibold">Shopify</span>{" "}
-                  will have the same schema transform applied — item codes,
-                  names, and images remapped with defaults for slug, SEO,
-                  pricing, and status.
+                  Products tagged Shopify will have the same schema transform
+                  applied.
                 </p>
               </div>
             )}
@@ -967,7 +961,7 @@ function AssignToWebsiteDialog({
                 {selectedWebsites.length} website
                 {selectedWebsites.length !== 1 ? "s" : ""}
               </span>
-              . Existing website assignments will be preserved.
+              . Existing assignments preserved.
             </p>
           </div>
         )}
@@ -987,118 +981,14 @@ function AssignToWebsiteDialog({
           >
             {isAssigning ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Assigning...
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
               </>
             ) : (
               <>
-                <Globe className="h-4 w-4" />
-                Assign to{" "}
+                <Globe className="h-4 w-4" /> Assign to{" "}
                 {selectedWebsites.length > 0
                   ? `${selectedWebsites.length} Website${selectedWebsites.length !== 1 ? "s" : ""}`
                   : "Website"}
-              </>
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Assign to Shopify Dialog ─────────────────────────────────────────────────
-
-function AssignToShopifyDialog({
-  open,
-  onOpenChange,
-  selectedCount,
-  onConfirm,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  selectedCount: number;
-  onConfirm: () => Promise<void>;
-}) {
-  const [isAssigning, setIsAssigning] = React.useState(false);
-
-  const handleConfirm = async () => {
-    setIsAssigning(true);
-    try {
-      await onConfirm();
-      onOpenChange(false);
-    } finally {
-      setIsAssigning(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-lg bg-green-50 border border-green-200 flex items-center justify-center shrink-0">
-              <ShoppingBag className="w-4 h-4 text-green-600" />
-            </div>
-            <div>
-              <DialogTitle className="text-base">Assign to Shopify</DialogTitle>
-              <DialogDescription className="text-xs mt-0.5">
-                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
-                tagged and schema-transformed for Shopify.
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
-
-        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-xs text-green-700 space-y-1.5">
-          <p className="font-semibold flex items-center gap-1.5">
-            <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
-            Shopify schema transformation
-          </p>
-          <p className="text-green-600 leading-snug">
-            The same transform used for Taskflow will be applied — item codes,
-            names, and images are remapped, and defaults are set for slug, SEO,
-            pricing, and status.
-          </p>
-          <p className="text-green-600 leading-snug">
-            Products will be tagged{" "}
-            <span className="font-mono font-semibold">Shopify</span> in their{" "}
-            <span className="font-mono font-semibold">websites</span> array.
-          </p>
-        </div>
-
-        <div className="bg-muted/50 rounded-lg px-4 py-3 border">
-          <p className="text-xs text-muted-foreground">
-            <span className="font-semibold text-foreground">
-              {selectedCount} product{selectedCount !== 1 ? "s" : ""}
-            </span>{" "}
-            will be assigned to{" "}
-            <span className="font-semibold text-foreground">Shopify</span>.
-            Existing website assignments will be preserved.
-          </p>
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isAssigning}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={isAssigning}
-            className="gap-2 bg-green-600 hover:bg-green-700 text-white"
-          >
-            {isAssigning ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Assigning…
-              </>
-            ) : (
-              <>
-                <ShoppingBag className="h-4 w-4" />
-                Assign {selectedCount} to Shopify
               </>
             )}
           </Button>
@@ -1197,29 +1087,6 @@ function AssignProductClassDialog({
           })}
         </div>
 
-        {selectedClass && (
-          <div
-            className={`rounded-lg px-4 py-3 border text-xs space-y-1 ${selectedClass === "spf" ? "bg-violet-50 border-violet-200 text-violet-700" : "bg-slate-50 border-slate-200 text-slate-700"}`}
-          >
-            <p className="font-semibold">
-              {selectedClass === "spf" ? "SPF" : "Standard"} class will be
-              applied
-            </p>
-            <p
-              className={
-                selectedClass === "spf"
-                  ? "text-violet-600 leading-snug"
-                  : "text-slate-600 leading-snug"
-              }
-            >
-              This will overwrite the existing{" "}
-              <span className="font-mono font-semibold">productClass</span>{" "}
-              field on all {selectedCount} selected product
-              {selectedCount !== 1 ? "s" : ""}.
-            </p>
-          </div>
-        )}
-
         <DialogFooter className="gap-2 sm:gap-2">
           <Button
             variant="outline"
@@ -1235,13 +1102,11 @@ function AssignProductClassDialog({
           >
             {isAssigning ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Assigning...
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
               </>
             ) : (
               <>
-                <Tag className="h-4 w-4" />
-                Set as{" "}
+                <Tag className="h-4 w-4" /> Set as{" "}
                 {selectedClass === "spf"
                   ? "SPF"
                   : selectedClass === "standard"
@@ -1279,7 +1144,6 @@ export default function AllProductsPage() {
 
   const { user } = useAuth();
   const userCanWrite = rbacCanWrite(user, "products");
-  // isRequestMode = user can write but cannot verify → changes go through approval queue
   const isRequestMode = userCanWrite && !canVerifyProducts();
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
@@ -1298,7 +1162,6 @@ export default function AllProductsPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
-  const [assignShopifyOpen, setAssignShopifyOpen] = React.useState(false);
   const [assignProductClassOpen, setAssignProductClassOpen] =
     React.useState(false);
 
@@ -1322,19 +1185,24 @@ export default function AllProductsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // ── Search suggestions — searches across all item codes ───────────────────
   const suggestions = React.useMemo(() => {
     const q = (globalFilter ?? "").trim().toLowerCase();
     if (!q) return [];
     return data
-      .filter(
-        (p) =>
+      .filter((p) => {
+        const codes = resolveItemCodes(p);
+        const filledCodes = getFilledItemCodes(codes);
+        const codeMatch = filledCodes.some(({ code }) =>
+          code.toLowerCase().includes(q),
+        );
+        return (
           p.itemDescription?.toLowerCase().includes(q) ||
           p.name?.toLowerCase().includes(q) ||
-          p.ecoItemCode?.toLowerCase().includes(q) ||
-          p.litItemCode?.toLowerCase().includes(q) ||
-          p.itemCode?.toLowerCase().includes(q) ||
-          (p.categories as string)?.toLowerCase().includes(q),
-      )
+          codeMatch ||
+          (p.categories as string)?.toLowerCase().includes(q)
+        );
+      })
       .slice(0, 7);
   }, [data, globalFilter]);
 
@@ -1382,7 +1250,6 @@ export default function AllProductsPage() {
       ]),
       orderBy("createdAt", "desc"),
     );
-
     const qUnassigned = query(
       collection(db, "products"),
       where("websites", "==", []),
@@ -1429,7 +1296,7 @@ export default function AllProductsPage() {
     };
   }, []);
 
-  // ── Soft-delete helpers ───────────────────────────────────────────────────
+  // ── Delete handlers ───────────────────────────────────────────────────────
   const handleSoftDelete = async (product: Product) => {
     const t = toast.loading("Processing…");
     try {
@@ -1489,16 +1356,14 @@ export default function AllProductsPage() {
     setIsDeleting(false);
   };
 
-  // ── Bulk assign to website — RBAC-aware ───────────────────────────────────
+  // ── Bulk assign website ───────────────────────────────────────────────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
-
     const t = toast.loading(
       `${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to ${websites.join(", ")}...`,
     );
-
     let direct = 0,
       pending = 0,
       errors = 0;
@@ -1513,7 +1378,6 @@ export default function AllProductsPage() {
             transformSites.length > 0
               ? buildTransformedProduct(product, websites)
               : undefined;
-
           const result = await submitProductAssignWebsite({
             product,
             websites,
@@ -1541,54 +1405,7 @@ export default function AllProductsPage() {
     setRowSelection({});
   };
 
-  // ── Bulk assign to Shopify — RBAC-aware ───────────────────────────────────
-  const handleBulkAssignShopify = async () => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
-    const rows = selectedRows.map((r) => r.original);
-    const count = rows.length;
-
-    const t = toast.loading(
-      `${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to Shopify...`,
-    );
-
-    let direct = 0,
-      pending = 0,
-      errors = 0;
-
-    await Promise.all(
-      rows.map(async (product) => {
-        try {
-          const transformedFields = buildTransformedProduct(product, [
-            "Shopify",
-          ]);
-          const result = await submitProductAssignWebsite({
-            product,
-            websites: ["Shopify"],
-            transformedFields,
-            originPage: "/products/all-products",
-            source: "all-products:bulk-assign-shopify",
-          });
-          result.mode === "pending" ? pending++ : direct++;
-        } catch {
-          errors++;
-        }
-      }),
-    );
-
-    if (errors === 0) {
-      const parts: string[] = [];
-      if (direct > 0) parts.push(`${direct} assigned to Shopify`);
-      if (pending > 0) parts.push(`${pending} pending approval`);
-      toast.success(parts.join(", ") || "Done", { id: t });
-    } else {
-      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
-        id: t,
-      });
-    }
-    setRowSelection({});
-  };
-
-  // ── Bulk assign product class — RBAC-aware ────────────────────────────────
+  // ── Bulk assign product class ─────────────────────────────────────────────
   const handleBulkAssignProductClass = async (
     productClass: "spf" | "standard",
   ) => {
@@ -1596,11 +1413,9 @@ export default function AllProductsPage() {
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
     const label = productClass === "spf" ? "SPF" : "Standard";
-
     const t = toast.loading(
       `${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`,
     );
-
     let direct = 0,
       pending = 0,
       errors = 0;
@@ -1634,7 +1449,7 @@ export default function AllProductsPage() {
     setRowSelection({});
   };
 
-  // ── Bulk TDS generate ─────────────────────────────────────────────────────
+  // ── Bulk TDS generate — uses new itemCodes schema ─────────────────────────
   const handleOpenBulkTds = () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
@@ -1649,7 +1464,6 @@ export default function AllProductsPage() {
 
   const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
     setIsTdsRunning(true);
-
     const productMap = new Map<string, Product>(
       table
         .getFilteredSelectedRowModel()
@@ -1670,6 +1484,7 @@ export default function AllProductsPage() {
         if (!product) throw new Error("Product not found in selection");
 
         const itemDescription = product.itemDescription || product.name || "";
+        const resolvedCodes = resolveItemCodes(product);
 
         const technicalSpecs = (product.technicalSpecs ?? [])
           .map((group) => ({
@@ -1685,10 +1500,13 @@ export default function AllProductsPage() {
 
         const tdsBlob = await generateTdsPdf({
           itemDescription,
-          litItemCode: product.litItemCode,
-          ecoItemCode: product.ecoItemCode,
+          itemCodes: resolvedCodes,
+          litItemCode: resolvedCodes.LIT,
+          ecoItemCode: resolvedCodes.ECOSHIFT,
           technicalSpecs,
           brand,
+          // Plain tabular by default — no brand assets
+          includeBrandAssets: false,
           mainImageUrl:
             product.mainImage ||
             (Array.isArray(product.rawImage)
@@ -1711,13 +1529,9 @@ export default function AllProductsPage() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        const isBlankCode = (v?: string) =>
-          !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
-        const resolvedCode =
-          (!isBlankCode(product.litItemCode) ? product.litItemCode : null) ??
-          (!isBlankCode(product.ecoItemCode) ? product.ecoItemCode : null) ??
-          product.id;
-        const filename = `${resolvedCode}_TDS.pdf`;
+        const primaryCode =
+          getPrimaryItemCode(resolvedCodes)?.code ?? product.id;
+        const filename = `${primaryCode.replace(/[/\\:*?"<>|]/g, "-")}_TDS.pdf`;
         const tdsUrl = await uploadTdsPdf(
           tdsBlob,
           filename,
@@ -1754,7 +1568,6 @@ export default function AllProductsPage() {
     }
 
     setIsTdsRunning(false);
-
     await logAuditEvent({
       action: "update",
       entityType: "product",
@@ -1774,7 +1587,7 @@ export default function AllProductsPage() {
     }).catch(console.warn);
   };
 
-  // ── Bulk Download TDS ZIP ─────────────────────────────────────────────────
+  // ── Bulk Download TDS ZIP — uses new itemCodes schema ─────────────────────
   const handleBulkDownloadTds = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
@@ -1795,40 +1608,23 @@ export default function AllProductsPage() {
       const zip = new JSZip();
       const litFolder = zip.folder("LIT")!;
       const ecoshiftFolder = zip.folder("ECOSHIFT")!;
+      const otherFolder = zip.folder("OTHER")!;
 
+      // Detect folder using new itemCodes schema
       const detectFolder = (product: Product) => {
-        const brands: string[] = Array.isArray(product.brands)
-          ? product.brands
-          : product.brand
-            ? [product.brand as string]
-            : [];
-        const brandStr = brands.join(" ").toLowerCase();
-
-        if (brandStr.includes("ecoshift")) return ecoshiftFolder;
-        if (brandStr.includes("lit")) return litFolder;
-
-        if (product.litItemCode && !product.ecoItemCode) return litFolder;
-        if (product.ecoItemCode && !product.litItemCode) return ecoshiftFolder;
-        if (product.litItemCode) return litFolder;
-        if (product.ecoItemCode) return ecoshiftFolder;
-
-        return litFolder;
+        const codes = resolveItemCodes(product);
+        const filled = getFilledItemCodes(codes);
+        if (filled.length === 0) return litFolder;
+        // Primary brand determines folder
+        const primaryBrand = filled[0].brand;
+        if (primaryBrand === "ECOSHIFT") return ecoshiftFolder;
+        if (primaryBrand === "LIT") return litFolder;
+        return otherFolder;
       };
 
-      const isBlank = (v?: string) =>
-        !v || v.trim().toUpperCase() === "N/A" || v.trim() === "";
-
       const usedFilenames = new Map<string, number>();
-      const safeFilename = (product: Product): string => {
-        const raw =
-          (!isBlank(product.litItemCode) ? product.litItemCode : null) ??
-          (!isBlank(product.ecoItemCode) ? product.ecoItemCode : null) ??
-          product.id ??
-          "UNKNOWN";
-
-        const sanitized = raw.replace(/[/\\:*?"<>|]/g, "-").trim();
-        const base = `${sanitized}_TDS`;
-
+      const tdsFilename = (product: Product): string => {
+        const base = `${safeProductFilename(product)}_TDS`;
         const count = usedFilenames.get(base) ?? 0;
         usedFilenames.set(base, count + 1);
         return count === 0 ? `${base}.pdf` : `${base}_(${count}).pdf`;
@@ -1846,9 +1642,8 @@ export default function AllProductsPage() {
             return await res.blob();
           } catch (err) {
             lastError = err;
-            if (attempt < retries) {
+            if (attempt < retries)
               await new Promise((r) => setTimeout(r, 400 * attempt));
-            }
           }
         }
         throw lastError;
@@ -1856,14 +1651,13 @@ export default function AllProductsPage() {
 
       const BATCH = 8;
       const BATCH_DELAY_MS = 300;
-      let succeeded = 0;
-      let failed = 0;
+      let succeeded = 0,
+        failed = 0;
       const failedNames: string[] = [];
 
       for (let i = 0; i < withTds.length; i += BATCH) {
         const chunk = withTds.slice(i, i + BATCH);
         const fetched = Math.min(i + BATCH, withTds.length);
-
         toast.loading(
           `Fetching ${fetched} / ${withTds.length} (${succeeded} saved, ${failed} failed)…`,
           { id: loadingToast },
@@ -1873,7 +1667,7 @@ export default function AllProductsPage() {
           chunk.map(async ({ original: product }) => {
             const blob = await fetchWithRetry(product.tdsFileUrl!);
             const folder = detectFolder(product);
-            folder.file(safeFilename(product), blob);
+            folder.file(tdsFilename(product), blob);
           }),
         );
 
@@ -1882,26 +1676,15 @@ export default function AllProductsPage() {
             succeeded++;
           } else {
             failed++;
-            const p = chunk[idx].original;
-            const label =
-              (!isBlank(p.litItemCode) ? p.litItemCode : null) ??
-              (!isBlank(p.ecoItemCode) ? p.ecoItemCode : null) ??
-              p.id;
-            failedNames.push(label);
-            console.error(
-              `TDS fetch failed for "${label}" (${p.id}):`,
-              (r as PromiseRejectedResult).reason,
-            );
+            failedNames.push(getPrimaryCode(chunk[idx].original));
           }
         });
 
-        if (i + BATCH < withTds.length) {
+        if (i + BATCH < withTds.length)
           await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-        }
       }
 
       toast.loading("Compressing ZIP…", { id: loadingToast });
-
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
@@ -1912,16 +1695,12 @@ export default function AllProductsPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      if (failedNames.length > 0) {
-        console.warn("Failed TDS downloads:", failedNames);
-      }
-
       toast.success(
         [
           `${succeeded} TDS file${succeeded !== 1 ? "s" : ""} downloaded`,
-          failed > 0 ? `${failed} failed (see console)` : null,
+          failed > 0 ? `${failed} failed` : null,
           noTdsCount > 0 ? `${noTdsCount} skipped (no TDS)` : null,
-          "→ Organised into LIT / ECOSHIFT folders",
+          "→ Organised into LIT / ECOSHIFT / OTHER folders",
         ]
           .filter(Boolean)
           .join(" · "),
@@ -1929,9 +1708,7 @@ export default function AllProductsPage() {
       );
     } catch (err) {
       console.error("TDS ZIP download failed:", err);
-      toast.error("Failed to create TDS ZIP. Check console for details.", {
-        id: loadingToast,
-      });
+      toast.error("Failed to create TDS ZIP.", { id: loadingToast });
     } finally {
       setIsTdsDownloading(false);
     }
@@ -1942,7 +1719,7 @@ export default function AllProductsPage() {
     setIsEditing(true);
   };
 
-  // ── Columns ───────────────────────────────────────────────────────────────
+  // ── Columns — unified itemCodes column replaces ecoItemCode/litItemCode ───
   const columns: ColumnDef<Product>[] = [
     {
       id: "select",
@@ -1969,7 +1746,7 @@ export default function AllProductsPage() {
     },
     {
       accessorKey: "mainImage",
-      header: () => <div className="text-xs font-medium">Main Image</div>,
+      header: () => <div className="text-xs font-medium">Image</div>,
       cell: ({ row }) => {
         const imageUrl = row.getValue("mainImage") as string;
         const label = row.original.itemDescription || row.original.name;
@@ -1990,44 +1767,38 @@ export default function AllProductsPage() {
       enableHiding: false,
     },
     {
-      accessorKey: "rawImage",
-      header: () => <div className="text-xs font-medium">Raw Image</div>,
+      // Unified item codes column — shows all brands with colored badges
+      id: "itemCodes",
+      accessorFn: (row) => {
+        const codes = resolveItemCodes(row);
+        return getFilledItemCodes(codes)
+          .map(({ code }) => code)
+          .join(" ");
+      },
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+          Item Codes
+        </div>
+      ),
       cell: ({ row }) => {
-        const imageUrl = row.getValue("rawImage") as string;
-        const label = row.original.itemDescription || row.original.name;
+        const codes = resolveItemCodes(row.original);
         return (
-          <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center shrink-0">
-            {imageUrl ? (
-              <img
-                src={imageUrl}
-                alt={label}
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <Package className="h-6 w-6 text-muted-foreground/40" />
-            )}
+          <div className="min-w-[120px]">
+            <ItemCodesDisplay itemCodes={codes} size="sm" maxVisible={3} />
           </div>
         );
       },
-      enableHiding: false,
-    },
-    {
-      accessorKey: "ecoItemCode",
-      header: () => <div className="text-xs font-medium">Eco Item Code</div>,
-      cell: ({ row }) => (
-        <span className="text-xs font-mono text-muted-foreground">
-          {row.getValue("ecoItemCode") || "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "litItemCode",
-      header: () => <div className="text-xs font-medium">LIT Item Code</div>,
-      cell: ({ row }) => (
-        <span className="text-xs font-mono text-muted-foreground">
-          {row.getValue("litItemCode") || "—"}
-        </span>
-      ),
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        const codes = resolveItemCodes(row.original);
+        const allCodes = getFilledItemCodes(codes).map(({ code }) =>
+          code.toLowerCase(),
+        );
+        return allCodes.some((c) =>
+          c.includes(String(filterValue).toLowerCase()),
+        );
+      },
     },
     {
       accessorKey: "itemDescription",
@@ -2084,7 +1855,7 @@ export default function AllProductsPage() {
     },
     {
       accessorKey: "productClass",
-      header: () => <div className="text-xs font-medium">Product Class</div>,
+      header: () => <div className="text-xs font-medium">Class</div>,
       cell: ({ row }) => (
         <ProductClassBadge
           value={row.getValue("productClass") as "spf" | "standard" | ""}
@@ -2183,7 +1954,6 @@ export default function AllProductsPage() {
             className="flex items-center justify-end gap-1"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* View TDS — visible to all users with page access */}
             {product.tdsFileUrl && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -2204,11 +1974,7 @@ export default function AllProductsPage() {
                 </TooltipContent>
               </Tooltip>
             )}
-
-            {/* Pending indicator dot */}
             <PendingRowIndicator status={pendingStatus} />
-
-            {/* Edit — only for users with write:products */}
             {userCanWrite && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -2229,8 +1995,6 @@ export default function AllProductsPage() {
                 </TooltipContent>
               </Tooltip>
             )}
-
-            {/* Delete — only for users with write:products */}
             {userCanWrite && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -2380,7 +2144,6 @@ export default function AllProductsPage() {
       (typeof p.createdAt === "number" ? p.createdAt : 0);
     const label = (p: Product) =>
       (p.itemDescription || p.name || "").toLowerCase();
-
     switch (sortOption) {
       case "alpha-asc":
         return d.sort((a, b) => label(a).localeCompare(label(b)));
@@ -2427,11 +2190,17 @@ export default function AllProductsPage() {
 
   const activeFamilyFilter =
     (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
-
   const activeUsageFilter =
     (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
-
   const [familySearch, setFamilySearch] = React.useState("");
+
+  const sortLabel: Record<NonNullable<SortOption>, string> = {
+    "alpha-asc": "A → Z",
+    "alpha-desc": "Z → A",
+    "recent-12h": "Last 12 h",
+    newest: "Newest",
+    oldest: "Oldest",
+  };
 
   const renderEditMode = () => (
     <div className="space-y-6">
@@ -2444,8 +2213,7 @@ export default function AllProductsPage() {
           }}
           className="gap-2"
         >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Products
+          <ArrowLeft className="h-4 w-4" /> Back to Products
         </Button>
         <Separator orientation="vertical" className="h-6" />
         <p className="text-sm text-muted-foreground">
@@ -2463,14 +2231,6 @@ export default function AllProductsPage() {
       />
     </div>
   );
-
-  const sortLabel: Record<NonNullable<SortOption>, string> = {
-    "alpha-asc": "A → Z",
-    "alpha-desc": "Z → A",
-    "recent-12h": "Last 12 h",
-    newest: "Newest",
-    oldest: "Oldest",
-  };
 
   const renderTableMode = () => (
     <div className="w-full space-y-4">
@@ -2502,7 +2262,6 @@ export default function AllProductsPage() {
         </div>
         <div className="flex gap-3">
           <BulkUploader onUploadComplete={() => {}} />
-          {/* Add Product — only for users with write:products */}
           {userCanWrite && (
             <Button
               onClick={() => {
@@ -2544,53 +2303,36 @@ export default function AllProductsPage() {
             >
               <X className="h-4 w-4" /> Clear
             </Button>
-
-            {/* Assign to Website — only for users with write:products */}
             {userCanWrite && (
               <Button
                 variant="outline"
                 size="sm"
-                className={`gap-2 ${
-                  isRequestMode
-                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                    : "border-primary/30 text-primary hover:bg-primary/5"
-                }`}
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-primary/30 text-primary hover:bg-primary/5"}`}
                 onClick={() => setAssignWebsiteOpen(true)}
               >
-                <Globe className="h-4 w-4" />
+                <Globe className="h-4 w-4" />{" "}
                 {isRequestMode ? "Request Website Assign" : "Assign to Website"}
               </Button>
             )}
-
-            {/* Set Product Class — only for users with write:products */}
             {userCanWrite && (
               <Button
                 variant="outline"
                 size="sm"
-                className={`gap-2 ${
-                  isRequestMode
-                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                    : "border-violet-300 text-violet-700 hover:bg-violet-50"
-                }`}
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-violet-300 text-violet-700 hover:bg-violet-50"}`}
                 onClick={() => setAssignProductClassOpen(true)}
               >
-                <Tag className="h-4 w-4" />
+                <Tag className="h-4 w-4" />{" "}
                 {isRequestMode ? "Request Class Change" : "Set Product Class"}
               </Button>
             )}
-
-            {/* Generate TDS — available to all (read/generate, not a write gate) */}
             <Button
               variant="outline"
               size="sm"
               className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50"
               onClick={handleOpenBulkTds}
             >
-              <FilePlus2 className="h-4 w-4" />
-              Generate TDS
+              <FilePlus2 className="h-4 w-4" /> Generate TDS
             </Button>
-
-            {/* Download TDS ZIP — available to all */}
             <Button
               variant="outline"
               size="sm"
@@ -2605,18 +2347,12 @@ export default function AllProductsPage() {
               )}
               {isTdsDownloading ? "Zipping…" : "Download TDS ZIP"}
             </Button>
-
-            {/* Delete — only for users with write:products */}
             {userCanWrite && (
               <Button
                 variant={isRequestMode ? "outline" : "destructive"}
                 size="sm"
                 disabled={isDeleting}
-                className={`gap-2 ${
-                  isRequestMode
-                    ? "border-amber-300 text-amber-700 hover:bg-amber-50"
-                    : ""
-                }`}
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : ""}`}
                 onClick={() => setBulkDeleteOpen(true)}
               >
                 {isDeleting ? (
@@ -2635,11 +2371,11 @@ export default function AllProductsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        {/* Search */}
+        {/* Search — covers all item code brands */}
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
-            placeholder="Search products..."
+            placeholder="Search by name, any item code…"
             value={globalFilter ?? ""}
             onChange={(e) => {
               setGlobalFilter(e.target.value);
@@ -2657,6 +2393,7 @@ export default function AllProductsPage() {
                 const brands = Array.isArray(product.brands)
                   ? product.brands
                   : [product.brand || "Generic"];
+                const codes = resolveItemCodes(product);
                 return (
                   <button
                     key={product.id}
@@ -2673,41 +2410,23 @@ export default function AllProductsPage() {
                       {product.mainImage ? (
                         <img
                           src={product.mainImage}
-                          alt={product.itemDescription || product.name}
+                          alt=""
                           className="w-full h-full object-contain"
                         />
                       ) : (
                         <Package className="h-4 w-4 text-muted-foreground/40" />
                       )}
                     </div>
-                    <div className="flex flex-col min-w-0">
+                    <div className="flex flex-col min-w-0 flex-1">
                       <span className="text-sm font-medium truncate">
                         {product.itemDescription || product.name}
-                        {pendingMap.get(product.id) === "delete" && (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200 ml-1">
-                            <Clock className="w-2.5 h-2.5" />
-                            Pending Deletion
-                          </span>
-                        )}
-                        {pendingMap.get(product.id) === "update" && (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 ml-1">
-                            <Clock className="w-2.5 h-2.5" />
-                            Pending Update
-                          </span>
-                        )}
                       </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground font-mono">
-                          {product.ecoItemCode ||
-                            product.litItemCode ||
-                            product.itemCode ||
-                            "—"}
-                        </span>
-                        {(product.productFamily || product.categories) && (
-                          <span className="text-xs text-muted-foreground truncate">
-                            · {product.productFamily || product.categories}
-                          </span>
-                        )}
+                      <div className="mt-0.5">
+                        <ItemCodesDisplay
+                          itemCodes={codes}
+                          size="sm"
+                          maxVisible={2}
+                        />
                       </div>
                     </div>
                     <Badge
@@ -2755,8 +2474,7 @@ export default function AllProductsPage() {
               className="flex items-center justify-between"
             >
               <span className="flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                SPF Items
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" /> SPF Items
               </span>
               <CountPill
                 count={productClassCounts.get("spf") ?? 0}
@@ -2770,25 +2488,10 @@ export default function AllProductsPage() {
               className="flex items-center justify-between"
             >
               <span className="flex items-center gap-2">
-                <Package className="w-3.5 h-3.5" />
-                Standard Items
+                <Package className="w-3.5 h-3.5" /> Standard Items
               </span>
               <CountPill count={productClassCounts.get("standard") ?? 0} />
             </DropdownMenuItem>
-            {(productClassCounts.get("") ?? 0) > 0 && (
-              <>
-                <DropdownMenuSeparator />
-                <div className="px-3 py-1.5 flex items-center justify-between">
-                  <span className="text-[11px] text-muted-foreground italic">
-                    Unclassified
-                  </span>
-                  <CountPill
-                    count={productClassCounts.get("") ?? 0}
-                    variant="amber"
-                  />
-                </div>
-              </>
-            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -2831,80 +2534,49 @@ export default function AllProductsPage() {
               </div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() =>
-                table.getColumn("productUsage")?.setFilterValue("OUTDOOR")
-              }
-              className="flex items-center justify-between"
-            >
-              <span className="flex items-center gap-2">
-                <Trees className="w-3.5 h-3.5 text-emerald-600" />
-                Outdoor
-              </span>
-              <div className="flex items-center gap-1.5">
-                <CountPill
-                  count={productUsageCounts.get("OUTDOOR") ?? 0}
-                  variant="green"
-                />
-                {activeUsageFilter === "OUTDOOR" && (
-                  <Check className="h-3.5 w-3.5 text-primary" />
-                )}
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() =>
-                table.getColumn("productUsage")?.setFilterValue("INDOOR")
-              }
-              className="flex items-center justify-between"
-            >
-              <span className="flex items-center gap-2">
-                <Home className="w-3.5 h-3.5 text-sky-600" />
-                Indoor
-              </span>
-              <div className="flex items-center gap-1.5">
-                <CountPill
-                  count={productUsageCounts.get("INDOOR") ?? 0}
-                  variant="sky"
-                />
-                {activeUsageFilter === "INDOOR" && (
-                  <Check className="h-3.5 w-3.5 text-primary" />
-                )}
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() =>
-                table.getColumn("productUsage")?.setFilterValue("SOLAR")
-              }
-              className="flex items-center justify-between"
-            >
-              <span className="flex items-center gap-2">
-                <Sun className="w-3.5 h-3.5 text-amber-500" />
-                Solar
-              </span>
-              <div className="flex items-center gap-1.5">
-                <CountPill
-                  count={productUsageCounts.get("SOLAR") ?? 0}
-                  variant="amber"
-                />
-                {activeUsageFilter === "SOLAR" && (
-                  <Check className="h-3.5 w-3.5 text-primary" />
-                )}
-              </div>
-            </DropdownMenuItem>
-            {(productUsageCounts.get("") ?? 0) > 0 && (
-              <>
-                <DropdownMenuSeparator />
-                <div className="px-3 py-1.5 flex items-center justify-between">
-                  <span className="text-[11px] text-muted-foreground italic">
-                    Unassigned
-                  </span>
+            {[
+              {
+                key: "OUTDOOR",
+                icon: <Trees className="w-3.5 h-3.5 text-emerald-600" />,
+                label: "Outdoor",
+                variant: "green" as const,
+              },
+              {
+                key: "INDOOR",
+                icon: <Home className="w-3.5 h-3.5 text-sky-600" />,
+                label: "Indoor",
+                variant: "sky" as const,
+              },
+              {
+                key: "SOLAR",
+                icon: <Sun className="w-3.5 h-3.5 text-amber-500" />,
+                label: "Solar",
+                variant: "amber" as const,
+              },
+            ].map(({ key, icon, label, variant }) => (
+              <DropdownMenuItem
+                key={key}
+                onClick={() =>
+                  table
+                    .getColumn("productUsage")
+                    ?.setFilterValue(activeUsageFilter === key ? "" : key)
+                }
+                className="flex items-center justify-between"
+              >
+                <span className="flex items-center gap-2">
+                  {icon} {label}
+                </span>
+                <div className="flex items-center gap-1.5">
                   <CountPill
-                    count={productUsageCounts.get("") ?? 0}
-                    variant="amber"
+                    count={productUsageCounts.get(key) ?? 0}
+                    variant={variant}
                   />
+                  {activeUsageFilter === key && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
                 </div>
-              </>
-            )}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -2952,7 +2624,7 @@ export default function AllProductsPage() {
                 </button>
               )}
             </div>
-            <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1 [&::-webkit-scrollbar]:w-0 [scrollbar-width:none]">
+            <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1">
               <DropdownMenuItem
                 onClick={() =>
                   table.getColumn("productFamilyFilter")?.setFilterValue("")
@@ -3004,14 +2676,6 @@ export default function AllProductsPage() {
                   </DropdownMenuItem>
                 ));
               })()}
-            </div>
-            <div className="border-t px-3 py-1.5">
-              <p className="text-[11px] text-muted-foreground">
-                {familySearch
-                  ? `${uniqueProductFamilies.filter((f) => f.toLowerCase().includes(familySearch.toLowerCase())).length} of ${uniqueProductFamilies.length}`
-                  : uniqueProductFamilies.length}{" "}
-                {uniqueProductFamilies.length === 1 ? "family" : "families"}
-              </p>
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -3133,62 +2797,58 @@ export default function AllProductsPage() {
                 </button>
               )}
             </DropdownMenuLabel>
-
-            <DropdownMenuCheckboxItem
-              checked={sortOption === "alpha-asc"}
-              onCheckedChange={() =>
-                setSortOption((s) => (s === "alpha-asc" ? null : "alpha-asc"))
-              }
-            >
-              <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-              Alphabetically A → Z
-            </DropdownMenuCheckboxItem>
-
-            <DropdownMenuCheckboxItem
-              checked={sortOption === "alpha-desc"}
-              onCheckedChange={() =>
-                setSortOption((s) => (s === "alpha-desc" ? null : "alpha-desc"))
-              }
-            >
-              <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-              Alphabetically Z → A
-            </DropdownMenuCheckboxItem>
-
-            <DropdownMenuCheckboxItem
-              checked={sortOption === "recent-12h"}
-              onCheckedChange={() =>
-                setSortOption((s) => (s === "recent-12h" ? null : "recent-12h"))
-              }
-            >
-              <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-              <span className="flex-1">Recently Added</span>
-              <span className="ml-2 text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                12 h
-              </span>
-            </DropdownMenuCheckboxItem>
-
-            <DropdownMenuCheckboxItem
-              checked={sortOption === "newest" || sortOption === null}
-              onCheckedChange={() =>
-                setSortOption((s) => (s === "newest" ? null : "newest"))
-              }
-            >
-              <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-              Newest to Oldest
-            </DropdownMenuCheckboxItem>
-
-            <DropdownMenuCheckboxItem
-              checked={sortOption === "oldest"}
-              onCheckedChange={() =>
-                setSortOption((s) => (s === "oldest" ? null : "oldest"))
-              }
-            >
-              <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
-              Oldest to Newest
-            </DropdownMenuCheckboxItem>
-
+            {[
+              {
+                key: "alpha-asc" as const,
+                icon: (
+                  <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Alphabetically A → Z",
+              },
+              {
+                key: "alpha-desc" as const,
+                icon: (
+                  <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Alphabetically Z → A",
+              },
+              {
+                key: "recent-12h" as const,
+                icon: (
+                  <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Recently Added (12h)",
+              },
+              {
+                key: "newest" as const,
+                icon: (
+                  <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Newest to Oldest",
+              },
+              {
+                key: "oldest" as const,
+                icon: (
+                  <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Oldest to Newest",
+              },
+            ].map(({ key, icon, label }) => (
+              <DropdownMenuCheckboxItem
+                key={key}
+                checked={
+                  sortOption === key ||
+                  (key === "newest" && sortOption === null)
+                }
+                onCheckedChange={() =>
+                  setSortOption((s) => (s === key ? null : key))
+                }
+              >
+                {icon}
+                {label}
+              </DropdownMenuCheckboxItem>
+            ))}
             <DropdownMenuSeparator />
-
             <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Toggle Columns
             </DropdownMenuLabel>
@@ -3210,13 +2870,12 @@ export default function AllProductsPage() {
         </DropdownMenu>
       </div>
 
-      {/* Active filters row */}
+      {/* Active filters */}
       {(activeFamilyFilter ||
         activeUsageFilter ||
         (sortOption && sortOption !== "newest")) && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Active:</span>
-
           {activeFamilyFilter && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
               <Layers className="h-3 w-3" />
@@ -3232,16 +2891,9 @@ export default function AllProductsPage() {
               </button>
             </span>
           )}
-
           {activeUsageFilter && (
             <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${
-                activeUsageFilter === "OUTDOOR"
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                  : activeUsageFilter === "INDOOR"
-                    ? "bg-sky-50 border-sky-200 text-sky-700"
-                    : "bg-amber-50 border-amber-200 text-amber-700"
-              }`}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
             >
               {activeUsageFilter === "OUTDOOR" ? (
                 <Trees className="h-3 w-3" />
@@ -3263,7 +2915,6 @@ export default function AllProductsPage() {
               </button>
             </span>
           )}
-
           {sortOption && sortOption !== "newest" && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
               <SlidersHorizontal className="h-3 w-3" />
@@ -3441,13 +3092,12 @@ export default function AllProductsPage() {
           </SidebarInset>
         </SidebarProvider>
 
-        {/* ── Dialogs ── */}
+        {/* Dialogs */}
         <TdsPreviewDialog
           open={!!tdsPreviewProduct}
           onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
           product={tdsPreviewProduct}
         />
-
         <BulkGenerateTdsDialog
           open={bulkTdsOpen}
           onOpenChange={(v) => {
@@ -3458,8 +3108,6 @@ export default function AllProductsPage() {
           onStart={handleStartBulkTds}
           isRunning={isTdsRunning}
         />
-
-        {/* Single delete — requestMode-aware */}
         <DeleteToRecycleBinDialog
           open={!!deleteTarget}
           onOpenChange={(v) => !v && setDeleteTarget(null)}
@@ -3467,8 +3115,6 @@ export default function AllProductsPage() {
           onConfirm={() => handleSoftDelete(deleteTarget!)}
           requestMode={isRequestMode}
         />
-
-        {/* Bulk delete — requestMode-aware */}
         <DeleteToRecycleBinDialog
           open={bulkDeleteOpen}
           onOpenChange={setBulkDeleteOpen}
@@ -3478,21 +3124,12 @@ export default function AllProductsPage() {
           onConfirm={handleBulkSoftDelete}
           requestMode={isRequestMode}
         />
-
         <AssignToWebsiteDialog
           open={assignWebsiteOpen}
           onOpenChange={setAssignWebsiteOpen}
           selectedCount={selectedCount}
           onConfirm={handleBulkAssignWebsite}
         />
-
-        <AssignToShopifyDialog
-          open={assignShopifyOpen}
-          onOpenChange={setAssignShopifyOpen}
-          selectedCount={selectedCount}
-          onConfirm={handleBulkAssignShopify}
-        />
-
         <AssignProductClassDialog
           open={assignProductClassOpen}
           onOpenChange={setAssignProductClassOpen}
