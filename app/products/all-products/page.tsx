@@ -130,9 +130,11 @@ import AddNewProduct from "@/components/product-forms/add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
 import { DeleteToRecycleBinDialog } from "@/components/deletedialog";
 
+// CHANGE A: Import BulkDownloadTdsDialog
+import { BulkDownloadTdsDialog } from "@/components/product-forms/bulk-download-tds-dialog";
+
 import { generateTdsPdf, uploadTdsPdf } from "@/lib/tdsGenerator";
 
-// ── New itemCodes schema imports ──────────────────────────────────────────────
 import {
   type ItemCodes,
   type ItemCodeBrand,
@@ -155,9 +157,7 @@ const CLOUDINARY_UPLOAD_PRESET =
 export type Product = {
   id: string;
   itemDescription: string;
-  // New schema
   itemCodes?: ItemCodes;
-  // Legacy fields kept for backward compat
   ecoItemCode: string;
   litItemCode: string;
   productClass: "spf" | "standard" | "";
@@ -199,7 +199,6 @@ type SortOption =
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Resolve all item codes from a product, preferring new schema */
 function resolveItemCodes(product: Product): ItemCodes {
   if (product.itemCodes && hasAtLeastOneItemCode(product.itemCodes)) {
     return product.itemCodes;
@@ -211,7 +210,6 @@ function resolveItemCodes(product: Product): ItemCodes {
   });
 }
 
-/** Get the primary display code string for a product */
 function getPrimaryCode(product: Product): string {
   const codes = resolveItemCodes(product);
   const primary = getPrimaryItemCode(codes);
@@ -221,7 +219,6 @@ function getPrimaryCode(product: Product): string {
   );
 }
 
-/** Build a safe filename from a product */
 function safeProductFilename(product: Product): string {
   const code = getPrimaryCode(product);
   return code.replace(/[/\\:*?"<>|]/g, "-").trim();
@@ -279,7 +276,6 @@ function buildTransformedProduct(product: Product, newWebsites: string[]) {
     galleryImages: [],
     importSource: "bulk-assign",
     itemCodes: codes,
-    // Legacy compat
     ecoItemCode: codes.ECOSHIFT ?? "",
     litItemCode: codes.LIT ?? "",
     itemCode: primaryCode,
@@ -1133,7 +1129,6 @@ export default function AllProductsPage() {
   );
   const [isDeleting, setIsDeleting] = React.useState(false);
 
-  // ── RBAC ──────────────────────────────────────────────────────────────────
   const {
     submitProductDelete,
     submitProductAssignWebsite,
@@ -1173,6 +1168,9 @@ export default function AllProductsPage() {
   const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
 
+  // CHANGE B: Add state for BulkDownloadTdsDialog
+  const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
+
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -1185,7 +1183,6 @@ export default function AllProductsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── Search suggestions — searches across all item codes ───────────────────
   const suggestions = React.useMemo(() => {
     const q = (globalFilter ?? "").trim().toLowerCase();
     if (!q) return [];
@@ -1206,7 +1203,6 @@ export default function AllProductsPage() {
       .slice(0, 7);
   }, [data, globalFilter]);
 
-  // ── Firestore listener ────────────────────────────────────────────────────
   React.useEffect(() => {
     setLoading(true);
 
@@ -1296,7 +1292,6 @@ export default function AllProductsPage() {
     };
   }, []);
 
-  // ── Delete handlers ───────────────────────────────────────────────────────
   const handleSoftDelete = async (product: Product) => {
     const t = toast.loading("Processing…");
     try {
@@ -1356,7 +1351,6 @@ export default function AllProductsPage() {
     setIsDeleting(false);
   };
 
-  // ── Bulk assign website ───────────────────────────────────────────────────
   const handleBulkAssignWebsite = async (websites: string[]) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
@@ -1405,7 +1399,6 @@ export default function AllProductsPage() {
     setRowSelection({});
   };
 
-  // ── Bulk assign product class ─────────────────────────────────────────────
   const handleBulkAssignProductClass = async (
     productClass: "spf" | "standard",
   ) => {
@@ -1449,7 +1442,6 @@ export default function AllProductsPage() {
     setRowSelection({});
   };
 
-  // ── Bulk TDS generate — uses new itemCodes schema ─────────────────────────
   const handleOpenBulkTds = () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
@@ -1505,7 +1497,6 @@ export default function AllProductsPage() {
           ecoItemCode: resolvedCodes.ECOSHIFT,
           technicalSpecs,
           brand,
-          // Plain tabular by default — no brand assets
           includeBrandAssets: false,
           mainImageUrl:
             product.mainImage ||
@@ -1587,7 +1578,6 @@ export default function AllProductsPage() {
     }).catch(console.warn);
   };
 
-  // ── Bulk Download TDS ZIP — uses new itemCodes schema ─────────────────────
   const handleBulkDownloadTds = async () => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
@@ -1610,12 +1600,10 @@ export default function AllProductsPage() {
       const ecoshiftFolder = zip.folder("ECOSHIFT")!;
       const otherFolder = zip.folder("OTHER")!;
 
-      // Detect folder using new itemCodes schema
       const detectFolder = (product: Product) => {
         const codes = resolveItemCodes(product);
         const filled = getFilledItemCodes(codes);
         if (filled.length === 0) return litFolder;
-        // Primary brand determines folder
         const primaryBrand = filled[0].brand;
         if (primaryBrand === "ECOSHIFT") return ecoshiftFolder;
         if (primaryBrand === "LIT") return litFolder;
@@ -1719,7 +1707,6 @@ export default function AllProductsPage() {
     setIsEditing(true);
   };
 
-  // ── Columns — unified itemCodes column replaces ecoItemCode/litItemCode ───
   const columns: ColumnDef<Product>[] = [
     {
       id: "select",
@@ -1767,7 +1754,6 @@ export default function AllProductsPage() {
       enableHiding: false,
     },
     {
-      // Unified item codes column — shows all brands with colored badges
       id: "itemCodes",
       accessorFn: (row) => {
         const codes = resolveItemCodes(row);
@@ -2023,7 +2009,6 @@ export default function AllProductsPage() {
     },
   ];
 
-  // ── Derived data ──────────────────────────────────────────────────────────
   const uniqueBrands = React.useMemo(() => {
     const s = new Set<string>();
     data.forEach((p) => {
@@ -2260,7 +2245,16 @@ export default function AllProductsPage() {
             )}
           </p>
         </div>
+        {/* CHANGE C: Add Bulk Download TDS button before BulkUploader */}
         <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setBulkDownloadTdsOpen(true)}
+            className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50"
+          >
+            <Download className="h-4 w-4" />
+            Bulk Download TDS
+          </Button>
           <BulkUploader onUploadComplete={() => {}} />
           {userCanWrite && (
             <Button
@@ -2371,7 +2365,6 @@ export default function AllProductsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        {/* Search — covers all item code brands */}
         <div ref={searchContainerRef} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 z-10" />
           <Input
@@ -3135,6 +3128,11 @@ export default function AllProductsPage() {
           onOpenChange={setAssignProductClassOpen}
           selectedCount={selectedCount}
           onConfirm={handleBulkAssignProductClass}
+        />
+        {/* CHANGE D: BulkDownloadTdsDialog */}
+        <BulkDownloadTdsDialog
+          open={bulkDownloadTdsOpen}
+          onOpenChange={setBulkDownloadTdsOpen}
         />
       </TooltipProvider>
     </ProtectedLayout>
