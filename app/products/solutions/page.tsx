@@ -82,7 +82,7 @@ const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Value Acquisitions Holdings",
 ];
-const LABEL_OPTIONS = ["build", "protect", "finish", "repair"];
+const LABEL_OPTIONS = ["BUILD", "PROTECT", "FINISH", "REPAIR"];
 
 export default function SolutionsManager() {
   const CLOUDINARY_UPLOAD_PRESET = "taskflow_preset";
