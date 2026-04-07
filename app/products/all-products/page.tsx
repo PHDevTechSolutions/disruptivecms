@@ -1,5 +1,6 @@
 "use client";
 
+import { MainLayout } from "@/components/layouts/MainLayout";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import * as React from "react";
 import {
@@ -49,8 +50,6 @@ import {
   Home,
   Hash,
 } from "lucide-react";
-
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -60,11 +59,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import {
   TooltipProvider,
   Tooltip,
@@ -1976,7 +1970,7 @@ export default function AllProductsPage() {
                 </TooltipTrigger>
                 <TooltipContent side="top" className="text-xs">
                   {isPendingDelete
-                    ? "Cannot edit — deletion pending"
+                    ? "Cannot edit ��� deletion pending"
                     : "Edit product"}
                 </TooltipContent>
               </Tooltip>
@@ -3049,15 +3043,11 @@ export default function AllProductsPage() {
 
   return (
     <ProtectedLayout>
-      <TooltipProvider delayDuration={0}>
-        <SidebarProvider>
-          <AppSidebar />
-          <SidebarInset>
-            <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-              <div className="flex items-center gap-2 px-4">
-                <SidebarTrigger className="-ml-1" />
-                <Separator orientation="vertical" className="mr-2 h-4" />
-                <Breadcrumb>
+      <MainLayout>
+        <TooltipProvider delayDuration={0}>
+          <header className="flex h-16 shrink-0 items-center gap-2 px-4 border-b border-border">
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
                   <BreadcrumbList>
                     <BreadcrumbItem className="hidden md:block">
                       <BreadcrumbLink href="#">Products</BreadcrumbLink>
@@ -3077,64 +3067,63 @@ export default function AllProductsPage() {
               </div>
               <div className="px-4">
                 <NotificationsDropdown />
-              </div>
-            </header>
-            <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-              {isEditing ? renderEditMode() : renderTableMode()}
             </div>
-          </SidebarInset>
-        </SidebarProvider>
+          </header>
+          <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+            {isEditing ? renderEditMode() : renderTableMode()}
+          </div>
 
-        {/* Dialogs */}
-        <TdsPreviewDialog
-          open={!!tdsPreviewProduct}
-          onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
-          product={tdsPreviewProduct}
-        />
-        <BulkGenerateTdsDialog
-          open={bulkTdsOpen}
-          onOpenChange={(v) => {
-            setBulkTdsOpen(v);
-            if (!v && !isTdsRunning) setTdsJobs([]);
-          }}
-          jobs={tdsJobs}
-          onStart={handleStartBulkTds}
-          isRunning={isTdsRunning}
-        />
-        <DeleteToRecycleBinDialog
-          open={!!deleteTarget}
-          onOpenChange={(v) => !v && setDeleteTarget(null)}
-          itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
-          onConfirm={() => handleSoftDelete(deleteTarget!)}
-          requestMode={isRequestMode}
-        />
-        <DeleteToRecycleBinDialog
-          open={bulkDeleteOpen}
-          onOpenChange={setBulkDeleteOpen}
-          itemName={`${selectedCount} products`}
-          confirmText={`${selectedCount} products`}
-          count={selectedCount}
-          onConfirm={handleBulkSoftDelete}
-          requestMode={isRequestMode}
-        />
-        <AssignToWebsiteDialog
-          open={assignWebsiteOpen}
-          onOpenChange={setAssignWebsiteOpen}
-          selectedCount={selectedCount}
-          onConfirm={handleBulkAssignWebsite}
-        />
-        <AssignProductClassDialog
-          open={assignProductClassOpen}
-          onOpenChange={setAssignProductClassOpen}
-          selectedCount={selectedCount}
-          onConfirm={handleBulkAssignProductClass}
-        />
-        {/* CHANGE D: BulkDownloadTdsDialog */}
-        <BulkDownloadTdsDialog
-          open={bulkDownloadTdsOpen}
-          onOpenChange={setBulkDownloadTdsOpen}
-        />
-      </TooltipProvider>
+          {/* Dialogs */}
+          <TdsPreviewDialog
+            open={!!tdsPreviewProduct}
+            onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
+            product={tdsPreviewProduct}
+          />
+          <BulkGenerateTdsDialog
+            open={bulkTdsOpen}
+            onOpenChange={(v) => {
+              setBulkTdsOpen(v);
+              if (!v && !isTdsRunning) setTdsJobs([]);
+            }}
+            jobs={tdsJobs}
+            onStart={handleStartBulkTds}
+            isRunning={isTdsRunning}
+          />
+          <DeleteToRecycleBinDialog
+            open={!!deleteTarget}
+            onOpenChange={(v) => !v && setDeleteTarget(null)}
+            itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
+            onConfirm={() => handleSoftDelete(deleteTarget!)}
+            requestMode={isRequestMode}
+          />
+          <DeleteToRecycleBinDialog
+            open={bulkDeleteOpen}
+            onOpenChange={setBulkDeleteOpen}
+            itemName={`${selectedCount} products`}
+            confirmText={`${selectedCount} products`}
+            count={selectedCount}
+            onConfirm={handleBulkSoftDelete}
+            requestMode={isRequestMode}
+          />
+          <AssignToWebsiteDialog
+            open={assignWebsiteOpen}
+            onOpenChange={setAssignWebsiteOpen}
+            selectedCount={selectedCount}
+            onConfirm={handleBulkAssignWebsite}
+          />
+          <AssignProductClassDialog
+            open={assignProductClassOpen}
+            onOpenChange={setAssignProductClassOpen}
+            selectedCount={selectedCount}
+            onConfirm={handleBulkAssignProductClass}
+          />
+          {/* CHANGE D: BulkDownloadTdsDialog */}
+          <BulkDownloadTdsDialog
+            open={bulkDownloadTdsOpen}
+            onOpenChange={setBulkDownloadTdsOpen}
+          />
+        </TooltipProvider>
+      </MainLayout>
     </ProtectedLayout>
   );
 }
