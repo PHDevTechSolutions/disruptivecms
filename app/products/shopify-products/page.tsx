@@ -16,7 +16,7 @@ import {
   Clock,
 } from "lucide-react";
 
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -26,11 +26,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import {
   TooltipProvider,
   Tooltip,
@@ -592,13 +587,10 @@ export default function ShopifyProductsPage() {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-            <div className="flex items-center gap-2 px-4 flex-1">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 h-4" />
+      <MainLayout>
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+          <div className="flex items-center gap-2 flex-1">
+            <Separator orientation="vertical" className="mr-2 h-4" />
               <Breadcrumb>
                 <BreadcrumbList>
                   <BreadcrumbItem className="hidden md:block">
@@ -624,24 +616,7 @@ export default function ShopifyProductsPage() {
           <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
             {isEditing ? renderEditMode() : renderTableMode()}
           </div>
-        </SidebarInset>
-      </SidebarProvider>
-
-      <DeleteToRecycleBinDialog
-        open={!!deleteTarget}
-        onOpenChange={(v) => !v && setDeleteTarget(null)}
-        itemName={deleteTarget?.name ?? ""}
-        onConfirm={() => handleSoftDelete(deleteTarget)}
-      />
-
-      <DeleteToRecycleBinDialog
-        open={bulkDeleteOpen}
-        onOpenChange={setBulkDeleteOpen}
-        itemName={`${selectedIds.size} products`}
-        confirmText={`${selectedIds.size} products`}
-        count={selectedIds.size}
-        onConfirm={handleBulkSoftDelete}
-      />
+      </MainLayout>
     </TooltipProvider>
   );
 }

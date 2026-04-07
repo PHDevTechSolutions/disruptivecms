@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Select,
   SelectContent,
@@ -35,12 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Breadcrumb,
@@ -367,13 +362,10 @@ export default function BlogManager() {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset className="bg-white">
-          {/* Top header */}
-          <header className="flex h-16 shrink-0 items-center border-b bg-white px-6">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mx-3 h-4" />
+      <MainLayout>
+        {/* Top header */}
+        <header className="flex h-16 shrink-0 items-center border-b px-6">
+          <Separator orientation="vertical" className="mx-3 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -396,8 +388,7 @@ export default function BlogManager() {
           <main className="p-6 md:p-10">
             {isCreatorOpen ? renderEditMode() : renderTableMode()}
           </main>
-        </SidebarInset>
-      </SidebarProvider>
+      </MainLayout>
     </TooltipProvider>
   );
 }

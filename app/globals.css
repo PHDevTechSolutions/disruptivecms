@@ -124,3 +124,71 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* PWA Mobile & Desktop Optimizations */
+/* Safe area support for notched devices */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+}
+
+/* Full viewport height and prevent zoom */
+html {
+  height: 100vh;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Fix layout for mobile notches */
+body {
+  padding-top: max(0px, env(safe-area-inset-top));
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+}
+
+/* Bottom dock positioning for PWA */
+[role="contentinfo"],
+.bottom-dock,
+footer {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+/* Smooth scrolling and optimized touch */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Mobile viewport optimizations */
+@media (max-width: 768px) {
+  /* Optimize for thumb-friendly touch targets */
+  button, 
+  a,
+  input[type="button"],
+  input[type="submit"] {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+
+  /* Full width dock on mobile */
+  [role="navigation"],
+  .dock {
+    width: 100%;
+    left: 0;
+    right: 0;
+  }
+
+  /* Prevent horizontal scroll on mobile */
+  body {
+    overflow-x: hidden;
+  }
+
+  /* Optimize text size for readability */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}

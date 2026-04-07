@@ -50,20 +50,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  SidebarInset,
-  SidebarTrigger,
-  SidebarProvider,
-} from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -161,13 +148,10 @@ export default function InquiriesPanel() {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          {/* ── HEADER ── */}
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
+      <MainLayout>
+        {/* ── HEADER ── */}
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+          <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -494,8 +478,7 @@ export default function InquiriesPanel() {
               </DialogContent>
             </Dialog>
           </main>
-        </SidebarInset>
-      </SidebarProvider>
+      </MainLayout>
     </TooltipProvider>
   );
 }

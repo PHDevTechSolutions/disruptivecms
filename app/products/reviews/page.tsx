@@ -51,12 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  SidebarInset,
-  SidebarTrigger,
-  SidebarProvider,
-} from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 
 import {
   Breadcrumb,
@@ -169,12 +164,9 @@ export default function ReviewsPage() {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
+      <MainLayout>
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+          <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -424,8 +416,7 @@ export default function ReviewsPage() {
               </DialogContent>
             </Dialog>
           </main>
-        </SidebarInset>
-      </SidebarProvider>
+      </MainLayout>
     </TooltipProvider>
   );
 }

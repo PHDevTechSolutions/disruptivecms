@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -30,11 +30,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -459,15 +454,12 @@ export default function ProductRequestsPage() {
 
   return (
     <ProtectedLayout>
-      <TooltipProvider delayDuration={0}>
-        <SidebarProvider>
-          <AppSidebar />
-          <SidebarInset>
-            {/* Header */}
-            <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-              <div className="flex items-center gap-2 px-4 flex-1">
-                <SidebarTrigger className="-ml-1" />
-                <Separator orientation="vertical" className="mr-2 h-4" />
+      <MainLayout>
+        <TooltipProvider delayDuration={0}>
+          {/* Header */}
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <div className="flex items-center gap-2 flex-1">
+              <Separator orientation="vertical" className="mr-2 h-4" />
                 <Breadcrumb>
                   <BreadcrumbList>
                     <BreadcrumbItem className="hidden md:block">
@@ -864,9 +856,8 @@ export default function ProductRequestsPage() {
                 </div>
               )}
             </div>
-          </SidebarInset>
-        </SidebarProvider>
-      </TooltipProvider>
+        </TooltipProvider>
+      </MainLayout>
 
       <RequestPreviewModal
         request={preview}

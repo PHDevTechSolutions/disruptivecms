@@ -48,12 +48,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Breadcrumb,
