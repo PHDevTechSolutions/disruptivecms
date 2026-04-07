@@ -15,7 +15,7 @@ import {
   ShieldOff,
 } from "lucide-react";
 
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,11 +25,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -822,13 +817,10 @@ export default function RecycleBinPage() {
   return (
      <TooltipProvider>
     <ProtectedLayout>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          {/* ── Header ── */}
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
+      <MainLayout>
+        {/* ── Header ── */}
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+          <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -1144,29 +1136,8 @@ export default function RecycleBinPage() {
               </div>
             )}
           </div>
-        </SidebarInset>
-      </SidebarProvider>
-
-      {/* ── Dialogs ── */}
-      <RestoreDialog
-        open={!!restoreTarget}
-        onOpenChange={(v) => !v && setRestoreTarget(null)}
-        item={restoreTarget}
-        onConfirm={handleRestore}
-      />
-      <PermanentDeleteDialog
-        open={!!permanentDeleteTarget}
-        onOpenChange={(v) => !v && setPermanentDeleteTarget(null)}
-        item={permanentDeleteTarget}
-        onConfirm={handlePermanentDelete}
-      />
-      <BulkPermanentDeleteDialog
-        open={bulkDeleteOpen}
-        onOpenChange={setBulkDeleteOpen}
-        count={selectedIds.size}
-        onConfirm={handleBulkPermanentDelete}
-      />
+      </MainLayout>
     </ProtectedLayout>
-    </TooltipProvider>
+     </TooltipProvider>
   );
 }

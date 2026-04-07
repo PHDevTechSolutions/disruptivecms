@@ -31,7 +31,7 @@ import {
   Eye,
 } from "lucide-react";
 
-import { AppSidebar } from "@/components/sidebar/app-sidebar";
+import { MainLayout } from "@/components/layouts/MainLayout";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -41,11 +41,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import {
   TooltipProvider,
   Tooltip,
@@ -311,13 +306,10 @@ export default function AuditLogsPage() {
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <TooltipProvider delayDuration={0}>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          {/* ── Header — identical pattern to blogs page ── */}
-          <header className="flex h-16 shrink-0 items-center border-b bg-background px-6">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mx-3 h-4" />
+      <MainLayout>
+        {/* ── Header — identical pattern to blogs page ── */}
+        <header className="flex h-16 shrink-0 items-center border-b px-6">
+          <Separator orientation="vertical" className="mx-3 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -752,37 +744,9 @@ export default function AuditLogsPage() {
               </CardContent>
             </Card>
           </main>
-        </SidebarInset>
-      </SidebarProvider>
-
-      {/* Detail Dialog — outside SidebarProvider so it renders over everything */}
-      {selectedLog && (
-        <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-sm">
-                <Shield className="h-4 w-4 text-primary" />
-                Audit Log Detail
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              {(() => {
-                const cfg =
-                  ACTION_CONFIG[selectedLog.action] ?? ACTION_CONFIG.update;
-                return (
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "gap-1 text-xs font-semibold border",
-                      cfg.bg,
-                      cfg.color,
-                    )}
-                  >
-                    {cfg.icon}
-                    {cfg.label}
-                  </Badge>
-                );
+      </MainLayout>
+    </TooltipProvider>
+  );
               })()}
 
               {/* Actor */}
