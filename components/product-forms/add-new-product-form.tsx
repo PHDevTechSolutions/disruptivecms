@@ -969,7 +969,7 @@ export default function AddNewProduct({
   const [showItemCodeError, setShowItemCodeError] = useState(false);
 
   const [regPrice, setRegPrice] = useState("");
-  const [salePrice, setSalePrice] = useState("");
+  const [promoPrice, setPromoPrice] = useState("");
   const [status, setStatus] = useState<"draft" | "public">(
     editData?.status || "draft",
   );
@@ -1327,7 +1327,7 @@ export default function AddNewProduct({
     setItemCodes(migratedCodes);
 
     setRegPrice(editData.regularPrice?.toString() || "");
-    setSalePrice(editData.salePrice?.toString() || "");
+    setPromoPrice(editData.promoPrice?.toString() || "");
     setStatus(editData.status || "draft");
     setTdsUrl(editData.tdsFileUrl || "");
     setSelectedWebs(
@@ -1842,7 +1842,7 @@ export default function AddNewProduct({
         ecoItemCode: resolvedEcoItemCode,
         litItemCode: resolvedLitItemCode,
         regularPrice: Number(regPrice) || 0,
-        salePrice: Number(salePrice) || 0,
+        promoPrice: Number(promoPrice) || 0,
         technicalSpecs,
         mainImage: mainUrl,
         rawImage: rawUrl,
@@ -3427,12 +3427,12 @@ export default function AddNewProduct({
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-muted-foreground">
-                    Sale Price
+                    Promo Price
                   </Label>
                   <Input
                     className="h-9 font-semibold text-destructive"
-                    value={salePrice}
-                    onChange={(e) => setSalePrice(e.target.value)}
+                    value={promoPrice}
+                    onChange={(e) => setPromoPrice(e.target.value)}
                     placeholder="0.00"
                   />
                 </div>
