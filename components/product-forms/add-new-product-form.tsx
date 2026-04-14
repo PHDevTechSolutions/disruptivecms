@@ -783,7 +783,7 @@ interface PendingNewSpec {
 }
 
 type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
-type ProductClass = "spf" | "standard" | "";
+type ProductClass = "spf" | "standard" | "non-standard" | "usl";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -958,7 +958,7 @@ export default function AddNewProduct({
   const [addSpecGroupOpen, setAddSpecGroupOpen] = useState(false);
   const [allSpecGroups, setAllSpecGroups] = useState<AllSpecGroup[]>([]);
 
-  const [productClass, setProductClass] = useState<ProductClass>(
+  const [productClass, setProductClass] = useState<ProductClass | "">(
     editData?.productClass || "",
   );
   const [itemDescription, setItemDescription] = useState("");
