@@ -10,7 +10,7 @@
  *  - Legacy litItemCode / ecoItemCode columns still recognised and migrated
  *  - Duplicate check updated to use itemCodes
  *  - TDS generation uses new plain-tabular default (includeBrandAssets = false)
- *  - All existing Shopify import logic, Firestore writes, and audit trails preserved
+ *  - Excel-only bulk import flow with product class override support
  */
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
@@ -63,9 +63,6 @@ import {
   FileText,
   Tag,
   Package,
-  Eye,
-  EyeOff,
-  ShoppingBag,
   ImageOff,
   Info,
   Stamp,
@@ -74,6 +71,7 @@ import {
 import type {
   ItemCodes,
   ItemCodeBrand,
+  ProductClass,
 } from "@/types/product";
 import {
   ALL_BRANDS,
@@ -94,8 +92,7 @@ const OWN_CLOUDINARY_BASE = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ImportSource = "excel" | "shopify";
-type ShopifyMode = "draft" | "public";
+type UploadProductClass = ProductClass;
 
 interface ParsedProduct {
   itemDescription: string;
@@ -105,7 +102,7 @@ interface ParsedProduct {
   ecoItemCode: string;
   litItemCode: string;
   productFamily: string;
-  productClass: string;
+  productClass: UploadProductClass;
   productUsage: string[];
   brand: TdsBrand;
   mainImageUrl: string;
@@ -178,6 +175,38 @@ interface ImportStats {
 }
 type PreviewTab = "files" | "categories" | "products";
 
+const PRODUCT_CLASS_OPTIONS: {
+  value: Exclude<UploadProductClass, "">;
+  label: string;
+  description: string;
+  activeClass: string;
+}[] = [
+  {
+    value: "spf",
+    label: "SPF",
+    description: "Special product family items",
+    activeClass: "border-violet-500 bg-violet-50 text-violet-700",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "Regular inventory items",
+    activeClass: "border-slate-500 bg-slate-50 text-slate-700",
+  },
+  {
+    value: "non-standard",
+    label: "Non-Standard",
+    description: "Custom and special-order items",
+    activeClass: "border-amber-500 bg-amber-50 text-amber-700",
+  },
+  {
+    value: "usl",
+    label: "USL",
+    description: "USL-classified catalog items",
+    activeClass: "border-sky-500 bg-sky-50 text-sky-700",
+  },
+];
+
 // ─── Image header map (unchanged from original) ───────────────────────────────
 
 const IMG_HEADER_TO_FIELD: Record<string, keyof ParsedProduct> = {
@@ -217,8 +246,10 @@ const ITEM_CODE_HEADER_MAP: Record<string, ItemCodeBrand> = {
   "LIT BRAND CODE": "LIT",
 };
 
-function normaliseProductClass(raw: string): "spf" | "standard" | "" {
+function normaliseProductClass(raw: string): UploadProductClass {
   const s = raw.toLowerCase().trim();
+  if (s === "non-standard" || s === "non standard" || s.includes("non-standard") || s.includes("non standard")) return "non-standard";
+  if (s === "usl" || s.includes("usl")) return "usl";
   if (s === "spf" || s.includes("spf")) return "spf";
   if (s === "standard" || s.includes("standard")) return "standard";
   return "";
@@ -1261,7 +1292,6 @@ export default function BulkUploader({
 }) {
   const [open, setOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [fetching, setFetching] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stats, setStats] = useState<ImportStats>({
     total: 0,
@@ -1277,7 +1307,8 @@ export default function BulkUploader({
     "idle" | "preview" | "importing" | "done" | "cancelled"
   >("idle");
   const [activeTab, setActiveTab] = useState<PreviewTab>("files");
-  const [importSource, setImportSource] = useState<ImportSource>("excel");
+  const [selectedProductClass, setSelectedProductClass] =
+    useState<UploadProductClass>("");
   const [uploadedFiles, setUploadedFiles] = useState<
     {
       name: string;
@@ -1287,8 +1318,6 @@ export default function BulkUploader({
       brandCounts: Record<ItemCodeBrand, number>;
     }[]
   >([]);
-  const [shopifyMode, setShopifyMode] = useState<ShopifyMode>("draft");
-  const [shopifyProducts, setShopifyProducts] = useState<ShopifyProduct[]>([]);
 
   const cancelledRef = useRef(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -1358,48 +1387,8 @@ export default function BulkUploader({
       ],
     },
     multiple: true,
-    disabled: importSource !== "excel" || step !== "idle" || importing,
+    disabled: step !== "idle" || importing,
   });
-
-  const handleShopifyFetch = async () => {
-    setFetching(true);
-    addLog("info", `🔍 Fetching Shopify products (mode: ${shopifyMode})...`);
-    try {
-      const res = await fetch(`/api/shopify/products?mode=${shopifyMode}`);
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const fetched: ShopifyProduct[] = data.products ?? [];
-      if (fetched.length === 0) {
-        addLog(
-          "warn",
-          `⚠️  No ${shopifyMode === "draft" ? "draft/archived" : "active"} products found.`,
-        );
-        toast.warning("No matching products found.");
-        setFetching(false);
-        return;
-      }
-      setShopifyProducts(fetched);
-      setActiveTab("categories");
-      setStep("preview");
-      const familyCount = new Set(
-        fetched.map((p) =>
-          (p.product_type?.trim() || "UNCATEGORISED").toUpperCase(),
-        ),
-      ).size;
-      addLog(
-        "info",
-        `✅ Fetched ${fetched.length} product(s) across ${familyCount} categories.`,
-      );
-    } catch (err: any) {
-      addLog("err", `❌ Fetch failed: ${err.message}`);
-      toast.error(`Shopify fetch failed: ${err.message}`);
-    } finally {
-      setFetching(false);
-    }
-  };
 
   const handleCancel = () => {
     cancelledRef.current = true;
@@ -1414,6 +1403,11 @@ export default function BulkUploader({
   const runExcelImport = async () => {
     const allProducts = uploadedFiles.flatMap((f) => f.products);
     if (!allProducts.length) return;
+    const classModeLabel =
+      selectedProductClass === ""
+        ? "from Excel column"
+        : (PRODUCT_CLASS_OPTIONS.find((opt) => opt.value === selectedProductClass)
+            ?.label ?? selectedProductClass);
 
     cancelledRef.current = false;
     setImporting(true);
@@ -1422,7 +1416,7 @@ export default function BulkUploader({
     setStats({ total: allProducts.length, success: 0, failed: 0, skipped: 0 });
     addLog(
       "info",
-      `🚀 Starting JARIS import of ${allProducts.length} products from ${uploadedFiles.length} file(s)...`,
+      `🚀 Starting JARIS import of ${allProducts.length} products from ${uploadedFiles.length} file(s) — class: ${classModeLabel}...`,
     );
 
     // Phase 1: Upsert spec groups (unchanged)
@@ -1505,6 +1499,7 @@ export default function BulkUploader({
       }
 
       const p = allProducts[i];
+      const productClass = selectedProductClass || p.productClass || "";
       const displayCode = getFilledItemCodes(p.itemCodes)
         .map(({ brand, code }) => `${brand}:${code}`)
         .join(" / ") || "NO CODE";
@@ -1583,7 +1578,7 @@ export default function BulkUploader({
 
         // UPDATED: Save with new itemCodes field + legacy fields for compat
         const docRef = await addDoc(collection(db, "products"), {
-          productClass: p.productClass,
+          productClass,
           itemDescription: p.itemDescription,
           shortDescription: "",
           slug,
@@ -1728,93 +1723,6 @@ export default function BulkUploader({
     finishImport();
   };
 
-  // ── Run Shopify import (updated to include itemCodes) ─────────────────────
-
-  const runShopifyImport = async () => {
-    if (!shopifyProducts.length) return;
-    cancelledRef.current = false;
-    setImporting(true);
-    setStep("importing");
-    setProgress(0);
-    setStats({
-      total: shopifyProducts.length,
-      success: 0,
-      failed: 0,
-      skipped: 0,
-    });
-    addLog(
-      "info",
-      `🚀 Starting import of ${shopifyProducts.length} Shopify products (saved as Draft)...`,
-    );
-
-    for (let i = 0; i < shopifyProducts.length; i++) {
-      if (cancelledRef.current) {
-        const remaining = shopifyProducts.length - i;
-        addLog(
-          "warn",
-          `🛑 Import cancelled. ${i} processed, ${remaining} remaining.`,
-        );
-        setStats((prev) => ({ ...prev, skipped: prev.skipped + remaining }));
-        break;
-      }
-
-      const p = shopifyProducts[i];
-      setCurrentItem(p.title);
-
-      try {
-        const sku = p.variants[0]?.sku?.trim() || String(p.id);
-        const dupSnap = await getDocs(
-          query(collection(db, "products"), where("ecoItemCode", "==", sku)),
-        );
-        if (!dupSnap.empty) {
-          addLog("skip", `⏭  SKIPPED (duplicate SKU "${sku}"): ${p.title}`);
-          setStats((prev) => ({ ...prev, skipped: prev.skipped + 1 }));
-          setProgress(((i + 1) / shopifyProducts.length) * 100);
-          await new Promise((r) => setTimeout(r, 20));
-          continue;
-        }
-
-        const normalized = await normalizeShopifyProduct(p, (msg) =>
-          addLog("info", msg),
-        );
-
-        const docRef = await addDoc(collection(db, "products"), {
-          ...normalized,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        await logAuditEvent({
-          action: "create",
-          entityType: "product",
-          entityId: docRef.id,
-          entityName: normalized.itemDescription,
-          context: {
-            page: "/products/all-products",
-            source: "bulk-uploader:shopify",
-            collection: "products",
-          },
-          metadata: {
-            itemCodes: normalized.itemCodes,
-            ecoItemCode: normalized.ecoItemCode,
-            shopifyProductId: normalized.shopifyProductId,
-          },
-        });
-
-        addLog("ok", `✅ ${p.title} (SKU: ${normalized.ecoItemCode})`);
-        setStats((prev) => ({ ...prev, success: prev.success + 1 }));
-      } catch (err: any) {
-        addLog("err", `❌ FAILED "${p.title}": ${err.message}`);
-        setStats((prev) => ({ ...prev, failed: prev.failed + 1 }));
-      }
-
-      setProgress(((i + 1) / shopifyProducts.length) * 100);
-      await new Promise((r) => setTimeout(r, 80));
-    }
-
-    finishImport();
-  };
-
   const finishImport = () => {
     setImporting(false);
     setCurrentItem("");
@@ -1834,11 +1742,10 @@ export default function BulkUploader({
     setStep("idle");
     setLogs([]);
     setUploadedFiles([]);
-    setShopifyProducts([]);
+    setSelectedProductClass("");
     setStats({ total: 0, success: 0, failed: 0, skipped: 0 });
     setProgress(0);
     setCurrentItem("");
-    setShopifyMode("draft");
     cancelledRef.current = false;
   };
 
@@ -1862,18 +1769,8 @@ export default function BulkUploader({
     brandCounts: file.brandCounts,
   }));
 
-  const previewProductCount =
-    importSource === "shopify"
-      ? shopifyProducts.length
-      : excelAllProducts.length;
-  const previewCategoryCount =
-    importSource === "shopify"
-      ? new Set(
-          shopifyProducts.map((p) =>
-            (p.product_type?.trim() || "UNCATEGORISED").toUpperCase(),
-          ),
-        ).size
-      : Object.keys(excelFamilySummary).length;
+  const previewProductCount = excelAllProducts.length;
+  const previewCategoryCount = Object.keys(excelFamilySummary).length;
   const totalWarnings = uploadedFiles.reduce(
     (s, f) => s + f.warnings.length,
     0,
@@ -1922,8 +1819,8 @@ export default function BulkUploader({
                 Import from{" "}
                 <code className="font-mono bg-muted px-1 rounded">
                   JARIS .xlsx
-                </code>{" "}
-                or Shopify. Supports multi-brand item codes (ECOSHIFT, LIT, LUMERA, OKO, ZUMTOBEL).
+                </code>
+                . Supports multi-brand item codes (ECOSHIFT, LIT, LUMERA, OKO, ZUMTOBEL).
                 TDS generated as plain tabular output by default.
               </DialogDescription>
             </div>
@@ -1968,182 +1865,91 @@ export default function BulkUploader({
           {step === "idle" && (
             <div className="h-full overflow-y-auto">
               <div className="p-6 space-y-5">
-                {/* Source selector */}
+                {/* Info about new schema */}
+                <div className="flex items-start gap-2 text-xs px-3 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700">
+                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">Multi-brand item codes supported</p>
+                    <p>Column headers detected automatically. Use any of:</p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {(ALL_BRANDS as ItemCodeBrand[]).map((b) => (
+                        <span
+                          key={b}
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${ITEM_CODE_BRAND_CONFIG[b].badgeClass}`}
+                        >
+                          {ITEM_CODE_BRAND_CONFIG[b].label} Item Code
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] opacity-80">At least one item code column per row is required.</p>
+                  </div>
+                </div>
+
+                <div
+                  {...getRootProps()}
+                  className={`border-2 border-dashed rounded-2xl p-10 text-center flex flex-col items-center justify-center gap-3 transition-all duration-200 ${isDragActive ? "border-primary bg-primary/8 scale-[1.01] cursor-copy" : "border-border hover:border-primary/40 hover:bg-primary/3 cursor-pointer"}`}
+                >
+                  <input {...getInputProps()} />
+                  <div
+                    className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDragActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                  >
+                    {isDragActive ? (
+                      <FileUp className="w-7 h-7 animate-bounce" />
+                    ) : (
+                      <Upload className="w-7 h-7" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {isDragActive ? "Release to parse" : "Drop JARIS template files here"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      or{" "}
+                      <span className="text-primary underline underline-offset-2 cursor-pointer">
+                        browse
+                      </span>{" "}
+                      — accepts multiple .xlsx files
+                    </p>
+                  </div>
+                </div>
+
                 <div className="rounded-xl border bg-card overflow-hidden">
                   <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
                     <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
-                      1
+                      2
                     </div>
-                    <p className="text-sm font-semibold">Select Import Source</p>
+                    <p className="text-sm font-semibold">Set Product Class (Optional Override)</p>
                   </div>
-                  <div className="p-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        {
-                          value: "excel" as const,
-                          label: "JARIS Excel Template",
-                          desc: "Upload .xlsx — field detection by column headers",
-                          icon: <FileSpreadsheet className="w-4 h-4" />,
-                          color: "text-blue-600",
-                          activeBg: "border-blue-500 bg-blue-50 dark:bg-blue-950/20",
-                        },
-                        {
-                          value: "shopify" as const,
-                          label: "Shopify Store",
-                          desc: "Fetch products from Shopify Admin API",
-                          icon: <ShoppingBag className="w-4 h-4" />,
-                          color: "text-emerald-600",
-                          activeBg: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
-                        },
-                      ].map((opt) => {
-                        const active = importSource === opt.value;
+                  <div className="p-4 space-y-3">
+                    <p className="text-[11px] text-muted-foreground">
+                      This applies to all imported rows. Leave as <span className="font-semibold">Use Excel Value</span> to keep each row's class from the sheet.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProductClass("")}
+                        className={`rounded-lg border-2 px-3 py-2 text-left transition-all ${selectedProductClass === "" ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-muted-foreground/30 text-muted-foreground"}`}
+                      >
+                        <p className="text-xs font-semibold">Use Excel Value</p>
+                        <p className="text-[10px] opacity-75 mt-0.5">Read PRODUCT CLASS from each row</p>
+                      </button>
+                      {PRODUCT_CLASS_OPTIONS.map((opt) => {
+                        const active = selectedProductClass === opt.value;
                         return (
                           <button
                             key={opt.value}
                             type="button"
-                            onClick={() => {
-                              setImportSource(opt.value);
-                              setActiveTab(
-                                opt.value === "shopify" ? "categories" : "files",
-                              );
-                            }}
-                            className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? `${opt.activeBg} ${opt.color} font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
+                            onClick={() => setSelectedProductClass(opt.value)}
+                            className={`rounded-lg border-2 px-3 py-2 text-left transition-all ${active ? opt.activeClass : "border-border hover:border-muted-foreground/30 text-muted-foreground"}`}
                           >
-                            <span className={active ? opt.color : "text-muted-foreground"}>
-                              {opt.icon}
-                            </span>
-                            <div>
-                              <p className="text-xs font-semibold">{opt.label}</p>
-                              <p className="text-[10px] font-normal opacity-70 mt-0.5">{opt.desc}</p>
-                            </div>
+                            <p className="text-xs font-semibold">{opt.label}</p>
+                            <p className="text-[10px] opacity-75 mt-0.5">{opt.description}</p>
                           </button>
                         );
                       })}
                     </div>
                   </div>
                 </div>
-
-                {importSource === "excel" && (
-                  <>
-                    {/* Info about new schema */}
-                    <div className="flex items-start gap-2 text-xs px-3 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700">
-                      <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <p className="font-semibold">Multi-brand item codes supported</p>
-                        <p>Column headers detected automatically. Use any of:</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {(ALL_BRANDS as ItemCodeBrand[]).map((b) => (
-                            <span
-                              key={b}
-                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${ITEM_CODE_BRAND_CONFIG[b].badgeClass}`}
-                            >
-                              {ITEM_CODE_BRAND_CONFIG[b].label} Item Code
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-[10px] opacity-80">At least one item code column per row is required.</p>
-                      </div>
-                    </div>
-
-                    <div
-                      {...getRootProps()}
-                      className={`border-2 border-dashed rounded-2xl p-10 text-center flex flex-col items-center justify-center gap-3 transition-all duration-200 ${isDragActive ? "border-primary bg-primary/8 scale-[1.01] cursor-copy" : "border-border hover:border-primary/40 hover:bg-primary/3 cursor-pointer"}`}
-                    >
-                      <input {...getInputProps()} />
-                      <div
-                        className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDragActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                      >
-                        {isDragActive ? (
-                          <FileUp className="w-7 h-7 animate-bounce" />
-                        ) : (
-                          <Upload className="w-7 h-7" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {isDragActive ? "Release to parse" : "Drop JARIS template files here"}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          or{" "}
-                          <span className="text-primary underline underline-offset-2 cursor-pointer">
-                            browse
-                          </span>{" "}
-                          — accepts multiple .xlsx files
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {importSource === "shopify" && (
-                  <>
-                    <div className="rounded-xl border bg-card overflow-hidden">
-                      <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
-                          2
-                        </div>
-                        <p className="text-sm font-semibold">Select Fetch Mode</p>
-                      </div>
-                      <div className="p-4">
-                        <div className="grid grid-cols-2 gap-3">
-                          {[
-                            {
-                              value: "draft" as const,
-                              label: "Draft / Archived",
-                              desc: "Fetch draft or archived products",
-                              icon: <EyeOff className="w-4 h-4" />,
-                              color: "text-amber-600",
-                              activeBg: "border-amber-500 bg-amber-50 dark:bg-amber-950/20",
-                            },
-                            {
-                              value: "public" as const,
-                              label: "Active / Published",
-                              desc: "Fetch active (published) products",
-                              icon: <Eye className="w-4 h-4" />,
-                              color: "text-emerald-600",
-                              activeBg: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20",
-                            },
-                          ].map((opt) => {
-                            const active = shopifyMode === opt.value;
-                            return (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => setShopifyMode(opt.value)}
-                                className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all ${active ? `${opt.activeBg} ${opt.color} font-semibold` : "border-border hover:border-muted-foreground/30 hover:bg-muted/40 text-muted-foreground"}`}
-                              >
-                                <span className={active ? opt.color : "text-muted-foreground"}>
-                                  {opt.icon}
-                                </span>
-                                <div>
-                                  <p className="text-xs font-semibold">{opt.label}</p>
-                                  <p className="text-[10px] font-normal opacity-70 mt-0.5">{opt.desc}</p>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <Button
-                          onClick={handleShopifyFetch}
-                          disabled={fetching}
-                          className="gap-2 w-full mt-4"
-                        >
-                          {fetching ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Fetching from Shopify...
-                            </>
-                          ) : (
-                            <>
-                              <ShoppingBag className="w-4 h-4" />
-                              Fetch Products
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                )}
 
                 {logs.length > 0 && (
                   <div className="rounded-xl overflow-hidden border border-slate-800">
@@ -2195,15 +2001,13 @@ export default function BulkUploader({
               </div>
 
               <div className="px-6 py-2.5 border-b shrink-0 flex items-center gap-1 bg-background">
-                {importSource === "excel" && (
-                  <TabBtn
-                    active={activeTab === "files"}
-                    onClick={() => setActiveTab("files")}
-                    icon={<FileText className="w-3 h-3" />}
-                    label="Files"
-                    count={uploadedFiles.length}
-                  />
-                )}
+                <TabBtn
+                  active={activeTab === "files"}
+                  onClick={() => setActiveTab("files")}
+                  icon={<FileText className="w-3 h-3" />}
+                  label="Files"
+                  count={uploadedFiles.length}
+                />
                 <TabBtn
                   active={activeTab === "categories"}
                   onClick={() => setActiveTab("categories")}
@@ -2221,23 +2025,17 @@ export default function BulkUploader({
               </div>
 
               <div className="flex-1 min-h-0 p-5">
-                {importSource === "excel" && activeTab === "files" && (
+                {activeTab === "files" && (
                   <FilesPanel fileSummary={fileSummary} />
                 )}
-                {importSource === "excel" && activeTab === "categories" && (
+                {activeTab === "categories" && (
                   <ExcelCategoriesPanel
                     categorySummary={excelFamilySummary}
                     allProducts={excelAllProducts}
                   />
                 )}
-                {importSource === "excel" && activeTab === "products" && (
+                {activeTab === "products" && (
                   <ExcelProductsPanel uploadedFiles={uploadedFiles} />
-                )}
-                {importSource === "shopify" && activeTab === "categories" && (
-                  <ShopifyCategoriesPanel products={shopifyProducts} />
-                )}
-                {importSource === "shopify" && activeTab === "products" && (
-                  <ShopifyProductsPanel products={shopifyProducts} />
                 )}
               </div>
             </div>
@@ -2323,7 +2121,7 @@ export default function BulkUploader({
             {step === "preview" && (
               <Button
                 size="sm"
-                onClick={importSource === "shopify" ? runShopifyImport : runExcelImport}
+                onClick={runExcelImport}
                 disabled={importing}
                 className="gap-2 h-8 text-xs font-semibold"
               >
