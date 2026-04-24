@@ -87,7 +87,7 @@ interface SubmitAssignWebsiteOptions {
 
 interface SubmitSetProductClassOptions {
   product: Record<string, any> & { id: string };
-  productClass: "spf" | "standard";
+  productClass: "spf" | "standard" | "non-standard" | "usl";
   originPage?: string;
   source?: string;
 }

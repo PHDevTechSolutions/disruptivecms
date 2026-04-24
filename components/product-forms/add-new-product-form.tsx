@@ -798,6 +798,16 @@ const PRODUCT_CLASS_OPTIONS: {
     label: "Standard Items",
     icon: <Package className="w-4 h-4" />,
   },
+  {
+    value: "non-standard",
+    label: "Non-Standard Items",
+    icon: <LayoutTemplate className="w-4 h-4" />,
+  },
+  {
+    value: "usl",
+    label: "USL Items",
+    icon: <HardHat className="w-4 h-4" />,
+  },
 ];
 
 const WEBSITE_OPTIONS = [

@@ -19,7 +19,7 @@
 
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import * as React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -180,7 +180,7 @@ export type Product = {
   itemCodes?: ItemCodes;
   ecoItemCode: string;
   litItemCode: string;
-  productClass: "spf" | "standard" | "";
+  productClass: ProductClassValue | "";
   name: string;
   itemCode: string;
   mainImage: string;
@@ -216,6 +216,8 @@ type SortOption =
   | "newest"
   | "oldest"
   | null;
+
+type ProductClassValue = "spf" | "standard" | "non-standard" | "usl";
 
 // ─── Helpers (PRESERVED) ──────────────────────────────────────────────────────
 
@@ -376,7 +378,7 @@ const WEBSITE_OPTIONS = [
 ];
 
 const PRODUCT_CLASS_OPTIONS: {
-  value: "spf" | "standard";
+  value: ProductClassValue;
   label: string;
   description: string;
   icon: React.ReactNode;
@@ -401,6 +403,24 @@ const PRODUCT_CLASS_OPTIONS: {
     color: "bg-slate-50 border-slate-200 text-slate-700",
     activeColor: "bg-slate-100 border-slate-500 text-slate-800",
     dot: "bg-slate-500",
+  },
+  {
+    value: "non-standard",
+    label: "Non-Standard",
+    description: "Custom and special-order items",
+    icon: <CircleDashed className="w-4 h-4" />,
+    color: "bg-amber-50 border-amber-200 text-amber-700",
+    activeColor: "bg-amber-100 border-amber-500 text-amber-800",
+    dot: "bg-amber-500",
+  },
+  {
+    value: "usl",
+    label: "USL",
+    description: "USL-classified catalog items",
+    icon: <Package2 className="w-4 h-4" />,
+    color: "bg-sky-50 border-sky-200 text-sky-700",
+    activeColor: "bg-sky-100 border-sky-500 text-sky-800",
+    dot: "bg-sky-500",
   },
 ];
 
@@ -439,13 +459,25 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
 
 // ─── Badge components (PRESERVED) ────────────────────────────────────────────
 
-function ProductClassBadge({ value }: { value: "spf" | "standard" | "" }) {
+function ProductClassBadge({ value }: { value: ProductClassValue | "" }) {
   if (!value)
     return <span className="text-xs text-muted-foreground/50">—</span>;
   if (value === "spf")
     return (
       <Badge className="gap-1 bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-100 text-[10px] font-semibold">
         <Sparkles className="w-2.5 h-2.5" /> SPF
+      </Badge>
+    );
+  if (value === "non-standard")
+    return (
+      <Badge className="gap-1 bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100 text-[10px] font-semibold">
+        <CircleDashed className="w-2.5 h-2.5" /> Non-Standard
+      </Badge>
+    );
+  if (value === "usl")
+    return (
+      <Badge className="gap-1 bg-sky-100 text-sky-700 border-sky-200 hover:bg-sky-100 text-[10px] font-semibold">
+        <Package2 className="w-2.5 h-2.5" /> USL
       </Badge>
     );
   return (
@@ -901,9 +933,9 @@ function AssignProductClassDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   selectedCount: number;
-  onConfirm: (productClass: "spf" | "standard") => Promise<void>;
+  onConfirm: (productClass: ProductClassValue) => Promise<void>;
 }) {
-  const [selectedClass, setSelectedClass] = React.useState<"spf" | "standard" | null>(null);
+  const [selectedClass, setSelectedClass] = React.useState<ProductClassValue | null>(null);
   const [isAssigning, setIsAssigning] = React.useState(false);
 
   React.useEffect(() => {
@@ -960,8 +992,8 @@ function AssignProductClassDialog({
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAssigning}>Cancel</Button>
-          <Button onClick={handleConfirm} disabled={!selectedClass || isAssigning} className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}>
-            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Tag className="h-4 w-4" /> Set as {selectedClass === "spf" ? "SPF" : "Standard"}</>}
+          <Button onClick={handleConfirm} disabled={!selectedClass || isAssigning} className="gap-2">
+            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Tag className="h-4 w-4" /> Set as {PRODUCT_CLASS_OPTIONS.find((o) => o.value === selectedClass)?.label ?? selectedClass}</>}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1146,8 +1178,8 @@ function ReadOnlyProductCard({
               <span className="text-[8px] text-gray-600 uppercase font-bold">—</span>
             )}
             {cls && (
-              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}>
-                {cls === "spf" ? "SPF" : "Std"}
+              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : cls === "non-standard" ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : cls === "usl" ? "bg-sky-500/20 text-sky-400 border-sky-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}>
+                {cls === "spf" ? "SPF" : cls === "non-standard" ? "Non-Std" : cls === "usl" ? "USL" : "Std"}
               </span>
             )}
           </div>
@@ -1859,11 +1891,11 @@ function FullAllProductsView() {
     setRowSelection({});
   };
 
-  const handleBulkAssignProductClass = async (productClass: "spf" | "standard") => {
+  const handleBulkAssignProductClass = async (productClass: ProductClassValue) => {
     const selectedRows = table.getFilteredSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
-    const label = productClass === "spf" ? "SPF" : "Standard";
+    const label = PRODUCT_CLASS_OPTIONS.find((o) => o.value === productClass)?.label ?? productClass;
     const t = toast.loading(`${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`);
     let direct = 0, pending = 0, errors = 0;
     await Promise.all(rows.map(async (product) => {
@@ -2111,7 +2143,7 @@ function FullAllProductsView() {
   }, [data]);
 
   const productClassCounts = React.useMemo(() => {
-    const m = new Map<string, number>([["spf", 0], ["standard", 0], ["", 0]]);
+    const m = new Map<string, number>([["spf", 0], ["standard", 0], ["non-standard", 0], ["usl", 0], ["", 0]]);
     data.forEach((p) => { const cls = p.productClass ?? ""; m.set(cls, (m.get(cls) ?? 0) + 1); });
     return m;
   }, [data]);
@@ -2234,7 +2266,7 @@ function FullAllProductsView() {
     {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Class</div>,
-      cell: ({ row }) => <ProductClassBadge value={row.getValue("productClass") as "spf" | "standard" | ""} />,
+      cell: ({ row }) => <ProductClassBadge value={row.getValue("productClass") as ProductClassValue | ""} />,
       filterFn: (row, _, filterValue) => { if (!filterValue) return true; return (row.getValue("productClass") as string) === filterValue; },
     },
     {
@@ -2475,6 +2507,12 @@ function FullAllProductsView() {
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("standard")} className="flex items-center justify-between">
               <span className="flex items-center gap-2"><Package className="w-3.5 h-3.5" /> Standard Items</span><CountPill count={productClassCounts.get("standard") ?? 0} />
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("non-standard")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><CircleDashed className="w-3.5 h-3.5 text-amber-500" /> Non-Standard Items</span><CountPill count={productClassCounts.get("non-standard") ?? 0} variant="amber" />
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("usl")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><Package2 className="w-3.5 h-3.5 text-sky-500" /> USL Items</span><CountPill count={productClassCounts.get("usl") ?? 0} variant="sky" />
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
