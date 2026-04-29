@@ -123,9 +123,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import {
-  serverTimestamp,
-} from "@/lib/firestore/client";
+import { serverTimestamp } from "@/lib/firestore/client";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
@@ -217,7 +215,10 @@ type ProductClassValue = "spf" | "standard" | "non-standard" | "usl";
 // ─── Helpers (PRESERVED) ──────────────────────────────────────────────────────
 
 function resolveItemCodes(
-  product: Pick<Product, "itemCodes" | "litItemCode" | "ecoItemCode" | "itemCode">,
+  product: Pick<
+    Product,
+    "itemCodes" | "litItemCode" | "ecoItemCode" | "itemCode"
+  >,
 ): ItemCodes {
   if (product.itemCodes && hasAtLeastOneItemCode(product.itemCodes)) {
     return product.itemCodes;
@@ -742,14 +743,20 @@ function BulkGenerateTdsDialog({
                   onClick={() => setSelectedBrand(opt.value)}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all ${isSelected ? `${opt.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
                 >
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? opt.dot : "bg-muted-foreground/30"}`} />
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? opt.dot : "bg-muted-foreground/30"}`}
+                  />
                   <span className="flex flex-col flex-1">
                     <span className="text-sm font-semibold">{opt.label}</span>
-                    <span className={`text-[11px] ${isSelected ? "opacity-70" : "text-muted-foreground"}`}>
+                    <span
+                      className={`text-[11px] ${isSelected ? "opacity-70" : "text-muted-foreground"}`}
+                    >
                       {opt.description}
                     </span>
                   </span>
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}>
+                  <span
+                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
+                  >
                     <Check className="w-3 h-3" />
                   </span>
                 </button>
@@ -772,14 +779,27 @@ function BulkGenerateTdsDialog({
 
         <div className="max-h-64 overflow-y-auto rounded-lg border divide-y text-sm">
           {jobs.map((job) => (
-            <div key={job.productId} className="flex items-center gap-3 px-3 py-2.5">
+            <div
+              key={job.productId}
+              className="flex items-center gap-3 px-3 py-2.5"
+            >
               <span className="shrink-0">
-                {job.status === "pending" && <CircleDashed className="w-4 h-4 text-muted-foreground/40" />}
-                {job.status === "generating" && <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />}
-                {job.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-                {job.status === "error" && <AlertCircle className="w-4 h-4 text-destructive" />}
+                {job.status === "pending" && (
+                  <CircleDashed className="w-4 h-4 text-muted-foreground/40" />
+                )}
+                {job.status === "generating" && (
+                  <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                )}
+                {job.status === "done" && (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                )}
+                {job.status === "error" && (
+                  <AlertCircle className="w-4 h-4 text-destructive" />
+                )}
               </span>
-              <span className={`flex-1 truncate text-xs ${job.status === "error" ? "text-destructive" : job.status === "done" ? "text-muted-foreground" : "text-foreground"}`}>
+              <span
+                className={`flex-1 truncate text-xs ${job.status === "error" ? "text-destructive" : job.status === "done" ? "text-muted-foreground" : "text-foreground"}`}
+              >
                 {job.productName}
               </span>
               <span className="text-[10px] text-muted-foreground shrink-0 max-w-35 truncate text-right">
@@ -793,9 +813,13 @@ function BulkGenerateTdsDialog({
         </div>
 
         {isComplete && (
-          <div className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${errors === 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+          <div
+            className={`rounded-lg px-4 py-3 border text-xs space-y-0.5 ${errors === 0 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
+          >
             <p className="font-semibold">
-              {errors === 0 ? "All TDS PDFs generated successfully" : `${done} generated, ${errors} failed`}
+              {errors === 0
+                ? "All TDS PDFs generated successfully"
+                : `${done} generated, ${errors} failed`}
             </p>
           </div>
         )}
@@ -805,16 +829,26 @@ function BulkGenerateTdsDialog({
             <Button onClick={() => onOpenChange(false)}>Close</Button>
           ) : (
             <>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isRunning}>Cancel</Button>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={isRunning}
+              >
+                Cancel
+              </Button>
               <Button
                 onClick={() => selectedBrand && onStart(selectedBrand)}
                 disabled={isRunning || total === 0 || !selectedBrand}
                 className="gap-2 bg-orange-500 hover:bg-orange-600 text-white"
               >
                 {isRunning ? (
-                  <><Loader2 className="h-4 w-4 animate-spin" /> Generating…</>
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Generating…
+                  </>
                 ) : (
-                  <><FilePlus2 className="h-4 w-4" /> Generate {total} TDS</>
+                  <>
+                    <FilePlus2 className="h-4 w-4" /> Generate {total} TDS
+                  </>
                 )}
               </Button>
             </>
@@ -877,7 +911,8 @@ function AssignToWebsiteDialog({
             <div>
               <DialogTitle className="text-base">Assign to Website</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be assigned.
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
+                assigned.
               </DialogDescription>
             </div>
           </div>
@@ -893,14 +928,24 @@ function AssignToWebsiteDialog({
                 onClick={() => toggleWebsite(site.value)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all ${isSelected ? `${site.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`} />
-                <span className={`flex-1 text-sm font-medium ${isSelected ? "" : "text-foreground"}`}>{site.label}</span>
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? site.dot : "bg-muted-foreground/30"}`}
+                />
+                <span
+                  className={`flex-1 text-sm font-medium ${isSelected ? "" : "text-foreground"}`}
+                >
+                  {site.label}
+                </span>
                 {site.transformNote && (
-                  <span className={`text-[10px] font-semibold mr-1 ${site.id === "shopify" ? "text-green-600" : "text-violet-500"}`}>
+                  <span
+                    className={`text-[10px] font-semibold mr-1 ${site.id === "shopify" ? "text-green-600" : "text-violet-500"}`}
+                  >
                     {site.transformNote}
                   </span>
                 )}
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}>
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
+                >
                   <Check className="w-3 h-3" />
                 </span>
               </button>
@@ -909,9 +954,27 @@ function AssignToWebsiteDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAssigning}>Cancel</Button>
-          <Button onClick={handleConfirm} disabled={selectedWebsites.length === 0 || isAssigning} className="gap-2">
-            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Globe className="h-4 w-4" /> Assign</>}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={selectedWebsites.length === 0 || isAssigning}
+            className="gap-2"
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
+              </>
+            ) : (
+              <>
+                <Globe className="h-4 w-4" /> Assign
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -932,7 +995,8 @@ function AssignProductClassDialog({
   selectedCount: number;
   onConfirm: (productClass: ProductClassValue) => Promise<void>;
 }) {
-  const [selectedClass, setSelectedClass] = React.useState<ProductClassValue | null>(null);
+  const [selectedClass, setSelectedClass] =
+    React.useState<ProductClassValue | null>(null);
   const [isAssigning, setIsAssigning] = React.useState(false);
 
   React.useEffect(() => {
@@ -959,9 +1023,12 @@ function AssignProductClassDialog({
               <Tag className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <DialogTitle className="text-base">Assign Product Class</DialogTitle>
+              <DialogTitle className="text-base">
+                Assign Product Class
+              </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be updated.
+                {selectedCount} product{selectedCount !== 1 ? "s" : ""} will be
+                updated.
               </DialogDescription>
             </div>
           </div>
@@ -977,10 +1044,16 @@ function AssignProductClassDialog({
                 onClick={() => setSelectedClass(option.value)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all ${isSelected ? `${option.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`} />
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? option.dot : "bg-muted-foreground/30"}`}
+                />
                 <span className="flex items-center gap-2 flex-1">
                   <span className="text-sm font-medium">{option.label}</span>
-                  <span className={`text-xs ${isSelected ? "opacity-80" : "text-muted-foreground"}`}>— {option.description}</span>
+                  <span
+                    className={`text-xs ${isSelected ? "opacity-80" : "text-muted-foreground"}`}
+                  >
+                    — {option.description}
+                  </span>
                 </span>
               </button>
             );
@@ -988,9 +1061,29 @@ function AssignProductClassDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAssigning}>Cancel</Button>
-          <Button onClick={handleConfirm} disabled={!selectedClass || isAssigning} className="gap-2">
-            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Tag className="h-4 w-4" /> Set as {PRODUCT_CLASS_OPTIONS.find((o) => o.value === selectedClass)?.label ?? selectedClass}</>}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={!selectedClass || isAssigning}
+            className="gap-2"
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
+              </>
+            ) : (
+              <>
+                <Tag className="h-4 w-4" /> Set as{" "}
+                {PRODUCT_CLASS_OPTIONS.find((o) => o.value === selectedClass)
+                  ?.label ?? selectedClass}
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1061,9 +1154,10 @@ function ReadOnlyTdsButton({
       disabled={!hasTds}
       className={`
         shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all active:scale-95
-        ${hasTds
-          ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
-          : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
+        ${
+          hasTds
+            ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
+            : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
         }
       `}
     >
@@ -1172,11 +1266,21 @@ function ReadOnlyProductCard({
                 </span>
               ))
             ) : (
-              <span className="text-[8px] text-gray-600 uppercase font-bold">—</span>
+              <span className="text-[8px] text-gray-600 uppercase font-bold">
+                —
+              </span>
             )}
             {cls && (
-              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : cls === "non-standard" ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : cls === "usl" ? "bg-sky-500/20 text-sky-400 border-sky-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}>
-                {cls === "spf" ? "SPF" : cls === "non-standard" ? "Non-Std" : cls === "usl" ? "USL" : "Std"}
+              <span
+                className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : cls === "non-standard" ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : cls === "usl" ? "bg-sky-500/20 text-sky-400 border-sky-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}
+              >
+                {cls === "spf"
+                  ? "SPF"
+                  : cls === "non-standard"
+                    ? "Non-Std"
+                    : cls === "usl"
+                      ? "USL"
+                      : "Std"}
               </span>
             )}
           </div>
@@ -1230,7 +1334,10 @@ function ReadOnlyFilterPanel({
                 Filter by Family
               </p>
               <button
-                onClick={() => { onFamilyChange(""); onClose(); }}
+                onClick={() => {
+                  onFamilyChange("");
+                  onClose();
+                }}
                 className="text-[9px] font-black uppercase text-gray-500 hover:text-white transition-colors"
               >
                 Clear All
@@ -1245,7 +1352,10 @@ function ReadOnlyFilterPanel({
                   <button
                     key={fam || "all"}
                     type="button"
-                    onClick={() => { onFamilyChange(fam); onClose(); }}
+                    onClick={() => {
+                      onFamilyChange(fam);
+                      onClose();
+                    }}
                     className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all text-left ${isActive ? "border-[#d11a2a]/50 bg-[#d11a2a]/10 text-white" : "border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/[0.08]"}`}
                   >
                     <span className="text-[11px] font-black uppercase truncate">
@@ -1280,8 +1390,7 @@ function ReadOnlyAllProductsView() {
 
   const [tdsPreviewProduct, setTdsPreviewProduct] =
     React.useState<Product | null>(null);
-  const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] =
-    React.useState(false);
+  const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
 
   const {
     data: readOnlyPages,
@@ -1319,7 +1428,8 @@ function ReadOnlyAllProductsView() {
     ? Math.max(currentPage, (readOnlyPages?.pages.length ?? 0) + 1)
     : Math.max(1, readOnlyPages?.pages.length ?? 1);
   const paginated =
-    (readOnlyPages?.pages[currentPage - 1]?.items as Product[] | undefined) ?? [];
+    (readOnlyPages?.pages[currentPage - 1]?.items as Product[] | undefined) ??
+    [];
 
   React.useEffect(() => {
     if (
@@ -1518,7 +1628,11 @@ function ReadOnlyAllProductsView() {
             {(search || usageTab || familyFilter) && (
               <button
                 type="button"
-                onClick={() => { setSearch(""); setUsageTab(""); setFamilyFilter(""); }}
+                onClick={() => {
+                  setSearch("");
+                  setUsageTab("");
+                  setFamilyFilter("");
+                }}
                 className="mt-3 text-[9px] font-black uppercase text-[#d11a2a] hover:underline"
               >
                 Clear Filters
@@ -1597,24 +1711,24 @@ function ReadOnlyAllProductsView() {
         className="sticky bottom-0 bg-[#0a0a0a]/95 backdrop-blur-xl border-t border-white/5 px-4 py-3"
       >
         <div className="flex items-center justify-around gap-1">
-          {[
-            { label: "Products", icon: Package2, active: true },
-          ].map(({ label, icon: Icon, active }) => (
-            <button
-              key={label}
-              type="button"
-              className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-[80px] ${
-                active
-                  ? "bg-[#d11a2a]/10 text-[#d11a2a]"
-                  : "text-gray-600 hover:text-white"
-              }`}
-            >
-              <Icon size={18} />
-              <span className="text-[8px] font-black uppercase tracking-wider">
-                {label}
-              </span>
-            </button>
-          ))}
+          {[{ label: "Products", icon: Package2, active: true }].map(
+            ({ label, icon: Icon, active }) => (
+              <button
+                key={label}
+                type="button"
+                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-[80px] ${
+                  active
+                    ? "bg-[#d11a2a]/10 text-[#d11a2a]"
+                    : "text-gray-600 hover:text-white"
+                }`}
+              >
+                <Icon size={18} />
+                <span className="text-[8px] font-black uppercase tracking-wider">
+                  {label}
+                </span>
+              </button>
+            ),
+          )}
         </div>
       </motion.nav>
 
@@ -1646,7 +1760,9 @@ function ReadOnlyAllProductsView() {
 
 function FullAllProductsView() {
   const [isEditing, setIsEditing] = React.useState(false);
-  const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(
+    null,
+  );
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   const {
@@ -1662,12 +1778,15 @@ function FullAllProductsView() {
   const isRequestMode = userCanWrite && !canVerifyProducts();
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+  const [columnVisibility, setColumnVisibility] =
+    React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [usageFilter, setUsageFilter] = React.useState("");
   const [familyFilter, setFamilyFilter] = React.useState("");
-  const [classFilter, setClassFilter] = React.useState<ProductClassValue | "">("");
+  const [classFilter, setClassFilter] = React.useState<ProductClassValue | "">(
+    "",
+  );
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
 
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -1676,9 +1795,11 @@ function FullAllProductsView() {
   const [deleteTarget, setDeleteTarget] = React.useState<Product | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [assignWebsiteOpen, setAssignWebsiteOpen] = React.useState(false);
-  const [assignProductClassOpen, setAssignProductClassOpen] = React.useState(false);
+  const [assignProductClassOpen, setAssignProductClassOpen] =
+    React.useState(false);
 
-  const [tdsPreviewProduct, setTdsPreviewProduct] = React.useState<Product | null>(null);
+  const [tdsPreviewProduct, setTdsPreviewProduct] =
+    React.useState<Product | null>(null);
   const [bulkTdsOpen, setBulkTdsOpen] = React.useState(false);
   const [tdsJobs, setTdsJobs] = React.useState<TdsJob[]>([]);
   const [isTdsRunning, setIsTdsRunning] = React.useState(false);
@@ -1692,8 +1813,8 @@ function FullAllProductsView() {
     hasNextPage,
     isFetchingNextPage,
   } = useProducts({
-    pageSize: 50,
-    searchTerm: globalFilter.trim() || undefined,
+    pageSize: 200,
+    // No searchTerm — client-side search so ALL products are loaded
     productUsage: usageFilter || undefined,
     productFamily: familyFilter || undefined,
     productClass: classFilter || undefined,
@@ -1702,7 +1823,27 @@ function FullAllProductsView() {
         ? new Date(Date.now() - 12 * 60 * 60 * 1000)
         : undefined,
   });
-  const data = React.useMemo(() => products as unknown as Product[], [products]);
+
+  // Client-side search across itemDescription, all item codes, and name
+  const data = React.useMemo(() => {
+    let items = products as unknown as Product[];
+    const q = globalFilter.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((p) => {
+      if ((p.itemDescription || p.name || "").toLowerCase().includes(q))
+        return true;
+      if ((p.litItemCode || "").toLowerCase().includes(q)) return true;
+      if ((p.ecoItemCode || "").toLowerCase().includes(q)) return true;
+      if ((p.itemCode || "").toLowerCase().includes(q)) return true;
+      if (p.itemCodes) {
+        const codes = getFilledItemCodes(p.itemCodes);
+        if (codes.some(({ code }) => code.toLowerCase().includes(q)))
+          return true;
+      }
+      return false;
+    });
+  }, [products, globalFilter]);
+
   const loading = isLoading;
 
   const [familySearch, setFamilySearch] = React.useState("");
@@ -1710,52 +1851,63 @@ function FullAllProductsView() {
 
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node))
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      )
         setShowSuggestions(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Derive suggestions from already-loaded data (client-side, no Firestore call)
   React.useEffect(() => {
-    const term = globalFilter.trim();
+    const term = globalFilter.trim().toLowerCase();
     if (term.length < 2) {
       setSuggestions([]);
       return;
     }
-    let cancelled = false;
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const rows = await searchProducts(term);
-        if (!cancelled) {
-          setSuggestions(rows.slice(0, 7));
+    const matches = (products as unknown as Product[])
+      .filter((p) => {
+        if ((p.itemDescription || p.name || "").toLowerCase().includes(term))
+          return true;
+        if ((p.litItemCode || "").toLowerCase().includes(term)) return true;
+        if ((p.ecoItemCode || "").toLowerCase().includes(term)) return true;
+        if ((p.itemCode || "").toLowerCase().includes(term)) return true;
+        if (p.itemCodes) {
+          const codes = getFilledItemCodes(p.itemCodes);
+          if (codes.some(({ code }) => code.toLowerCase().includes(term)))
+            return true;
         }
-      } catch {
-        if (!cancelled) {
-          setSuggestions([]);
-        }
-      }
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [globalFilter]);
-
+        return false;
+      })
+      .slice(0, 7);
+    setSuggestions(matches as unknown as ProductListItem[]);
+  }, [globalFilter, products]);
+  // Auto-fetch ALL pages so client-side search works across the full dataset
   React.useEffect(() => {
     if (!hasNextPage || isFetchingNextPage || loading) return;
-    if (data.length < 100) {
-      void fetchNextPage();
-    }
-  }, [hasNextPage, isFetchingNextPage, loading, data.length, fetchNextPage]);
+    void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, loading, fetchNextPage]);
 
   // ── All handlers PRESERVED ────────────────────────────────────────────────
 
   const handleSoftDelete = async (product: Product) => {
     const t = toast.loading("Processing…");
     try {
-      const result = await submitProductDelete({ product, originPage: "/products/all-products", source: "all-products:delete" });
-      toast.success(result.message, { id: t, description: result.mode === "pending" ? "A PD Manager or Admin will review your request." : undefined });
+      const result = await submitProductDelete({
+        product,
+        originPage: "/products/all-products",
+        source: "all-products:delete",
+      });
+      toast.success(result.message, {
+        id: t,
+        description:
+          result.mode === "pending"
+            ? "A PD Manager or Admin will review your request."
+            : undefined,
+      });
     } catch (err: any) {
       toast.error(err.message || "Failed to delete product.", { id: t });
     }
@@ -1764,21 +1916,35 @@ function FullAllProductsView() {
   const handleBulkSoftDelete = async () => {
     const selectedRows = table.getSelectedRowModel().rows;
     setIsDeleting(true);
-    const t = toast.loading(`Submitting delete for ${selectedRows.length} products…`);
-    let direct = 0, pending = 0, errors = 0;
-    await Promise.all(selectedRows.map(async ({ original: product }) => {
-      try {
-        const result = await submitProductDelete({ product, originPage: "/products/all-products", source: "all-products:bulk-delete" });
-        result.mode === "pending" ? pending++ : direct++;
-      } catch { errors++; }
-    }));
+    const t = toast.loading(
+      `Submitting delete for ${selectedRows.length} products…`,
+    );
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+    await Promise.all(
+      selectedRows.map(async ({ original: product }) => {
+        try {
+          const result = await submitProductDelete({
+            product,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-delete",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
     if (errors === 0) {
       const parts: string[] = [];
       if (direct > 0) parts.push(`${direct} moved to recycle bin`);
       if (pending > 0) parts.push(`${pending} pending approval`);
       toast.success(parts.join(", ") || "Done", { id: t });
     } else {
-      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, { id: t });
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
+      });
     }
     setRowSelection({});
     setIsDeleting(false);
@@ -1788,60 +1954,92 @@ function FullAllProductsView() {
     const selectedRows = table.getSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
-    const t = toast.loading(`${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to ${websites.join(", ")}...`);
-    let direct = 0, pending = 0, errors = 0;
-    await Promise.all(rows.map(async (product) => {
-      try {
-        const transformSites = websites.filter((w) => SCHEMA_TRANSFORM_WEBSITES.has(w));
-        const sourceProduct =
-          transformSites.length > 0
-            ? (((await fetchProductById(product.id)) as Product | null) ?? product)
-            : product;
-        const transformedFields =
-          transformSites.length > 0
-            ? buildTransformedProduct(sourceProduct, websites)
-            : undefined;
-        const result = await submitProductAssignWebsite({
-          product: sourceProduct,
-          websites,
-          transformedFields,
-          originPage: "/products/all-products",
-          source: "all-products:bulk-assign-website",
-        });
-        result.mode === "pending" ? pending++ : direct++;
-      } catch { errors++; }
-    }));
+    const t = toast.loading(
+      `${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to ${websites.join(", ")}...`,
+    );
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const transformSites = websites.filter((w) =>
+            SCHEMA_TRANSFORM_WEBSITES.has(w),
+          );
+          const sourceProduct =
+            transformSites.length > 0
+              ? (((await fetchProductById(product.id)) as Product | null) ??
+                product)
+              : product;
+          const transformedFields =
+            transformSites.length > 0
+              ? buildTransformedProduct(sourceProduct, websites)
+              : undefined;
+          const result = await submitProductAssignWebsite({
+            product: sourceProduct,
+            websites,
+            transformedFields,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-assign-website",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
     if (errors === 0) {
       const parts: string[] = [];
       if (direct > 0) parts.push(`${direct} assigned`);
       if (pending > 0) parts.push(`${pending} pending approval`);
       toast.success(parts.join(", ") || "Done", { id: t });
     } else {
-      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, { id: t });
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
+      });
     }
     setRowSelection({});
   };
 
-  const handleBulkAssignProductClass = async (productClass: ProductClassValue) => {
+  const handleBulkAssignProductClass = async (
+    productClass: ProductClassValue,
+  ) => {
     const selectedRows = table.getSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
-    const label = PRODUCT_CLASS_OPTIONS.find((o) => o.value === productClass)?.label ?? productClass;
-    const t = toast.loading(`${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`);
-    let direct = 0, pending = 0, errors = 0;
-    await Promise.all(rows.map(async (product) => {
-      try {
-        const result = await submitProductSetClass({ product, productClass, originPage: "/products/all-products", source: "all-products:bulk-set-product-class" });
-        result.mode === "pending" ? pending++ : direct++;
-      } catch { errors++; }
-    }));
+    const label =
+      PRODUCT_CLASS_OPTIONS.find((o) => o.value === productClass)?.label ??
+      productClass;
+    const t = toast.loading(
+      `${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`,
+    );
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const result = await submitProductSetClass({
+            product,
+            productClass,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-set-product-class",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
     if (errors === 0) {
       const parts: string[] = [];
       if (direct > 0) parts.push(`${direct} set to "${label}"`);
       if (pending > 0) parts.push(`${pending} pending approval`);
       toast.success(parts.join(", ") || "Done", { id: t });
     } else {
-      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, { id: t });
+      toast.error(`${errors} error(s). ${direct + pending} succeeded.`, {
+        id: t,
+      });
     }
     setRowSelection({});
   };
@@ -1850,7 +2048,8 @@ function FullAllProductsView() {
     const selectedRows = table.getSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
       productId: row.original.id,
-      productName: row.original.itemDescription || row.original.name || row.original.id,
+      productName:
+        row.original.itemDescription || row.original.name || row.original.id,
       status: "pending",
     }));
     setTdsJobs(jobs);
@@ -1867,18 +2066,30 @@ function FullAllProductsView() {
       const job = tdsJobs[i];
       const baseProduct = productMap.get(job.productId);
 
-      setTdsJobs((prev) => prev.map((j) => j.productId === job.productId ? { ...j, status: "generating" } : j));
+      setTdsJobs((prev) =>
+        prev.map((j) =>
+          j.productId === job.productId ? { ...j, status: "generating" } : j,
+        ),
+      );
 
       try {
         if (!baseProduct) throw new Error("Product not found in selection");
-        const fullProduct = (await fetchProductById(baseProduct.id)) as Product | null;
+        const fullProduct = (await fetchProductById(
+          baseProduct.id,
+        )) as Product | null;
         const product = fullProduct ?? baseProduct;
 
         const itemDescription = product.itemDescription || product.name || "";
         const resolvedCodes = resolveItemCodes(product);
 
         const technicalSpecs = (product.technicalSpecs ?? [])
-          .map((group) => ({ ...group, specs: (group.specs ?? []).filter((s: { value: any }) => { const v = (s.value ?? "").toUpperCase().trim(); return v !== "" && v !== "N/A"; }) }))
+          .map((group) => ({
+            ...group,
+            specs: (group.specs ?? []).filter((s: { value: any }) => {
+              const v = (s.value ?? "").toUpperCase().trim();
+              return v !== "" && v !== "N/A";
+            }),
+          }))
           .filter((group) => (group.specs ?? []).length > 0);
 
         const p = product as any;
@@ -1891,9 +2102,18 @@ function FullAllProductsView() {
           technicalSpecs,
           brand,
           includeBrandAssets: false,
-          mainImageUrl: product.mainImage || (Array.isArray(product.rawImage) ? product.rawImage[0] : (product.rawImage as unknown as string)) || undefined,
-          dimensionalDrawingUrl: p.dimensionDrawingImage || p.dimensionalDrawingImage || undefined,
-          recommendedMountingHeightUrl: p.mountingHeightImage || p.recommendedMountingHeightImage || undefined,
+          mainImageUrl:
+            product.mainImage ||
+            (Array.isArray(product.rawImage)
+              ? product.rawImage[0]
+              : (product.rawImage as unknown as string)) ||
+            undefined,
+          dimensionalDrawingUrl:
+            p.dimensionDrawingImage || p.dimensionalDrawingImage || undefined,
+          recommendedMountingHeightUrl:
+            p.mountingHeightImage ||
+            p.recommendedMountingHeightImage ||
+            undefined,
           driverCompatibilityUrl: p.driverCompatibilityImage || undefined,
           baseImageUrl: p.baseImage || undefined,
           illuminanceLevelUrl: p.illuminanceLevelImage || undefined,
@@ -1904,21 +2124,41 @@ function FullAllProductsView() {
           accessoriesImageUrl: p.accessoriesImage || undefined,
         });
 
-        const primaryCode = getPrimaryItemCode(resolvedCodes)?.code ?? product.id;
+        const primaryCode =
+          getPrimaryItemCode(resolvedCodes)?.code ?? product.id;
         const filename = `${primaryCode.replace(/[/\\:*?"<>|]/g, "-")}_TDS.pdf`;
-        const tdsUrl = await uploadTdsPdf(tdsBlob, filename, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET);
+        const tdsUrl = await uploadTdsPdf(
+          tdsBlob,
+          filename,
+          CLOUDINARY_CLOUD_NAME,
+          CLOUDINARY_UPLOAD_PRESET,
+        );
 
         if (tdsUrl.startsWith("http")) {
-        await updateProduct(product.id, {
-          tdsFileUrl: tdsUrl,
-          updatedAt: serverTimestamp(),
-        });
+          await updateProduct(product.id, {
+            tdsFileUrl: tdsUrl,
+            updatedAt: serverTimestamp(),
+          });
         }
 
-        setTdsJobs((prev) => prev.map((j) => j.productId === job.productId ? { ...j, status: "done" } : j));
+        setTdsJobs((prev) =>
+          prev.map((j) =>
+            j.productId === job.productId ? { ...j, status: "done" } : j,
+          ),
+        );
       } catch (err: any) {
         console.error(`TDS generation failed for ${job.productId}:`, err);
-        setTdsJobs((prev) => prev.map((j) => j.productId === job.productId ? { ...j, status: "error", error: err?.message ?? "Unknown error" } : j));
+        setTdsJobs((prev) =>
+          prev.map((j) =>
+            j.productId === job.productId
+              ? {
+                  ...j,
+                  status: "error",
+                  error: err?.message ?? "Unknown error",
+                }
+              : j,
+          ),
+        );
       }
     }
 
@@ -1928,8 +2168,17 @@ function FullAllProductsView() {
       entityType: "product",
       entityId: null,
       entityName: `${tdsJobs.length} products`,
-      context: { page: "/products/all-products", source: "all-products:bulk-generate-tds", collection: "products", bulk: true },
-      metadata: { brand, total: tdsJobs.length, productIds: tdsJobs.map((j) => j.productId) },
+      context: {
+        page: "/products/all-products",
+        source: "all-products:bulk-generate-tds",
+        collection: "products",
+        bulk: true,
+      },
+      metadata: {
+        brand,
+        total: tdsJobs.length,
+        productIds: tdsJobs.map((j) => j.productId),
+      },
     }).catch(console.warn);
   };
 
@@ -1937,11 +2186,16 @@ function FullAllProductsView() {
     const selectedRows = table.getSelectedRowModel().rows;
     const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
 
-    if (withTds.length === 0) { toast.error("None of the selected products have a TDS file."); return; }
+    if (withTds.length === 0) {
+      toast.error("None of the selected products have a TDS file.");
+      return;
+    }
 
     setIsTdsDownloading(true);
     const noTdsCount = selectedRows.length - withTds.length;
-    const loadingToast = toast.loading(`Preparing ${withTds.length} TDS file${withTds.length !== 1 ? "s" : ""}…`);
+    const loadingToast = toast.loading(
+      `Preparing ${withTds.length} TDS file${withTds.length !== 1 ? "s" : ""}…`,
+    );
 
     try {
       const JSZip = (await import("jszip")).default;
@@ -1968,7 +2222,10 @@ function FullAllProductsView() {
         return count === 0 ? `${base}.pdf` : `${base}_(${count}).pdf`;
       };
 
-      const fetchWithRetry = async (url: string, retries = 3): Promise<Blob> => {
+      const fetchWithRetry = async (
+        url: string,
+        retries = 3,
+      ): Promise<Blob> => {
         let lastError: unknown;
         for (let attempt = 1; attempt <= retries; attempt++) {
           try {
@@ -1977,14 +2234,16 @@ function FullAllProductsView() {
             return await res.blob();
           } catch (err) {
             lastError = err;
-            if (attempt < retries) await new Promise((r) => setTimeout(r, 400 * attempt));
+            if (attempt < retries)
+              await new Promise((r) => setTimeout(r, 400 * attempt));
           }
         }
         throw lastError;
       };
 
       const BATCH = 8;
-      let succeeded = 0, failed = 0;
+      let succeeded = 0,
+        failed = 0;
 
       for (let i = 0; i < withTds.length; i += BATCH) {
         const chunk = withTds.slice(i, i + BATCH);
@@ -1995,8 +2254,12 @@ function FullAllProductsView() {
             folder.file(tdsFilename(product), blob);
           }),
         );
-        results.forEach((r) => { if (r.status === "fulfilled") succeeded++; else failed++; });
-        if (i + BATCH < withTds.length) await new Promise((r) => setTimeout(r, 300));
+        results.forEach((r) => {
+          if (r.status === "fulfilled") succeeded++;
+          else failed++;
+        });
+        if (i + BATCH < withTds.length)
+          await new Promise((r) => setTimeout(r, 300));
       }
 
       toast.loading("Compressing ZIP…", { id: loadingToast });
@@ -2011,8 +2274,14 @@ function FullAllProductsView() {
       URL.revokeObjectURL(url);
 
       toast.success(
-        [`${succeeded} TDS file${succeeded !== 1 ? "s" : ""} downloaded`, failed > 0 ? `${failed} failed` : null, noTdsCount > 0 ? `${noTdsCount} skipped (no TDS)` : null, "→ Organised into LIT / ECOSHIFT / OTHER folders"]
-          .filter(Boolean).join(" · "),
+        [
+          `${succeeded} TDS file${succeeded !== 1 ? "s" : ""} downloaded`,
+          failed > 0 ? `${failed} failed` : null,
+          noTdsCount > 0 ? `${noTdsCount} skipped (no TDS)` : null,
+          "→ Organised into LIT / ECOSHIFT / OTHER folders",
+        ]
+          .filter(Boolean)
+          .join(" · "),
         { id: loadingToast },
       );
     } catch (err) {
@@ -2055,14 +2324,21 @@ function FullAllProductsView() {
 
   const uniqueProductFamilies = React.useMemo(() => {
     const s = new Set<string>();
-    data.forEach((p) => { const fam = p.productFamily || (p.categories as string); if (fam) s.add(fam); });
+    data.forEach((p) => {
+      const fam = p.productFamily || (p.categories as string);
+      if (fam) s.add(fam);
+    });
     return Array.from(s).sort();
   }, [data]);
 
   const brandCounts = React.useMemo(() => {
     const m = new Map<string, number>();
     data.forEach((p) => {
-      const brands = Array.isArray(p.brands) ? p.brands : p.brand ? [p.brand as string] : [];
+      const brands = Array.isArray(p.brands)
+        ? p.brands
+        : p.brand
+          ? [p.brand as string]
+          : [];
       brands.forEach((b) => m.set(b, (m.get(b) ?? 0) + 1));
     });
     return m;
@@ -2071,7 +2347,11 @@ function FullAllProductsView() {
   const websiteCounts = React.useMemo(() => {
     const m = new Map<string, number>();
     data.forEach((p) => {
-      const websites = Array.isArray(p.websites) ? p.websites : p.website ? [p.website as string] : [];
+      const websites = Array.isArray(p.websites)
+        ? p.websites
+        : p.website
+          ? [p.website as string]
+          : [];
       websites.forEach((w) => m.set(w, (m.get(w) ?? 0) + 1));
     });
     return m;
@@ -2079,22 +2359,49 @@ function FullAllProductsView() {
 
   const productFamilyCounts = React.useMemo(() => {
     const m = new Map<string, number>();
-    data.forEach((p) => { const fam = p.productFamily || (p.categories as string); if (fam) m.set(fam, (m.get(fam) ?? 0) + 1); });
+    data.forEach((p) => {
+      const fam = p.productFamily || (p.categories as string);
+      if (fam) m.set(fam, (m.get(fam) ?? 0) + 1);
+    });
     return m;
   }, [data]);
 
   const productClassCounts = React.useMemo(() => {
-    const m = new Map<string, number>([["spf", 0], ["standard", 0], ["non-standard", 0], ["usl", 0], ["", 0]]);
-    data.forEach((p) => { const cls = p.productClass ?? ""; m.set(cls, (m.get(cls) ?? 0) + 1); });
+    const m = new Map<string, number>([
+      ["spf", 0],
+      ["standard", 0],
+      ["non-standard", 0],
+      ["usl", 0],
+      ["", 0],
+    ]);
+    data.forEach((p) => {
+      const cls = p.productClass ?? "";
+      m.set(cls, (m.get(cls) ?? 0) + 1);
+    });
     return m;
   }, [data]);
 
   const productUsageCounts = React.useMemo(() => {
-    const m = new Map<string, number>([["OUTDOOR", 0], ["INDOOR", 0], ["SOLAR", 0], ["", 0]]);
+    const m = new Map<string, number>([
+      ["OUTDOOR", 0],
+      ["INDOOR", 0],
+      ["SOLAR", 0],
+      ["", 0],
+    ]);
     data.forEach((p) => {
-      const usages: string[] = Array.isArray(p.productUsage) ? p.productUsage : p.productUsage ? [p.productUsage as string] : [];
-      if (usages.length === 0) { m.set("", (m.get("") ?? 0) + 1); }
-      else { usages.forEach((u) => { const key = u.toUpperCase(); m.set(key, (m.get(key) ?? 0) + 1); }); }
+      const usages: string[] = Array.isArray(p.productUsage)
+        ? p.productUsage
+        : p.productUsage
+          ? [p.productUsage as string]
+          : [];
+      if (usages.length === 0) {
+        m.set("", (m.get("") ?? 0) + 1);
+      } else {
+        usages.forEach((u) => {
+          const key = u.toUpperCase();
+          m.set(key, (m.get(key) ?? 0) + 1);
+        });
+      }
     });
     return m;
   }, [data]);
@@ -2114,14 +2421,22 @@ function FullAllProductsView() {
 
   const sortedData = React.useMemo(() => {
     const d = [...data];
-    const ts = (p: Product): number => p.createdAt?.toMillis?.() ?? (typeof p.createdAt === "number" ? p.createdAt : 0);
-    const label = (p: Product) => (p.itemDescription || p.name || "").toLowerCase();
+    const ts = (p: Product): number =>
+      p.createdAt?.toMillis?.() ??
+      (typeof p.createdAt === "number" ? p.createdAt : 0);
+    const label = (p: Product) =>
+      (p.itemDescription || p.name || "").toLowerCase();
     switch (sortOption) {
-      case "alpha-asc": return d.sort((a, b) => label(a).localeCompare(label(b)));
-      case "alpha-desc": return d.sort((a, b) => label(b).localeCompare(label(a)));
-      case "recent-12h": return d.sort((a, b) => ts(b) - ts(a));
-      case "oldest": return d.sort((a, b) => ts(a) - ts(b));
-      default: return d.sort((a, b) => ts(b) - ts(a));
+      case "alpha-asc":
+        return d.sort((a, b) => label(a).localeCompare(label(b)));
+      case "alpha-desc":
+        return d.sort((a, b) => label(b).localeCompare(label(a)));
+      case "recent-12h":
+        return d.sort((a, b) => ts(b) - ts(a));
+      case "oldest":
+        return d.sort((a, b) => ts(a) - ts(b));
+      default:
+        return d.sort((a, b) => ts(b) - ts(a));
     }
   }, [data, sortOption]);
 
@@ -2140,7 +2455,10 @@ function FullAllProductsView() {
       id: "select",
       header: ({ table }) => (
         <Checkbox
-          checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && "indeterminate")}
+          checked={
+            table.getIsAllPageRowsSelected() ||
+            (table.getIsSomePageRowsSelected() && "indeterminate")
+          }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
           aria-label="Select all"
         />
@@ -2164,7 +2482,15 @@ function FullAllProductsView() {
         const label = row.original.itemDescription || row.original.name;
         return (
           <div className="w-12 h-12 bg-muted rounded-lg p-1 border overflow-hidden flex items-center justify-center shrink-0">
-            {imageUrl ? <img src={imageUrl} alt={label} className="w-full h-full object-contain" /> : <Package className="h-6 w-6 text-muted-foreground/40" />}
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={label}
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <Package className="h-6 w-6 text-muted-foreground/40" />
+            )}
           </div>
         );
       },
@@ -2172,14 +2498,35 @@ function FullAllProductsView() {
     },
     {
       id: "itemCodes",
-      accessorFn: (row) => { const codes = resolveItemCodes(row); return getFilledItemCodes(codes).map(({ code }) => code).join(" "); },
-      header: () => <div className="text-xs font-medium flex items-center gap-1.5"><Hash className="h-3.5 w-3.5 text-muted-foreground" />Item Codes</div>,
-      cell: ({ row }) => { const codes = resolveItemCodes(row.original); return <div className="min-w-30"><ItemCodesDisplay itemCodes={codes} size="sm" maxVisible={3} /></div>; },
+      accessorFn: (row) => {
+        const codes = resolveItemCodes(row);
+        return getFilledItemCodes(codes)
+          .map(({ code }) => code)
+          .join(" ");
+      },
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+          Item Codes
+        </div>
+      ),
+      cell: ({ row }) => {
+        const codes = resolveItemCodes(row.original);
+        return (
+          <div className="min-w-30">
+            <ItemCodesDisplay itemCodes={codes} size="sm" maxVisible={3} />
+          </div>
+        );
+      },
       filterFn: (row, _, filterValue) => {
         if (!filterValue) return true;
         const codes = resolveItemCodes(row.original);
-        const allCodes = getFilledItemCodes(codes).map(({ code }) => code.toLowerCase());
-        return allCodes.some((c) => c.includes(String(filterValue).toLowerCase()));
+        const allCodes = getFilledItemCodes(codes).map(({ code }) =>
+          code.toLowerCase(),
+        );
+        return allCodes.some((c) =>
+          c.includes(String(filterValue).toLowerCase()),
+        );
       },
     },
     {
@@ -2188,62 +2535,132 @@ function FullAllProductsView() {
       cell: ({ row }) => {
         const desc = row.getValue("itemDescription") as string;
         const fallback = row.original.name;
-        const family = row.original.productFamily || (row.original.categories as string);
+        const family =
+          row.original.productFamily || (row.original.categories as string);
         return (
           <div className="flex flex-col max-w-65">
-            <span className="font-semibold text-sm line-clamp-2 leading-snug">{desc || fallback || "—"}</span>
-            {family && <span className="text-[11px] text-muted-foreground mt-0.5 truncate">{family}</span>}
+            <span className="font-semibold text-sm line-clamp-2 leading-snug">
+              {desc || fallback || "—"}
+            </span>
+            {family && (
+              <span className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {family}
+              </span>
+            )}
           </div>
         );
       },
     },
     {
       id: "productFamilyFilter",
-      accessorFn: (row) => row.productFamily || (row.categories as string) || "",
-      header: () => <div className="text-xs font-medium flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-muted-foreground" />Product Family</div>,
+      accessorFn: (row) =>
+        row.productFamily || (row.categories as string) || "",
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+          Product Family
+        </div>
+      ),
       cell: ({ row }) => {
-        const family = row.original.productFamily || (row.original.categories as string);
-        return family ? <span className="text-xs text-muted-foreground truncate max-w-40 block">{family}</span> : <span className="text-xs text-muted-foreground/40">—</span>;
+        const family =
+          row.original.productFamily || (row.original.categories as string);
+        return family ? (
+          <span className="text-xs text-muted-foreground truncate max-w-40 block">
+            {family}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/40">—</span>
+        );
       },
       enableHiding: true,
       filterFn: (row, _, filterValue) => {
         if (!filterValue) return true;
-        const family = row.original.productFamily || (row.original.categories as string) || "";
+        const family =
+          row.original.productFamily ||
+          (row.original.categories as string) ||
+          "";
         return family === filterValue;
       },
     },
     {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Class</div>,
-      cell: ({ row }) => <ProductClassBadge value={row.getValue("productClass") as ProductClassValue | ""} />,
-      filterFn: (row, _, filterValue) => { if (!filterValue) return true; return (row.getValue("productClass") as string) === filterValue; },
+      cell: ({ row }) => (
+        <ProductClassBadge
+          value={row.getValue("productClass") as ProductClassValue | ""}
+        />
+      ),
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        return (row.getValue("productClass") as string) === filterValue;
+      },
     },
     {
       accessorKey: "productUsage",
       header: () => <div className="text-xs font-medium">Usage</div>,
-      cell: ({ row }) => <ProductUsageBadge value={row.original.productUsage} />,
+      cell: ({ row }) => (
+        <ProductUsageBadge value={row.original.productUsage} />
+      ),
       filterFn: (row, _, filterValue) => {
         if (!filterValue) return true;
-        const usages: string[] = Array.isArray(row.original.productUsage) ? row.original.productUsage : row.original.productUsage ? [row.original.productUsage as string] : [];
-        return usages.some((u) => u.toUpperCase() === String(filterValue).toUpperCase());
+        const usages: string[] = Array.isArray(row.original.productUsage)
+          ? row.original.productUsage
+          : row.original.productUsage
+            ? [row.original.productUsage as string]
+            : [];
+        return usages.some(
+          (u) => u.toUpperCase() === String(filterValue).toUpperCase(),
+        );
       },
     },
     {
       id: "details",
-      accessorFn: (row) => { const brand = Array.isArray(row.brands) ? row.brands.join(" ") : row.brand; const web = Array.isArray(row.websites) ? row.websites.join(" ") : row.website; return `${brand} ${web}`; },
+      accessorFn: (row) => {
+        const brand = Array.isArray(row.brands)
+          ? row.brands.join(" ")
+          : row.brand;
+        const web = Array.isArray(row.websites)
+          ? row.websites.join(" ")
+          : row.website;
+        return `${brand} ${web}`;
+      },
       header: () => <div className="text-xs font-medium">Brand & Website</div>,
       cell: ({ row }) => {
-        const brands = Array.isArray(row.original.brands) ? row.original.brands : [row.original.brand || "Generic"];
-        const websites = Array.isArray(row.original.websites) ? row.original.websites : row.original.website ? [row.original.website as string] : [];
+        const brands = Array.isArray(row.original.brands)
+          ? row.original.brands
+          : [row.original.brand || "Generic"];
+        const websites = Array.isArray(row.original.websites)
+          ? row.original.websites
+          : row.original.website
+            ? [row.original.website as string]
+            : [];
         return (
           <div className="flex flex-col gap-1 items-start">
-            <Badge variant="outline" className="text-xs font-medium">{brands.join(", ")}</Badge>
+            <Badge variant="outline" className="text-xs font-medium">
+              {brands.join(", ")}
+            </Badge>
             {websites.length > 0 ? (
               <div className="flex flex-wrap gap-1">
-                {websites.map((w) => <Badge key={w} variant="secondary" className={`text-xs ${w === "Shopify" ? "bg-green-100 text-green-700 border-green-200" : w === "Taskflow" ? "bg-violet-100 text-violet-700 border-violet-200" : ""}`}>{w === "Shopify" && <ShoppingBag className="w-2.5 h-2.5 mr-1" />}{w}</Badge>)}
+                {websites.map((w) => (
+                  <Badge
+                    key={w}
+                    variant="secondary"
+                    className={`text-xs ${w === "Shopify" ? "bg-green-100 text-green-700 border-green-200" : w === "Taskflow" ? "bg-violet-100 text-violet-700 border-violet-200" : ""}`}
+                  >
+                    {w === "Shopify" && (
+                      <ShoppingBag className="w-2.5 h-2.5 mr-1" />
+                    )}
+                    {w}
+                  </Badge>
+                ))}
               </div>
             ) : (
-              <Badge variant="outline" className="text-xs text-muted-foreground border-dashed">No website</Badge>
+              <Badge
+                variant="outline"
+                className="text-xs text-muted-foreground border-dashed"
+              >
+                No website
+              </Badge>
             )}
           </div>
         );
@@ -2252,7 +2669,9 @@ function FullAllProductsView() {
     },
     {
       id: "actions",
-      header: () => <div className="text-xs font-medium text-right">Actions</div>,
+      header: () => (
+        <div className="text-xs font-medium text-right">Actions</div>
+      ),
       cell: ({ row }) => {
         const product = row.original;
         const pendingStatus = pendingMap.get(product.id) ?? null;
@@ -2260,36 +2679,71 @@ function FullAllProductsView() {
         const busy = !!pendingStatus;
 
         return (
-          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="flex items-center justify-end gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
             {product.tdsFileUrl && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setTdsPreviewProduct(product); }}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-red-600 hover:bg-red-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTdsPreviewProduct(product);
+                    }}
+                  >
                     <FileText className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">View TDS</TooltipContent>
+                <TooltipContent side="top" className="text-xs">
+                  View TDS
+                </TooltipContent>
               </Tooltip>
             )}
             <PendingRowIndicator status={pendingStatus} />
             {userCanWrite && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(product)} disabled={isPendingDelete}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleEdit(product)}
+                    disabled={isPendingDelete}
+                  >
                     <Pencil className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">{isPendingDelete ? "Cannot edit — deletion pending" : "Edit product"}</TooltipContent>
+                <TooltipContent side="top" className="text-xs">
+                  {isPendingDelete
+                    ? "Cannot edit — deletion pending"
+                    : "Edit product"}
+                </TooltipContent>
               </Tooltip>
             )}
             {userCanWrite && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(product)} disabled={busy}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => setDeleteTarget(product)}
+                    disabled={busy}
+                  >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">{busy ? "Pending — cannot delete" : isRequestMode ? "Submit delete request" : "Delete product"}</TooltipContent>
+                <TooltipContent side="top" className="text-xs">
+                  {busy
+                    ? "Pending — cannot delete"
+                    : isRequestMode
+                      ? "Submit delete request"
+                      : "Delete product"}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -2328,15 +2782,30 @@ function FullAllProductsView() {
   const renderEditMode = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" onClick={() => { setSelectedProduct(null); setIsEditing(false); }} className="gap-2">
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setSelectedProduct(null);
+            setIsEditing(false);
+          }}
+          className="gap-2"
+        >
           <ArrowLeft className="h-4 w-4" /> Back to Products
         </Button>
         <Separator orientation="vertical" className="h-6" />
         <p className="text-sm text-muted-foreground">
-          {selectedProduct ? `Editing: ${selectedProduct.itemDescription || selectedProduct.name}` : "Adding New Product"}
+          {selectedProduct
+            ? `Editing: ${selectedProduct.itemDescription || selectedProduct.name}`
+            : "Adding New Product"}
         </p>
       </div>
-      <AddNewProduct editData={selectedProduct} onFinished={() => { setSelectedProduct(null); setIsEditing(false); }} />
+      <AddNewProduct
+        editData={selectedProduct}
+        onFinished={() => {
+          setSelectedProduct(null);
+          setIsEditing(false);
+        }}
+      />
     </div>
   );
 
@@ -2344,21 +2813,40 @@ function FullAllProductsView() {
     <div className="w-full space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Product Inventory</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Product Inventory
+          </h2>
           <p className="text-sm text-muted-foreground">
             Manage and update your website products —{" "}
-            {loading ? <span className="text-muted-foreground">Loading...</span> : (
-              <><span className="font-semibold text-foreground">{totalCount}</span> product{totalCount !== 1 ? "s" : ""}</>
+            {loading ? (
+              <span className="text-muted-foreground">Loading...</span>
+            ) : (
+              <>
+                <span className="font-semibold text-foreground">
+                  {totalCount}
+                </span>{" "}
+                product{totalCount !== 1 ? "s" : ""}
+              </>
             )}
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline" onClick={() => setBulkDownloadTdsOpen(true)} className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50">
+          <Button
+            variant="outline"
+            onClick={() => setBulkDownloadTdsOpen(true)}
+            className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50"
+          >
             <Download className="h-4 w-4" /> Bulk Download TDS
           </Button>
           <BulkUploader onUploadComplete={() => {}} />
           {userCanWrite && (
-            <Button onClick={() => { setSelectedProduct(null); setIsEditing(true); }} className="gap-2">
+            <Button
+              onClick={() => {
+                setSelectedProduct(null);
+                setIsEditing(true);
+              }}
+              className="gap-2"
+            >
               <PlusCircle className="h-4 w-4" /> Add Product
             </Button>
           )}
@@ -2369,36 +2857,88 @@ function FullAllProductsView() {
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-destructive/20 rounded-full flex items-center justify-center">
-              <span className="text-sm font-semibold text-destructive">{selectedCount}</span>
+              <span className="text-sm font-semibold text-destructive">
+                {selectedCount}
+              </span>
             </div>
             <div>
-              <p className="text-sm font-semibold">{selectedCount} product{selectedCount > 1 ? "s" : ""} selected</p>
-              <p className="text-xs text-muted-foreground">Ready for bulk actions</p>
+              <p className="text-sm font-semibold">
+                {selectedCount} product{selectedCount > 1 ? "s" : ""} selected
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Ready for bulk actions
+              </p>
             </div>
           </div>
           <div className="flex gap-2 flex-wrap justify-end">
-            <Button variant="ghost" size="sm" onClick={() => table.resetRowSelection()} className="gap-2"><X className="h-4 w-4" /> Clear</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => table.resetRowSelection()}
+              className="gap-2"
+            >
+              <X className="h-4 w-4" /> Clear
+            </Button>
             {userCanWrite && (
-              <Button variant="outline" size="sm" className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-primary/30 text-primary hover:bg-primary/5"}`} onClick={() => setAssignWebsiteOpen(true)}>
-                <Globe className="h-4 w-4" /> {isRequestMode ? "Request Website Assign" : "Assign to Website"}
+              <Button
+                variant="outline"
+                size="sm"
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-primary/30 text-primary hover:bg-primary/5"}`}
+                onClick={() => setAssignWebsiteOpen(true)}
+              >
+                <Globe className="h-4 w-4" />{" "}
+                {isRequestMode ? "Request Website Assign" : "Assign to Website"}
               </Button>
             )}
             {userCanWrite && (
-              <Button variant="outline" size="sm" className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-violet-300 text-violet-700 hover:bg-violet-50"}`} onClick={() => setAssignProductClassOpen(true)}>
-                <Tag className="h-4 w-4" /> {isRequestMode ? "Request Class Change" : "Set Product Class"}
+              <Button
+                variant="outline"
+                size="sm"
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : "border-violet-300 text-violet-700 hover:bg-violet-50"}`}
+                onClick={() => setAssignProductClassOpen(true)}
+              >
+                <Tag className="h-4 w-4" />{" "}
+                {isRequestMode ? "Request Class Change" : "Set Product Class"}
               </Button>
             )}
-            <Button variant="outline" size="sm" className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50" onClick={handleOpenBulkTds}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50"
+              onClick={handleOpenBulkTds}
+            >
               <FilePlus2 className="h-4 w-4" /> Generate TDS
             </Button>
-            <Button variant="outline" size="sm" className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50" disabled={isTdsDownloading} onClick={handleBulkDownloadTds}>
-              {isTdsDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-sky-300 text-sky-700 hover:bg-sky-50"
+              disabled={isTdsDownloading}
+              onClick={handleBulkDownloadTds}
+            >
+              {isTdsDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
               {isTdsDownloading ? "Zipping…" : "Download TDS ZIP"}
             </Button>
             {userCanWrite && (
-              <Button variant={isRequestMode ? "outline" : "destructive"} size="sm" disabled={isDeleting} className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : ""}`} onClick={() => setBulkDeleteOpen(true)}>
-                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                {isRequestMode ? `Request Delete (${selectedCount})` : `Move ${selectedCount} to Bin`}
+              <Button
+                variant={isRequestMode ? "outline" : "destructive"}
+                size="sm"
+                disabled={isDeleting}
+                className={`gap-2 ${isRequestMode ? "border-amber-300 text-amber-700 hover:bg-amber-50" : ""}`}
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {isRequestMode
+                  ? `Request Delete (${selectedCount})`
+                  : `Move ${selectedCount} to Bin`}
               </Button>
             )}
           </div>
@@ -2412,28 +2952,64 @@ function FullAllProductsView() {
           <Input
             placeholder="Search by name, any item code…"
             value={globalFilter ?? ""}
-            onChange={(e) => { setGlobalFilter(e.target.value); setShowSuggestions(true); }}
+            onChange={(e) => {
+              setGlobalFilter(e.target.value);
+              setShowSuggestions(true);
+            }}
             onFocus={() => setShowSuggestions(true)}
-            onKeyDown={(e) => { if (e.key === "Escape") setShowSuggestions(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setShowSuggestions(false);
+            }}
             className="pl-9"
           />
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-popover border rounded-lg shadow-lg overflow-hidden">
               {suggestions.map((product) => {
-                const brands = Array.isArray(product.brands) ? product.brands : [product.brand || "Generic"];
+                const brands = Array.isArray(product.brands)
+                  ? product.brands
+                  : [product.brand || "Generic"];
                 const codes = resolveItemCodes(product);
                 return (
-                  <button key={product.id} type="button" className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-accent transition-colors"
-                    onMouseDown={(e) => { e.preventDefault(); setShowSuggestions(false); setGlobalFilter(""); handleEdit(product); }}
+                  <button
+                    key={product.id}
+                    type="button"
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-accent transition-colors"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setShowSuggestions(false);
+                      setGlobalFilter("");
+                      handleEdit(product);
+                    }}
                   >
                     <div className="w-9 h-9 shrink-0 bg-muted rounded-md border overflow-hidden flex items-center justify-center">
-                      {product.mainImage ? <img src={product.mainImage} alt="" className="w-full h-full object-contain" /> : <Package className="h-4 w-4 text-muted-foreground/40" />}
+                      {product.mainImage ? (
+                        <img
+                          src={product.mainImage}
+                          alt=""
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <Package className="h-4 w-4 text-muted-foreground/40" />
+                      )}
                     </div>
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-sm font-medium truncate">{product.itemDescription || product.name}</span>
-                      <div className="mt-0.5"><ItemCodesDisplay itemCodes={codes} size="sm" maxVisible={2} /></div>
+                      <span className="text-sm font-medium truncate">
+                        {product.itemDescription || product.name}
+                      </span>
+                      <div className="mt-0.5">
+                        <ItemCodesDisplay
+                          itemCodes={codes}
+                          size="sm"
+                          maxVisible={2}
+                        />
+                      </div>
                     </div>
-                    <Badge variant="outline" className="ml-auto shrink-0 text-xs">{brands[0]}</Badge>
+                    <Badge
+                      variant="outline"
+                      className="ml-auto shrink-0 text-xs"
+                    >
+                      {brands[0]}
+                    </Badge>
                   </button>
                 );
               })}
@@ -2444,26 +3020,107 @@ function FullAllProductsView() {
         {/* Product Class filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className={`gap-2 ${activeClassFilter ? "border-primary text-primary bg-primary/5" : ""}`}>
-              {activeClassFilter ? activeClassFilter.toUpperCase() : "Product Class"} <ChevronDown className="h-4 w-4" />
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeClassFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              {activeClassFilter
+                ? activeClassFilter.toUpperCase()
+                : "Product Class"}{" "}
+              <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onClick={() => setClassFilter("")} className="flex items-center justify-between">
-              <span>All Classes</span><div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeClassFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() => setClassFilter("")}
+              className="flex items-center justify-between"
+            >
+              <span>All Classes</span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={data.length} />
+                {!activeClassFilter && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "spf" ? "" : "spf")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-violet-500" /> SPF Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("spf") ?? 0} variant="violet" />{activeClassFilter === "spf" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() =>
+                setClassFilter(activeClassFilter === "spf" ? "" : "spf")
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" /> SPF Items
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productClassCounts.get("spf") ?? 0}
+                  variant="violet"
+                />
+                {activeClassFilter === "spf" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "standard" ? "" : "standard")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Package className="w-3.5 h-3.5" /> Standard Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("standard") ?? 0} />{activeClassFilter === "standard" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() =>
+                setClassFilter(
+                  activeClassFilter === "standard" ? "" : "standard",
+                )
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Package className="w-3.5 h-3.5" /> Standard Items
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={productClassCounts.get("standard") ?? 0} />
+                {activeClassFilter === "standard" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "non-standard" ? "" : "non-standard")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><CircleDashed className="w-3.5 h-3.5 text-amber-500" /> Non-Standard Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("non-standard") ?? 0} variant="amber" />{activeClassFilter === "non-standard" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() =>
+                setClassFilter(
+                  activeClassFilter === "non-standard" ? "" : "non-standard",
+                )
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <CircleDashed className="w-3.5 h-3.5 text-amber-500" />{" "}
+                Non-Standard Items
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productClassCounts.get("non-standard") ?? 0}
+                  variant="amber"
+                />
+                {activeClassFilter === "non-standard" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "usl" ? "" : "usl")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Package2 className="w-3.5 h-3.5 text-sky-500" /> USL Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("usl") ?? 0} variant="sky" />{activeClassFilter === "usl" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() =>
+                setClassFilter(activeClassFilter === "usl" ? "" : "usl")
+              }
+              className="flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Package2 className="w-3.5 h-3.5 text-sky-500" /> USL Items
+              </span>
+              <div className="flex items-center gap-1.5">
+                <CountPill
+                  count={productClassCounts.get("usl") ?? 0}
+                  variant="sky"
+                />
+                {activeClassFilter === "usl" && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -2471,57 +3128,173 @@ function FullAllProductsView() {
         {/* Product Usage filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className={`gap-2 ${activeUsageFilter ? "border-primary text-primary bg-primary/5" : ""}`}>
-              {activeUsageFilter === "OUTDOOR" ? <Trees className="h-4 w-4 text-emerald-600" /> : activeUsageFilter === "INDOOR" ? <Home className="h-4 w-4 text-sky-600" /> : activeUsageFilter === "SOLAR" ? <Sun className="h-4 w-4 text-amber-500" /> : <Sun className="h-4 w-4" />}
-              {activeUsageFilter ? activeUsageFilter.charAt(0).toUpperCase() + activeUsageFilter.slice(1).toLowerCase() : "Usage"}
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeUsageFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              {activeUsageFilter === "OUTDOOR" ? (
+                <Trees className="h-4 w-4 text-emerald-600" />
+              ) : activeUsageFilter === "INDOOR" ? (
+                <Home className="h-4 w-4 text-sky-600" />
+              ) : activeUsageFilter === "SOLAR" ? (
+                <Sun className="h-4 w-4 text-amber-500" />
+              ) : (
+                <Sun className="h-4 w-4" />
+              )}
+              {activeUsageFilter
+                ? activeUsageFilter.charAt(0).toUpperCase() +
+                  activeUsageFilter.slice(1).toLowerCase()
+                : "Usage"}
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={() => setUsageFilter("")} className="flex items-center justify-between">
-              <span>All Usage</span><div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeUsageFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+            <DropdownMenuItem
+              onClick={() => setUsageFilter("")}
+              className="flex items-center justify-between"
+            >
+              <span>All Usage</span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={data.length} />
+                {!activeUsageFilter && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            {[{ key: "OUTDOOR", icon: <Trees className="w-3.5 h-3.5 text-emerald-600" />, label: "Outdoor", variant: "green" as const },
-              { key: "INDOOR", icon: <Home className="w-3.5 h-3.5 text-sky-600" />, label: "Indoor", variant: "sky" as const },
-              { key: "SOLAR", icon: <Sun className="w-3.5 h-3.5 text-amber-500" />, label: "Solar", variant: "amber" as const }]
-              .map(({ key, icon, label, variant }) => (
-                <DropdownMenuItem key={key} onClick={() => setUsageFilter(activeUsageFilter === key ? "" : key)} className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">{icon} {label}</span>
-                  <div className="flex items-center gap-1.5"><CountPill count={productUsageCounts.get(key) ?? 0} variant={variant} />{activeUsageFilter === key && <Check className="h-3.5 w-3.5 text-primary" />}</div>
-                </DropdownMenuItem>
-              ))}
+            {[
+              {
+                key: "OUTDOOR",
+                icon: <Trees className="w-3.5 h-3.5 text-emerald-600" />,
+                label: "Outdoor",
+                variant: "green" as const,
+              },
+              {
+                key: "INDOOR",
+                icon: <Home className="w-3.5 h-3.5 text-sky-600" />,
+                label: "Indoor",
+                variant: "sky" as const,
+              },
+              {
+                key: "SOLAR",
+                icon: <Sun className="w-3.5 h-3.5 text-amber-500" />,
+                label: "Solar",
+                variant: "amber" as const,
+              },
+            ].map(({ key, icon, label, variant }) => (
+              <DropdownMenuItem
+                key={key}
+                onClick={() =>
+                  setUsageFilter(activeUsageFilter === key ? "" : key)
+                }
+                className="flex items-center justify-between"
+              >
+                <span className="flex items-center gap-2">
+                  {icon} {label}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <CountPill
+                    count={productUsageCounts.get(key) ?? 0}
+                    variant={variant}
+                  />
+                  {activeUsageFilter === key && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
 
         {/* Product Family filter */}
-        <DropdownMenu onOpenChange={(open) => { if (!open) setFamilySearch(""); }}>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (!open) setFamilySearch("");
+          }}
+        >
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className={`gap-2 ${activeFamilyFilter ? "border-primary text-primary bg-primary/5" : ""}`}>
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeFamilyFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
               <Layers className="h-4 w-4" />
-              {activeFamilyFilter ? <span className="max-w-36 truncate">{activeFamilyFilter}</span> : "Product Family"}
+              {activeFamilyFilter ? (
+                <span className="max-w-36 truncate">{activeFamilyFilter}</span>
+              ) : (
+                "Product Family"
+              )}
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-72 p-0 overflow-x-hidden">
+          <DropdownMenuContent
+            align="end"
+            className="w-72 p-0 overflow-x-hidden"
+          >
             <div className="flex items-center gap-2 px-3 py-2 border-b">
               <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <input placeholder="Search families…" value={familySearch} onChange={(e) => setFamilySearch(e.target.value)} onKeyDown={(e) => e.stopPropagation()} className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/60 min-w-0" autoFocus />
-              {familySearch && <button type="button" onClick={() => setFamilySearch("")} className="text-muted-foreground hover:text-foreground transition-colors shrink-0"><X className="h-3.5 w-3.5" /></button>}
+              <input
+                placeholder="Search families…"
+                value={familySearch}
+                onChange={(e) => setFamilySearch(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/60 min-w-0"
+                autoFocus
+              />
+              {familySearch && (
+                <button
+                  type="button"
+                  onClick={() => setFamilySearch("")}
+                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
             <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1">
-              <DropdownMenuItem onClick={() => setFamilyFilter("")} className="flex items-center justify-between">
-                <span className="text-muted-foreground italic">All Families</span>
-                <div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeFamilyFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+              <DropdownMenuItem
+                onClick={() => setFamilyFilter("")}
+                className="flex items-center justify-between"
+              >
+                <span className="text-muted-foreground italic">
+                  All Families
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <CountPill count={data.length} />
+                  {!activeFamilyFilter && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </div>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {(() => {
-                const filtered = uniqueProductFamilies.filter((f) => f.toLowerCase().includes(familySearch.toLowerCase()));
-                if (filtered.length === 0) return <div className="px-3 py-4 text-center text-xs text-muted-foreground">No families match "{familySearch}"</div>;
+                const filtered = uniqueProductFamilies.filter((f) =>
+                  f.toLowerCase().includes(familySearch.toLowerCase()),
+                );
+                if (filtered.length === 0)
+                  return (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                      No families match "{familySearch}"
+                    </div>
+                  );
                 return filtered.map((family) => (
-                  <DropdownMenuItem key={family} onClick={() => setFamilyFilter(activeFamilyFilter === family ? "" : family)} className="flex items-center gap-2 w-full overflow-hidden">
-                    <span className="truncate text-sm flex-1 min-w-0">{family}</span>
-                    <div className="flex items-center gap-1.5 shrink-0"><CountPill count={productFamilyCounts.get(family) ?? 0} />{activeFamilyFilter === family && <Check className="h-3.5 w-3.5 text-primary" />}</div>
+                  <DropdownMenuItem
+                    key={family}
+                    onClick={() =>
+                      setFamilyFilter(
+                        activeFamilyFilter === family ? "" : family,
+                      )
+                    }
+                    className="flex items-center gap-2 w-full overflow-hidden"
+                  >
+                    <span className="truncate text-sm flex-1 min-w-0">
+                      {family}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <CountPill count={productFamilyCounts.get(family) ?? 0} />
+                      {activeFamilyFilter === family && (
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      )}
+                    </div>
                   </DropdownMenuItem>
                 ));
               })()}
@@ -2532,65 +3305,168 @@ function FullAllProductsView() {
         {/* Sort / Column toggle */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className={`ml-auto transition-colors ${sortOption ? "border-primary text-primary bg-primary/5" : ""}`}>
+            <Button
+              variant="outline"
+              size="icon"
+              className={`ml-auto transition-colors ${sortOption ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sort</span>
-              {sortOption && <button type="button" onClick={() => setSortOption(null)} className="text-[10px] text-primary hover:underline font-medium">Reset</button>}
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Sort
+              </span>
+              {sortOption && (
+                <button
+                  type="button"
+                  onClick={() => setSortOption(null)}
+                  className="text-[10px] text-primary hover:underline font-medium"
+                >
+                  Reset
+                </button>
+              )}
             </DropdownMenuLabel>
             {[
-              { key: "alpha-asc" as const, icon: <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />, label: "Alphabetically A → Z" },
-              { key: "alpha-desc" as const, icon: <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />, label: "Alphabetically Z → A" },
-              { key: "recent-12h" as const, icon: <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />, label: "Recently Added (12h)" },
-              { key: "newest" as const, icon: <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />, label: "Newest to Oldest" },
-              { key: "oldest" as const, icon: <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />, label: "Oldest to Newest" },
+              {
+                key: "alpha-asc" as const,
+                icon: (
+                  <ArrowUpAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Alphabetically A → Z",
+              },
+              {
+                key: "alpha-desc" as const,
+                icon: (
+                  <ArrowDownAZ className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Alphabetically Z → A",
+              },
+              {
+                key: "recent-12h" as const,
+                icon: (
+                  <Clock className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Recently Added (12h)",
+              },
+              {
+                key: "newest" as const,
+                icon: (
+                  <ArrowDown className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Newest to Oldest",
+              },
+              {
+                key: "oldest" as const,
+                icon: (
+                  <ArrowUp className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
+                ),
+                label: "Oldest to Newest",
+              },
             ].map(({ key, icon, label }) => (
-              <DropdownMenuCheckboxItem key={key} checked={sortOption === key || (key === "newest" && sortOption === null)} onCheckedChange={() => setSortOption((s) => (s === key ? null : key))}>
-                {icon}{label}
+              <DropdownMenuCheckboxItem
+                key={key}
+                checked={
+                  sortOption === key ||
+                  (key === "newest" && sortOption === null)
+                }
+                onCheckedChange={() =>
+                  setSortOption((s) => (s === key ? null : key))
+                }
+              >
+                {icon}
+                {label}
               </DropdownMenuCheckboxItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Toggle Columns</DropdownMenuLabel>
-            {table.getAllColumns().filter((c) => c.getCanHide()).filter((c) => c.id !== "productFamilyFilter").map((column) => (
-              <DropdownMenuCheckboxItem key={column.id} className="capitalize" checked={column.getIsVisible()} onCheckedChange={(value) => column.toggleVisibility(!!value)}>
-                {column.id}
-              </DropdownMenuCheckboxItem>
-            ))}
+            <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Toggle Columns
+            </DropdownMenuLabel>
+            {table
+              .getAllColumns()
+              .filter((c) => c.getCanHide())
+              .filter((c) => c.id !== "productFamilyFilter")
+              .map((column) => (
+                <DropdownMenuCheckboxItem
+                  key={column.id}
+                  className="capitalize"
+                  checked={column.getIsVisible()}
+                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                >
+                  {column.id}
+                </DropdownMenuCheckboxItem>
+              ))}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
       {/* Active filters display */}
-      {(activeFamilyFilter || activeUsageFilter || activeClassFilter || (sortOption && sortOption !== "newest")) && (
+      {(activeFamilyFilter ||
+        activeUsageFilter ||
+        activeClassFilter ||
+        (sortOption && sortOption !== "newest")) && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Active:</span>
           {activeFamilyFilter && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <Layers className="h-3 w-3" />{activeFamilyFilter}
-              <button type="button" onClick={() => setFamilyFilter("")} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+              <Layers className="h-3 w-3" />
+              {activeFamilyFilter}
+              <button
+                type="button"
+                onClick={() => setFamilyFilter("")}
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
           )}
           {activeUsageFilter && (
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
-              {activeUsageFilter === "OUTDOOR" ? <Trees className="h-3 w-3" /> : activeUsageFilter === "INDOOR" ? <Home className="h-3 w-3" /> : <Sun className="h-3 w-3" />}
-              {activeUsageFilter.charAt(0).toUpperCase() + activeUsageFilter.slice(1).toLowerCase()}
-              <button type="button" onClick={() => setUsageFilter("")} className="ml-0.5 hover:opacity-60 transition-opacity"><X className="h-3 w-3" /></button>
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
+            >
+              {activeUsageFilter === "OUTDOOR" ? (
+                <Trees className="h-3 w-3" />
+              ) : activeUsageFilter === "INDOOR" ? (
+                <Home className="h-3 w-3" />
+              ) : (
+                <Sun className="h-3 w-3" />
+              )}
+              {activeUsageFilter.charAt(0).toUpperCase() +
+                activeUsageFilter.slice(1).toLowerCase()}
+              <button
+                type="button"
+                onClick={() => setUsageFilter("")}
+                className="ml-0.5 hover:opacity-60 transition-opacity"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
           )}
           {activeClassFilter && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
               <Tag className="h-3 w-3" />
               {activeClassFilter}
-              <button type="button" onClick={() => setClassFilter("")} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+              <button
+                type="button"
+                onClick={() => setClassFilter("")}
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
           )}
           {sortOption && sortOption !== "newest" && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <SlidersHorizontal className="h-3 w-3" />{sortLabel[sortOption]}
-              <button type="button" onClick={() => setSortOption(null)} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+              <SlidersHorizontal className="h-3 w-3" />
+              {sortLabel[sortOption]}
+              <button
+                type="button"
+                onClick={() => setSortOption(null)}
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
           )}
         </div>
@@ -2604,7 +3480,12 @@ function FullAllProductsView() {
               <TableRow key={hg.id}>
                 {hg.headers.map((header) => (
                   <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
                   </TableHead>
                 ))}
               </TableRow>
@@ -2612,21 +3493,45 @@ function FullAllProductsView() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow><TableCell colSpan={columns.length} className="h-60 text-center"><Loader2 className="animate-spin mx-auto h-8 w-8 text-muted-foreground" /></TableCell></TableRow>
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-60 text-center"
+                >
+                  <Loader2 className="animate-spin mx-auto h-8 w-8 text-muted-foreground" />
+                </TableCell>
+              </TableRow>
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"} className="cursor-pointer" onClick={() => handleEdit(row.original)}>
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                  className="cursor-pointer"
+                  onClick={() => handleEdit(row.original)}
+                >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                    <TableCell key={cell.id}>
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
+                    </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-60 text-center">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-60 text-center"
+                >
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <Package className="h-8 w-8" />
-                    <p className="text-sm">{sortOption === "recent-12h" ? "No products added in the last 12 hours" : "No products found"}</p>
+                    <p className="text-sm">
+                      {sortOption === "recent-12h"
+                        ? "No products added in the last 12 hours"
+                        : "No products found"}
+                    </p>
                   </div>
                 </TableCell>
               </TableRow>
@@ -2638,23 +3543,52 @@ function FullAllProductsView() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          {table.getSelectedRowModel().rows.length} of {data.length} row(s) selected
+          {table.getSelectedRowModel().rows.length} of {data.length} row(s)
+          selected
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Rows per page</span>
             <Input
-              type="number" min={1} max={500}
+              type="number"
+              min={1}
+              max={500}
               className="h-9 w-20 text-sm text-center"
               value={rowsPerPageInput}
               onChange={(e) => setRowsPerPageInput(e.target.value)}
-              onBlur={(e) => { const parsed = parseInt(e.target.value, 10); if (!isNaN(parsed) && parsed >= 1) { table.setPageSize(Math.min(parsed, 500)); setRowsPerPageInput(String(Math.min(parsed, 500))); } else { setRowsPerPageInput(String(table.getState().pagination.pageSize)); } }}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              onBlur={(e) => {
+                const parsed = parseInt(e.target.value, 10);
+                if (!isNaN(parsed) && parsed >= 1) {
+                  table.setPageSize(Math.min(parsed, 500));
+                  setRowsPerPageInput(String(Math.min(parsed, 500)));
+                } else {
+                  setRowsPerPageInput(
+                    String(table.getState().pagination.pageSize),
+                  );
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
             />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>Previous</Button>
-            <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>Next</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              Next
+            </Button>
           </div>
         </div>
       </div>
@@ -2679,7 +3613,11 @@ function FullAllProductsView() {
                     <BreadcrumbSeparator className="hidden md:block" />
                     <BreadcrumbItem>
                       <BreadcrumbPage>
-                        {isEditing ? (selectedProduct ? "Edit Product" : "Add Product") : "All Products"}
+                        {isEditing
+                          ? selectedProduct
+                            ? "Edit Product"
+                            : "Add Product"
+                          : "All Products"}
                       </BreadcrumbPage>
                     </BreadcrumbItem>
                   </BreadcrumbList>
@@ -2696,13 +3634,53 @@ function FullAllProductsView() {
         </SidebarProvider>
 
         {/* Dialogs */}
-        <TdsPreviewDialog open={!!tdsPreviewProduct} onOpenChange={(v) => !v && setTdsPreviewProduct(null)} product={tdsPreviewProduct} />
-        <BulkGenerateTdsDialog open={bulkTdsOpen} onOpenChange={(v) => { setBulkTdsOpen(v); if (!v && !isTdsRunning) setTdsJobs([]); }} jobs={tdsJobs} onStart={handleStartBulkTds} isRunning={isTdsRunning} />
-        <DeleteToRecycleBinDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)} itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""} onConfirm={() => handleSoftDelete(deleteTarget!)} requestMode={isRequestMode} />
-        <DeleteToRecycleBinDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen} itemName={`${selectedCount} products`} confirmText={`${selectedCount} products`} count={selectedCount} onConfirm={handleBulkSoftDelete} requestMode={isRequestMode} />
-        <AssignToWebsiteDialog open={assignWebsiteOpen} onOpenChange={setAssignWebsiteOpen} selectedCount={selectedCount} onConfirm={handleBulkAssignWebsite} />
-        <AssignProductClassDialog open={assignProductClassOpen} onOpenChange={setAssignProductClassOpen} selectedCount={selectedCount} onConfirm={handleBulkAssignProductClass} />
-        <BulkDownloadTdsDialog open={bulkDownloadTdsOpen} onOpenChange={setBulkDownloadTdsOpen} />
+        <TdsPreviewDialog
+          open={!!tdsPreviewProduct}
+          onOpenChange={(v) => !v && setTdsPreviewProduct(null)}
+          product={tdsPreviewProduct}
+        />
+        <BulkGenerateTdsDialog
+          open={bulkTdsOpen}
+          onOpenChange={(v) => {
+            setBulkTdsOpen(v);
+            if (!v && !isTdsRunning) setTdsJobs([]);
+          }}
+          jobs={tdsJobs}
+          onStart={handleStartBulkTds}
+          isRunning={isTdsRunning}
+        />
+        <DeleteToRecycleBinDialog
+          open={!!deleteTarget}
+          onOpenChange={(v) => !v && setDeleteTarget(null)}
+          itemName={deleteTarget?.itemDescription ?? deleteTarget?.name ?? ""}
+          onConfirm={() => handleSoftDelete(deleteTarget!)}
+          requestMode={isRequestMode}
+        />
+        <DeleteToRecycleBinDialog
+          open={bulkDeleteOpen}
+          onOpenChange={setBulkDeleteOpen}
+          itemName={`${selectedCount} products`}
+          confirmText={`${selectedCount} products`}
+          count={selectedCount}
+          onConfirm={handleBulkSoftDelete}
+          requestMode={isRequestMode}
+        />
+        <AssignToWebsiteDialog
+          open={assignWebsiteOpen}
+          onOpenChange={setAssignWebsiteOpen}
+          selectedCount={selectedCount}
+          onConfirm={handleBulkAssignWebsite}
+        />
+        <AssignProductClassDialog
+          open={assignProductClassOpen}
+          onOpenChange={setAssignProductClassOpen}
+          selectedCount={selectedCount}
+          onConfirm={handleBulkAssignProductClass}
+        />
+        <BulkDownloadTdsDialog
+          open={bulkDownloadTdsOpen}
+          onOpenChange={setBulkDownloadTdsOpen}
+        />
       </TooltipProvider>
     </ProtectedLayout>
   );
