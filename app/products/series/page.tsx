@@ -12,7 +12,7 @@ import {
   orderBy,
   onSnapshot,
   serverTimestamp,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Pencil,
   Trash2,

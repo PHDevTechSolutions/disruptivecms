@@ -25,7 +25,7 @@ import {
   getDocs,
   doc,
   updateDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import ExcelJS from "exceljs";
 
 import {

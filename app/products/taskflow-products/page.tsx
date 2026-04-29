@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Pencil,
   Trash2,
@@ -57,9 +57,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-import { db } from "@/lib/firebase";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { toast } from "sonner";
+import { useProducts } from "@/hooks/useProducts";
+import { fetchProductById, type ProductRecord } from "@/lib/firestore/products";
 
 import TaskflowAddNewProduct from "@/components/product-forms/taskflow-add-new-product-form";
 import BulkUploader from "@/components/product-forms/bulk-uploader";
@@ -70,7 +70,6 @@ import { NotificationsDropdown } from "@/components/notifications/notifications-
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
 import {
   usePendingProducts,
-  PendingProductBadge,
   PendingRowIndicator,
 } from "@/components/product-forms/pending-product-badge";
 
@@ -97,9 +96,6 @@ function PendingActionBadge({
 }
 
 export default function TaskflowProductsPage() {
-  const [products, setProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [brandFilter, setBrandFilter] = useState("all");
 
@@ -111,10 +107,10 @@ export default function TaskflowProductsPage() {
   const searchContainerRef = React.useRef<HTMLDivElement>(null);
 
   const [isEditing, setIsEditing] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [selectedProduct, setSelectedProduct] = useState<ProductRecord | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductRecord | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // ── Approval workflow hooks ────────────────────────────────────────────────
@@ -134,92 +130,72 @@ export default function TaskflowProductsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const {
+    data,
+    products,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    isError,
+  } = useProducts({
+    pageSize: itemsPerPage,
+    website: "Taskflow",
+    brand: brandFilter === "all" ? undefined : brandFilter,
+    searchTerm: searchQuery.trim() || undefined,
+  });
+
+  useEffect(() => {
+    if (isError) {
+      toast.error("Failed to load products");
+    }
+  }, [isError]);
+
   const suggestions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    return products
-      .filter((p) => {
-        const matchesTaskflow = Array.isArray(p.website)
-          ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
-          : p.website?.toLowerCase().includes("taskflow");
-        if (!matchesTaskflow) return false;
-        return (
-          p.name?.toLowerCase().includes(q) ||
-          p.itemCode?.toLowerCase().includes(q) ||
-          p.categories?.toLowerCase().includes(q)
-        );
-      })
-      .slice(0, 7);
+    if (!searchQuery.trim()) return [];
+    return products.slice(0, 7);
   }, [products, searchQuery]);
 
   useEffect(() => {
-    setLoading(true);
-    const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        setProducts(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Fetch error:", error);
-        toast.error("Failed to load products");
-        setLoading(false);
-      },
-    );
-    return () => unsubscribe();
-  }, []);
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+  }, [searchQuery, brandFilter, itemsPerPage]);
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchesBrand =
-        brandFilter === "all" ||
-        (Array.isArray(p.brands)
-          ? p.brands.includes(brandFilter)
-          : p.brand === brandFilter);
-      const matchesTaskflow = Array.isArray(p.website)
-        ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
-        : p.website?.toLowerCase().includes("taskflow");
-      const matchesSearch =
-        p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.itemCode?.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesBrand && matchesTaskflow && matchesSearch;
-    });
-  }, [products, brandFilter, searchQuery]);
+  const loadedPages = data?.pages ?? [];
+  const paginatedProducts = useMemo(
+    () => loadedPages[currentPage - 1]?.items ?? [],
+    [loadedPages, currentPage],
+  );
+  const totalPages = hasNextPage
+    ? Math.max(currentPage, loadedPages.length + 1)
+    : Math.max(1, loadedPages.length);
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, brandFilter]);
-
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-  const paginatedProducts = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredProducts.slice(start, start + itemsPerPage);
-  }, [filteredProducts, currentPage, itemsPerPage]);
+    if (
+      currentPage > loadedPages.length &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      void fetchNextPage();
+    }
+  }, [currentPage, loadedPages.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const uniqueBrands = useMemo(() => {
     const s = new Set<string>();
     products.forEach((p) => {
       if (Array.isArray(p.brands)) p.brands.forEach((b: string) => s.add(b));
-      else if (p.brand) s.add(p.brand);
+      else if (Array.isArray(p.brand))
+        p.brand.forEach((b: string) => s.add(b));
+      else if (typeof p.brand === "string") s.add(p.brand);
     });
     return Array.from(s).sort();
   }, [products]);
 
-  const taskflowTotal = useMemo(
-    () =>
-      products.filter((p) =>
-        Array.isArray(p.website)
-          ? p.website.some((w: string) => w?.toLowerCase().includes("taskflow"))
-          : p.website?.toLowerCase().includes("taskflow"),
-      ).length,
-    [products],
-  );
-
-  const isFiltered = filteredProducts.length !== taskflowTotal;
+  const taskflowTotal = products.length;
+  const isFiltered = brandFilter !== "all" || searchQuery.trim().length > 0;
 
   // ── Approval-aware delete ─────────────────────────────────────────────────
-  const handleSoftDelete = async (product: any) => {
+  const handleSoftDelete = async (product: ProductRecord) => {
     const t = toast.loading("Processing…");
     try {
       const result = await submitProductDelete({
@@ -278,8 +254,13 @@ export default function TaskflowProductsPage() {
     setBulkDeleteOpen(false);
   };
 
-  const handleEditClick = (product: any) => {
-    setSelectedProduct(product);
+  const handleEditClick = async (product: { id: string }) => {
+    const full = await fetchProductById(product.id);
+    if (!full) {
+      toast.error("Product no longer exists.");
+      return;
+    }
+    setSelectedProduct(full);
     setIsEditing(true);
   };
   const handleAddNewClick = () => {
@@ -424,9 +405,9 @@ export default function TaskflowProductsPage() {
       <p className="text-sm text-muted-foreground">
         Showing{" "}
         <span className="font-semibold text-foreground">
-          {filteredProducts.length}
+          {paginatedProducts.length}
         </span>
-        {isFiltered && <span> of {taskflowTotal}</span>} Taskflow products
+            {isFiltered && <span> (loaded: {taskflowTotal})</span>} Taskflow products
       </p>
 
       {/* Table */}
@@ -451,13 +432,13 @@ export default function TaskflowProductsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
+            {isLoading ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-60 text-center">
                   <Loader2 className="animate-spin mx-auto h-8 w-8 text-muted-foreground" />
                 </TableCell>
               </TableRow>
-            ) : paginatedProducts.length === 0 ? (
+            ) : paginatedProducts.length === 0 && !isFetchingNextPage ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-60 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -467,7 +448,7 @@ export default function TaskflowProductsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedProducts.map((product) => {
+              paginatedProducts.map((product: any) => {
                 const pendingStatus = pendingMap.get(product.id) ?? null;
                 const isPendingDelete = pendingStatus === "delete";
                 const busy = !!pendingStatus;
@@ -580,7 +561,7 @@ export default function TaskflowProductsPage() {
       </div>
 
       {/* Pagination */}
-      {!loading && totalPages > 0 && (
+      {!isLoading && totalPages > 0 && (
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
@@ -634,12 +615,27 @@ export default function TaskflowProductsPage() {
               variant="outline"
               size="sm"
               disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage((p) => p + 1)}
+              onClick={async () => {
+                const nextPage = currentPage + 1;
+                if (
+                  nextPage > loadedPages.length &&
+                  hasNextPage &&
+                  !isFetchingNextPage
+                ) {
+                  await fetchNextPage();
+                }
+                setCurrentPage(nextPage);
+              }}
               className="gap-1"
             >
               Next <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
+        </div>
+      )}
+      {isFetchingNextPage && (
+        <div className="flex justify-center py-2">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         </div>
       )}
     </div>
@@ -686,8 +682,10 @@ export default function TaskflowProductsPage() {
       <DeleteToRecycleBinDialog
         open={!!deleteTarget}
         onOpenChange={(v) => !v && setDeleteTarget(null)}
-        itemName={deleteTarget?.name ?? ""}
-        onConfirm={() => handleSoftDelete(deleteTarget)}
+        itemName={String(deleteTarget?.name ?? "")}
+        onConfirm={() => {
+          if (deleteTarget) void handleSoftDelete(deleteTarget);
+        }}
       />
 
       {/* Bulk delete — workflow-aware */}

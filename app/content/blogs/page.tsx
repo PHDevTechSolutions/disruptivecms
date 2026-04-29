@@ -13,7 +13,7 @@ import {
   updateDoc,
   serverTimestamp,
   getDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Plus,
   Pencil,

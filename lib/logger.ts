@@ -1,5 +1,5 @@
 import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp } from "@/lib/firestore/client";
 
 export const logPageView = async (pageName: string) => {
   try {

@@ -12,7 +12,7 @@ import {
   deleteDoc,
   where,
   limit,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Mail,
   Phone,

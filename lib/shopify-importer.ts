@@ -24,7 +24,7 @@ import {
   query,
   where,
   serverTimestamp,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { db } from "@/lib/firebase";
 
 // ─── Environment ──────────────────────────────────────────────────────────────

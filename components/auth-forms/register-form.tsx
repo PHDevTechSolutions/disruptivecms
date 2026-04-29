@@ -38,7 +38,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "@/lib/firestore/client";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 

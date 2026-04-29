@@ -22,12 +22,10 @@ import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ColumnDef,
-  ColumnFiltersState,
   SortingState,
   VisibilityState,
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
@@ -125,19 +123,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { db } from "@/lib/firebase";
 import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  doc,
-  writeBatch,
   serverTimestamp,
-  where,
-  arrayUnion,
-  updateDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
@@ -166,6 +154,13 @@ import {
   hasAtLeastOneItemCode,
 } from "@/types/product";
 import { ItemCodesDisplay } from "@/components/ItemCodesDisplay";
+import { useProducts } from "@/hooks/useProducts";
+import {
+  fetchProductById,
+  searchProducts,
+  updateProduct,
+  type ProductListItem,
+} from "@/lib/firestore/products";
 
 const CLOUDINARY_CLOUD_NAME =
   process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? "dvmpn8mjh";
@@ -221,7 +216,9 @@ type ProductClassValue = "spf" | "standard" | "non-standard" | "usl";
 
 // ─── Helpers (PRESERVED) ──────────────────────────────────────────────────────
 
-function resolveItemCodes(product: Product): ItemCodes {
+function resolveItemCodes(
+  product: Pick<Product, "itemCodes" | "litItemCode" | "ecoItemCode" | "itemCode">,
+): ItemCodes {
   if (product.itemCodes && hasAtLeastOneItemCode(product.itemCodes)) {
     return product.itemCodes;
   }
@@ -1272,8 +1269,6 @@ function ReadOnlyFilterPanel({
 
 function ReadOnlyAllProductsView() {
   const { user, logout } = useAuth();
-  const [data, setData] = React.useState<Product[]>([]);
-  const [loading, setLoading] = React.useState(true);
 
   const [search, setSearch] = React.useState("");
   const [usageTab, setUsageTab] = React.useState<UsageFilter>("");
@@ -1288,112 +1283,59 @@ function ReadOnlyAllProductsView() {
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] =
     React.useState(false);
 
-  React.useEffect(() => {
-    const mergeAndSort = (a: Product[], b: Product[]): Product[] => {
-      const seen = new Set<string>();
-      const merged: Product[] = [];
-      for (const p of [...a, ...b]) {
-        if (!seen.has(p.id)) {
-          seen.add(p.id);
-          merged.push(p);
-        }
-      }
-      merged.sort((x, y) => {
-        const tx = x.createdAt?.toMillis?.() ?? x.createdAt ?? 0;
-        const ty = y.createdAt?.toMillis?.() ?? y.createdAt ?? 0;
-        return ty - tx;
-      });
-      return merged;
-    };
-
-    let assignedData: Product[] = [];
-    let unassignedData: Product[] = [];
-    let assignedReady = false;
-    let unassignedReady = false;
-
-    const flush = () => {
-      if (assignedReady && unassignedReady) {
-        setData(mergeAndSort(assignedData, unassignedData));
-        setLoading(false);
-      }
-    };
-
-    const qAssigned = query(
-      collection(db, "products"),
-      where("websites", "array-contains-any", [
-        "Disruptive Solutions Inc",
-        "Ecoshift Corporation",
-        "Value Acquisitions Holdings",
-        "Taskflow",
-        "Shopify",
-      ]),
-      orderBy("createdAt", "desc"),
-    );
-    const qUnassigned = query(
-      collection(db, "products"),
-      where("websites", "==", []),
-      orderBy("createdAt", "desc"),
-    );
-
-    const unsubA = onSnapshot(qAssigned, (snap) => {
-      assignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      assignedReady = true;
-      flush();
-    });
-    const unsubU = onSnapshot(qUnassigned, (snap) => {
-      unassignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      unassignedReady = true;
-      flush();
-    }, () => { unassignedReady = true; flush(); });
-
-    return () => { unsubA(); unsubU(); };
-  }, []);
+  const {
+    data: readOnlyPages,
+    products: readOnlyProducts,
+    fetchNextPage: fetchNextReadOnlyPage,
+    hasNextPage: hasNextReadOnlyPage,
+    isFetchingNextPage: isFetchingNextReadOnlyPage,
+    isLoading: loading,
+  } = useProducts({
+    pageSize: PAGE_SIZE,
+    searchTerm: search.trim() || undefined,
+    productUsage: usageTab || undefined,
+    productFamily: familyFilter || undefined,
+  });
 
   const uniqueFamilies = React.useMemo(() => {
     const s = new Set<string>();
-    data.forEach((p) => {
-      const f = p.productFamily || (p.categories as string);
-      if (f) s.add(f);
+    readOnlyProducts.forEach((p) => {
+      const f = (p.productFamily ?? p.categories ?? "") as string;
+      if (f) s.add(String(f));
     });
     return Array.from(s).sort();
-  }, [data]);
+  }, [readOnlyProducts]);
 
-  const filtered = React.useMemo(() => {
-    return data.filter((p) => {
-      if (usageTab) {
-        const usages = Array.isArray(p.productUsage) ? p.productUsage : [];
-        if (!usages.includes(usageTab)) return false;
-      }
-      if (familyFilter) {
-        const fam = p.productFamily || (p.categories as string) || "";
-        if (fam !== familyFilter) return false;
-      }
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const codes = resolveItemCodes(p);
-        const codeMatch = getFilledItemCodes(codes).some(({ code }) =>
-          code.toLowerCase().includes(q),
-        );
-        return (
-          (p.itemDescription || "").toLowerCase().includes(q) ||
-          (p.name || "").toLowerCase().includes(q) ||
-          codeMatch ||
-          ((p.productFamily || "") as string).toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
-  }, [data, search, usageTab, familyFilter]);
+  const filtered = React.useMemo(
+    () => readOnlyProducts as unknown as Product[],
+    [readOnlyProducts],
+  );
 
   React.useEffect(() => {
     setCurrentPage(1);
   }, [search, usageTab, familyFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE,
-  );
+  const totalPages = hasNextReadOnlyPage
+    ? Math.max(currentPage, (readOnlyPages?.pages.length ?? 0) + 1)
+    : Math.max(1, readOnlyPages?.pages.length ?? 1);
+  const paginated =
+    (readOnlyPages?.pages[currentPage - 1]?.items as Product[] | undefined) ?? [];
+
+  React.useEffect(() => {
+    if (
+      currentPage > (readOnlyPages?.pages.length ?? 0) &&
+      hasNextReadOnlyPage &&
+      !isFetchingNextReadOnlyPage
+    ) {
+      void fetchNextReadOnlyPage();
+    }
+  }, [
+    currentPage,
+    readOnlyPages?.pages.length,
+    hasNextReadOnlyPage,
+    isFetchingNextReadOnlyPage,
+    fetchNextReadOnlyPage,
+  ]);
 
   const pageNumbers = React.useMemo(() => {
     const nums: number[] = [];
@@ -1703,9 +1645,6 @@ function ReadOnlyAllProductsView() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function FullAllProductsView() {
-  const [data, setData] = React.useState<Product[]>([]);
-  const [loading, setLoading] = React.useState(true);
-
   const [isEditing, setIsEditing] = React.useState(false);
   const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -1723,10 +1662,12 @@ function FullAllProductsView() {
   const isRequestMode = userCanWrite && !canVerifyProducts();
 
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
+  const [usageFilter, setUsageFilter] = React.useState("");
+  const [familyFilter, setFamilyFilter] = React.useState("");
+  const [classFilter, setClassFilter] = React.useState<ProductClassValue | "">("");
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
 
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -1744,10 +1685,28 @@ function FullAllProductsView() {
   const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
+  const {
+    products,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useProducts({
+    pageSize: 50,
+    searchTerm: globalFilter.trim() || undefined,
+    productUsage: usageFilter || undefined,
+    productFamily: familyFilter || undefined,
+    productClass: classFilter || undefined,
+    createdAfter:
+      sortOption === "recent-12h"
+        ? new Date(Date.now() - 12 * 60 * 60 * 1000)
+        : undefined,
+  });
+  const data = React.useMemo(() => products as unknown as Product[], [products]);
+  const loading = isLoading;
 
-  // FIX 2: familySearch state declared here, BEFORE useReactTable.
-  // activeFamilyFilter and activeUsageFilter are derived AFTER table is declared below.
   const [familySearch, setFamilySearch] = React.useState("");
+  const [suggestions, setSuggestions] = React.useState<ProductListItem[]>([]);
 
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -1758,78 +1717,37 @@ function FullAllProductsView() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const suggestions = React.useMemo(() => {
-    const q = (globalFilter ?? "").trim().toLowerCase();
-    if (!q) return [];
-    return data.filter((p) => {
-      const codes = resolveItemCodes(p);
-      const filledCodes = getFilledItemCodes(codes);
-      const codeMatch = filledCodes.some(({ code }) => code.toLowerCase().includes(q));
-      return (
-        p.itemDescription?.toLowerCase().includes(q) ||
-        p.name?.toLowerCase().includes(q) ||
-        codeMatch ||
-        (p.categories as string)?.toLowerCase().includes(q)
-      );
-    }).slice(0, 7);
-  }, [data, globalFilter]);
+  React.useEffect(() => {
+    const term = globalFilter.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const rows = await searchProducts(term);
+        if (!cancelled) {
+          setSuggestions(rows.slice(0, 7));
+        }
+      } catch {
+        if (!cancelled) {
+          setSuggestions([]);
+        }
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [globalFilter]);
 
   React.useEffect(() => {
-    setLoading(true);
-    const mergeAndSort = (a: Product[], b: Product[]): Product[] => {
-      const seen = new Set<string>();
-      const merged: Product[] = [];
-      for (const p of [...a, ...b]) {
-        if (!seen.has(p.id)) { seen.add(p.id); merged.push(p); }
-      }
-      merged.sort((x, y) => {
-        const tx = x.createdAt?.toMillis?.() ?? x.createdAt ?? 0;
-        const ty = y.createdAt?.toMillis?.() ?? y.createdAt ?? 0;
-        return ty - tx;
-      });
-      return merged;
-    };
-
-    let assignedData: Product[] = [];
-    let unassignedData: Product[] = [];
-    let assignedReady = false;
-    let unassignedReady = false;
-
-    const flush = () => {
-      if (assignedReady && unassignedReady) {
-        setData(mergeAndSort(assignedData, unassignedData));
-        setLoading(false);
-      }
-    };
-
-    const qAssigned = query(
-      collection(db, "products"),
-      where("websites", "array-contains-any", [
-        "Disruptive Solutions Inc", "Ecoshift Corporation",
-        "Value Acquisitions Holdings", "Taskflow", "Shopify",
-      ]),
-      orderBy("createdAt", "desc"),
-    );
-    const qUnassigned = query(
-      collection(db, "products"),
-      where("websites", "==", []),
-      orderBy("createdAt", "desc"),
-    );
-
-    const unsubAssigned = onSnapshot(qAssigned, (snapshot) => {
-      assignedData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      assignedReady = true;
-      flush();
-    }, (error) => { console.error("Fetch error (assigned):", error); toast.error("Failed to load products"); setLoading(false); });
-
-    const unsubUnassigned = onSnapshot(qUnassigned, (snapshot) => {
-      unassignedData = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      unassignedReady = true;
-      flush();
-    }, (error) => { console.warn("Could not fetch unassigned products:", error); unassignedReady = true; flush(); });
-
-    return () => { unsubAssigned(); unsubUnassigned(); };
-  }, []);
+    if (!hasNextPage || isFetchingNextPage || loading) return;
+    if (data.length < 100) {
+      void fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, loading, data.length, fetchNextPage]);
 
   // ── All handlers PRESERVED ────────────────────────────────────────────────
 
@@ -1844,7 +1762,7 @@ function FullAllProductsView() {
   };
 
   const handleBulkSoftDelete = async () => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const selectedRows = table.getSelectedRowModel().rows;
     setIsDeleting(true);
     const t = toast.loading(`Submitting delete for ${selectedRows.length} products…`);
     let direct = 0, pending = 0, errors = 0;
@@ -1867,7 +1785,7 @@ function FullAllProductsView() {
   };
 
   const handleBulkAssignWebsite = async (websites: string[]) => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const selectedRows = table.getSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
     const t = toast.loading(`${isRequestMode ? "Submitting" : "Assigning"} ${count} product${count !== 1 ? "s" : ""} to ${websites.join(", ")}...`);
@@ -1875,8 +1793,21 @@ function FullAllProductsView() {
     await Promise.all(rows.map(async (product) => {
       try {
         const transformSites = websites.filter((w) => SCHEMA_TRANSFORM_WEBSITES.has(w));
-        const transformedFields = transformSites.length > 0 ? buildTransformedProduct(product, websites) : undefined;
-        const result = await submitProductAssignWebsite({ product, websites, transformedFields, originPage: "/products/all-products", source: "all-products:bulk-assign-website" });
+        const sourceProduct =
+          transformSites.length > 0
+            ? (((await fetchProductById(product.id)) as Product | null) ?? product)
+            : product;
+        const transformedFields =
+          transformSites.length > 0
+            ? buildTransformedProduct(sourceProduct, websites)
+            : undefined;
+        const result = await submitProductAssignWebsite({
+          product: sourceProduct,
+          websites,
+          transformedFields,
+          originPage: "/products/all-products",
+          source: "all-products:bulk-assign-website",
+        });
         result.mode === "pending" ? pending++ : direct++;
       } catch { errors++; }
     }));
@@ -1892,7 +1823,7 @@ function FullAllProductsView() {
   };
 
   const handleBulkAssignProductClass = async (productClass: ProductClassValue) => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const selectedRows = table.getSelectedRowModel().rows;
     const rows = selectedRows.map((r) => r.original);
     const count = rows.length;
     const label = PRODUCT_CLASS_OPTIONS.find((o) => o.value === productClass)?.label ?? productClass;
@@ -1916,7 +1847,7 @@ function FullAllProductsView() {
   };
 
   const handleOpenBulkTds = () => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const selectedRows = table.getSelectedRowModel().rows;
     const jobs: TdsJob[] = selectedRows.map((row) => ({
       productId: row.original.id,
       productName: row.original.itemDescription || row.original.name || row.original.id,
@@ -1929,17 +1860,19 @@ function FullAllProductsView() {
   const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
     setIsTdsRunning(true);
     const productMap = new Map<string, Product>(
-      table.getFilteredSelectedRowModel().rows.map((r) => [r.original.id, r.original]),
+      table.getSelectedRowModel().rows.map((r) => [r.original.id, r.original]),
     );
 
     for (let i = 0; i < tdsJobs.length; i++) {
       const job = tdsJobs[i];
-      const product = productMap.get(job.productId);
+      const baseProduct = productMap.get(job.productId);
 
       setTdsJobs((prev) => prev.map((j) => j.productId === job.productId ? { ...j, status: "generating" } : j));
 
       try {
-        if (!product) throw new Error("Product not found in selection");
+        if (!baseProduct) throw new Error("Product not found in selection");
+        const fullProduct = (await fetchProductById(baseProduct.id)) as Product | null;
+        const product = fullProduct ?? baseProduct;
 
         const itemDescription = product.itemDescription || product.name || "";
         const resolvedCodes = resolveItemCodes(product);
@@ -1976,7 +1909,10 @@ function FullAllProductsView() {
         const tdsUrl = await uploadTdsPdf(tdsBlob, filename, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET);
 
         if (tdsUrl.startsWith("http")) {
-          await updateDoc(doc(db, "products", product.id), { tdsFileUrl: tdsUrl, updatedAt: serverTimestamp() });
+        await updateProduct(product.id, {
+          tdsFileUrl: tdsUrl,
+          updatedAt: serverTimestamp(),
+        });
         }
 
         setTdsJobs((prev) => prev.map((j) => j.productId === job.productId ? { ...j, status: "done" } : j));
@@ -1998,7 +1934,7 @@ function FullAllProductsView() {
   };
 
   const handleBulkDownloadTds = async () => {
-    const selectedRows = table.getFilteredSelectedRowModel().rows;
+    const selectedRows = table.getSelectedRowModel().rows;
     const withTds = selectedRows.filter((r) => !!r.original.tdsFileUrl);
 
     if (withTds.length === 0) { toast.error("None of the selected products have a TDS file."); return; }
@@ -2087,8 +2023,13 @@ function FullAllProductsView() {
     }
   };
 
-  const handleEdit = (product: Product) => {
-    setSelectedProduct(product);
+  const handleEdit = async (product: { id: string }) => {
+    const full = await fetchProductById(product.id);
+    if (!full) {
+      toast.error("Product no longer exists.");
+      return;
+    }
+    setSelectedProduct(full as Product);
     setIsEditing(true);
   };
 
@@ -2159,7 +2100,15 @@ function FullAllProductsView() {
   }, [data]);
 
   const noWebsiteCount = React.useMemo(
-    () => data.filter((p) => { const websites = Array.isArray(p.websites) ? p.websites : p.website ? [p.website as string] : []; return websites.length === 0; }).length,
+    () =>
+      data.reduce((count, p) => {
+        const websites = Array.isArray(p.websites)
+          ? p.websites
+          : p.website
+            ? [p.website as string]
+            : [];
+        return websites.length === 0 ? count + 1 : count;
+      }, 0),
     [data],
   );
 
@@ -2170,7 +2119,7 @@ function FullAllProductsView() {
     switch (sortOption) {
       case "alpha-asc": return d.sort((a, b) => label(a).localeCompare(label(b)));
       case "alpha-desc": return d.sort((a, b) => label(b).localeCompare(label(a)));
-      case "recent-12h": { const cutoff = Date.now() - 12 * 60 * 60 * 1000; return d.filter((p) => ts(p) >= cutoff).sort((a, b) => ts(b) - ts(a)); }
+      case "recent-12h": return d.sort((a, b) => ts(b) - ts(a));
       case "oldest": return d.sort((a, b) => ts(a) - ts(b));
       default: return d.sort((a, b) => ts(b) - ts(a));
     }
@@ -2354,27 +2303,27 @@ function FullAllProductsView() {
     data: sortedData,
     columns,
     onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
-    onGlobalFilterChange: setGlobalFilter,
-    state: { sorting, columnFilters, columnVisibility, rowSelection, globalFilter },
+    state: { sorting, columnVisibility, rowSelection },
     filterFns: { multiValue: multiValueFilter },
   });
 
-  // FIX 2: These two derivations now appear AFTER `table` is initialised above,
-  // eliminating TS2448 ("used before its declaration") and TS2454 ("used before assigned").
-  const activeFamilyFilter = (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
-  const activeUsageFilter = (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
+  const activeFamilyFilter = familyFilter;
+  const activeUsageFilter = usageFilter;
+  const activeClassFilter = classFilter;
 
   const selectedCount = Object.keys(rowSelection).length;
-  const filteredCount = table.getFilteredRowModel().rows.length;
   const totalCount = data.length;
-  const isFiltered = filteredCount !== totalCount;
+  const isFiltered =
+    Boolean(globalFilter.trim()) ||
+    Boolean(activeFamilyFilter) ||
+    Boolean(activeUsageFilter) ||
+    Boolean(activeClassFilter) ||
+    sortOption === "recent-12h";
 
   const renderEditMode = () => (
     <div className="space-y-6">
@@ -2399,7 +2348,7 @@ function FullAllProductsView() {
           <p className="text-sm text-muted-foreground">
             Manage and update your website products —{" "}
             {loading ? <span className="text-muted-foreground">Loading...</span> : (
-              <><span className="font-semibold text-foreground">{isFiltered ? filteredCount : totalCount}</span>{isFiltered && <span className="text-muted-foreground"> of {totalCount}</span>} product{totalCount !== 1 ? "s" : ""}</>
+              <><span className="font-semibold text-foreground">{totalCount}</span> product{totalCount !== 1 ? "s" : ""}</>
             )}
           </p>
         </div>
@@ -2495,24 +2444,26 @@ function FullAllProductsView() {
         {/* Product Class filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="gap-2">Product Class <ChevronDown className="h-4 w-4" /></Button>
+            <Button variant="outline" className={`gap-2 ${activeClassFilter ? "border-primary text-primary bg-primary/5" : ""}`}>
+              {activeClassFilter ? activeClassFilter.toUpperCase() : "Product Class"} <ChevronDown className="h-4 w-4" />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("")} className="flex items-center justify-between">
-              <span>All Classes</span><CountPill count={data.length} />
+            <DropdownMenuItem onClick={() => setClassFilter("")} className="flex items-center justify-between">
+              <span>All Classes</span><div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeClassFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("spf")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-violet-500" /> SPF Items</span><CountPill count={productClassCounts.get("spf") ?? 0} variant="violet" />
+            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "spf" ? "" : "spf")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-violet-500" /> SPF Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("spf") ?? 0} variant="violet" />{activeClassFilter === "spf" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("standard")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Package className="w-3.5 h-3.5" /> Standard Items</span><CountPill count={productClassCounts.get("standard") ?? 0} />
+            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "standard" ? "" : "standard")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><Package className="w-3.5 h-3.5" /> Standard Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("standard") ?? 0} />{activeClassFilter === "standard" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("non-standard")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><CircleDashed className="w-3.5 h-3.5 text-amber-500" /> Non-Standard Items</span><CountPill count={productClassCounts.get("non-standard") ?? 0} variant="amber" />
+            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "non-standard" ? "" : "non-standard")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><CircleDashed className="w-3.5 h-3.5 text-amber-500" /> Non-Standard Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("non-standard") ?? 0} variant="amber" />{activeClassFilter === "non-standard" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => table.getColumn("productClass")?.setFilterValue("usl")} className="flex items-center justify-between">
-              <span className="flex items-center gap-2"><Package2 className="w-3.5 h-3.5 text-sky-500" /> USL Items</span><CountPill count={productClassCounts.get("usl") ?? 0} variant="sky" />
+            <DropdownMenuItem onClick={() => setClassFilter(activeClassFilter === "usl" ? "" : "usl")} className="flex items-center justify-between">
+              <span className="flex items-center gap-2"><Package2 className="w-3.5 h-3.5 text-sky-500" /> USL Items</span><div className="flex items-center gap-1.5"><CountPill count={productClassCounts.get("usl") ?? 0} variant="sky" />{activeClassFilter === "usl" && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -2527,7 +2478,7 @@ function FullAllProductsView() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={() => table.getColumn("productUsage")?.setFilterValue("")} className="flex items-center justify-between">
+            <DropdownMenuItem onClick={() => setUsageFilter("")} className="flex items-center justify-between">
               <span>All Usage</span><div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeUsageFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -2535,7 +2486,7 @@ function FullAllProductsView() {
               { key: "INDOOR", icon: <Home className="w-3.5 h-3.5 text-sky-600" />, label: "Indoor", variant: "sky" as const },
               { key: "SOLAR", icon: <Sun className="w-3.5 h-3.5 text-amber-500" />, label: "Solar", variant: "amber" as const }]
               .map(({ key, icon, label, variant }) => (
-                <DropdownMenuItem key={key} onClick={() => table.getColumn("productUsage")?.setFilterValue(activeUsageFilter === key ? "" : key)} className="flex items-center justify-between">
+                <DropdownMenuItem key={key} onClick={() => setUsageFilter(activeUsageFilter === key ? "" : key)} className="flex items-center justify-between">
                   <span className="flex items-center gap-2">{icon} {label}</span>
                   <div className="flex items-center gap-1.5"><CountPill count={productUsageCounts.get(key) ?? 0} variant={variant} />{activeUsageFilter === key && <Check className="h-3.5 w-3.5 text-primary" />}</div>
                 </DropdownMenuItem>
@@ -2559,7 +2510,7 @@ function FullAllProductsView() {
               {familySearch && <button type="button" onClick={() => setFamilySearch("")} className="text-muted-foreground hover:text-foreground transition-colors shrink-0"><X className="h-3.5 w-3.5" /></button>}
             </div>
             <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1">
-              <DropdownMenuItem onClick={() => table.getColumn("productFamilyFilter")?.setFilterValue("")} className="flex items-center justify-between">
+              <DropdownMenuItem onClick={() => setFamilyFilter("")} className="flex items-center justify-between">
                 <span className="text-muted-foreground italic">All Families</span>
                 <div className="flex items-center gap-1.5"><CountPill count={data.length} />{!activeFamilyFilter && <Check className="h-3.5 w-3.5 text-primary" />}</div>
               </DropdownMenuItem>
@@ -2568,7 +2519,7 @@ function FullAllProductsView() {
                 const filtered = uniqueProductFamilies.filter((f) => f.toLowerCase().includes(familySearch.toLowerCase()));
                 if (filtered.length === 0) return <div className="px-3 py-4 text-center text-xs text-muted-foreground">No families match "{familySearch}"</div>;
                 return filtered.map((family) => (
-                  <DropdownMenuItem key={family} onClick={() => table.getColumn("productFamilyFilter")?.setFilterValue(activeFamilyFilter === family ? "" : family)} className="flex items-center gap-2 w-full overflow-hidden">
+                  <DropdownMenuItem key={family} onClick={() => setFamilyFilter(activeFamilyFilter === family ? "" : family)} className="flex items-center gap-2 w-full overflow-hidden">
                     <span className="truncate text-sm flex-1 min-w-0">{family}</span>
                     <div className="flex items-center gap-1.5 shrink-0"><CountPill count={productFamilyCounts.get(family) ?? 0} />{activeFamilyFilter === family && <Check className="h-3.5 w-3.5 text-primary" />}</div>
                   </DropdownMenuItem>
@@ -2613,20 +2564,27 @@ function FullAllProductsView() {
       </div>
 
       {/* Active filters display */}
-      {(activeFamilyFilter || activeUsageFilter || (sortOption && sortOption !== "newest")) && (
+      {(activeFamilyFilter || activeUsageFilter || activeClassFilter || (sortOption && sortOption !== "newest")) && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Active:</span>
           {activeFamilyFilter && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
               <Layers className="h-3 w-3" />{activeFamilyFilter}
-              <button type="button" onClick={() => table.getColumn("productFamilyFilter")?.setFilterValue("")} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
+              <button type="button" onClick={() => setFamilyFilter("")} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
             </span>
           )}
           {activeUsageFilter && (
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
               {activeUsageFilter === "OUTDOOR" ? <Trees className="h-3 w-3" /> : activeUsageFilter === "INDOOR" ? <Home className="h-3 w-3" /> : <Sun className="h-3 w-3" />}
               {activeUsageFilter.charAt(0).toUpperCase() + activeUsageFilter.slice(1).toLowerCase()}
-              <button type="button" onClick={() => table.getColumn("productUsage")?.setFilterValue("")} className="ml-0.5 hover:opacity-60 transition-opacity"><X className="h-3 w-3" /></button>
+              <button type="button" onClick={() => setUsageFilter("")} className="ml-0.5 hover:opacity-60 transition-opacity"><X className="h-3 w-3" /></button>
+            </span>
+          )}
+          {activeClassFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+              <Tag className="h-3 w-3" />
+              {activeClassFilter}
+              <button type="button" onClick={() => setClassFilter("")} className="ml-0.5 hover:text-destructive transition-colors"><X className="h-3 w-3" /></button>
             </span>
           )}
           {sortOption && sortOption !== "newest" && (
@@ -2680,7 +2638,7 @@ function FullAllProductsView() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          {table.getFilteredSelectedRowModel().rows.length} of {table.getFilteredRowModel().rows.length} row(s) selected
+          {table.getSelectedRowModel().rows.length} of {data.length} row(s) selected
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">

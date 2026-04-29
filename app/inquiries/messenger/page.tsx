@@ -13,7 +13,7 @@ import {
   doc,
   deleteDoc,
   updateDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import {
   MoreVertical,

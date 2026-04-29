@@ -33,7 +33,7 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { db } from "@/lib/firebase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -338,7 +338,7 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
           })();
 
         if (snapshot) {
-          const { writeBatch: makeBatch } = await import("firebase/firestore");
+          const { writeBatch: makeBatch } = await import("@/lib/firestore/client");
           const batch = makeBatch(db);
 
           batch.set(doc(db, "recycle_bin", resourceId), {

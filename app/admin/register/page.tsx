@@ -126,7 +126,7 @@ import {
   updateDoc,
   deleteDoc,
   writeBatch,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/useAuth";
 import { logAuditEvent } from "@/lib/logger";

@@ -11,7 +11,7 @@ import {
   doc,
   updateDoc,
   writeBatch,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Mail,
   Phone,
