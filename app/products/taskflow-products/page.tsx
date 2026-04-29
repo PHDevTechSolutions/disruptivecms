@@ -180,16 +180,15 @@ export default function TaskflowProductsPage() {
     }
   }, [currentPage, loadedPages.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const uniqueBrands = useMemo(() => {
-    const s = new Set<string>();
-    products.forEach((p) => {
-      if (Array.isArray(p.brands)) p.brands.forEach((b: string) => s.add(b));
-      else if (Array.isArray(p.brand))
-        p.brand.forEach((b: string) => s.add(b));
-      else if (typeof p.brand === "string") s.add(p.brand);
-    });
-    return Array.from(s).sort();
-  }, [products]);
+ const uniqueBrands = useMemo(() => {
+  const s = new Set<string>();
+  products.forEach((p) => {
+    if (Array.isArray(p.brands)) p.brands.forEach((b: string) => { if (b?.trim()) s.add(b); });
+    else if (Array.isArray(p.brand)) p.brand.forEach((b: string) => { if (b?.trim()) s.add(b); });
+    else if (typeof p.brand === "string" && p.brand.trim()) s.add(p.brand);
+  });
+  return Array.from(s).sort();
+}, [products]);
 
   const taskflowTotal = products.length;
   const isFiltered = brandFilter !== "all" || searchQuery.trim().length > 0;
@@ -361,11 +360,11 @@ export default function TaskflowProductsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Brands</SelectItem>
-            {uniqueBrands.map((b) => (
-              <SelectItem key={b} value={b}>
-                {b}
-              </SelectItem>
-            ))}
+            {uniqueBrands.filter(Boolean).map((b) => (
+  <SelectItem key={b} value={b}>
+    {b}
+  </SelectItem>
+))}
           </SelectContent>
         </Select>
 
