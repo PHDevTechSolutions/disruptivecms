@@ -782,6 +782,25 @@ interface PendingNewSpec {
   saved?: boolean;
 }
 
+function normalizeUpper(value: unknown): string {
+  return String(value ?? "")
+    .toUpperCase()
+    .trim();
+}
+
+function extractSpecItemLabel(item: unknown): string {
+  if (!item || typeof item !== "object") return "";
+  const candidate = item as { name?: unknown; label?: unknown; id?: unknown };
+  const fromName = normalizeUpper(candidate.name);
+  if (fromName) return fromName;
+  const fromLabel = normalizeUpper(candidate.label);
+  if (fromLabel) return fromLabel;
+  const rawId = String(candidate.id ?? "");
+  if (!rawId) return "";
+  const parts = rawId.split(/[:\-]/);
+  return normalizeUpper(parts[parts.length - 1]);
+}
+
 type TdsStatus = "idle" | "generating" | "done" | "error" | "no-specs";
 type ProductClass = "spf" | "standard" | "non-standard" | "usl";
 
@@ -1268,7 +1287,8 @@ export default function AddNewProduct({
           if (!g.specGroupId || !Array.isArray(g.specItems)) return;
           const set = new Set<string>();
           g.specItems.forEach((it) => {
-            if (it?.name) set.add(String(it.name).toUpperCase().trim());
+            const label = extractSpecItemLabel(it);
+            if (label) set.add(label);
           });
           if (set.size > 0) allowedLabelsByGroup.set(g.specGroupId, set);
         });
@@ -1378,11 +1398,19 @@ export default function AddNewProduct({
     const values: Record<string, string> = {};
     editData.technicalSpecs.forEach((group: SpecValue) => {
       group.specs.forEach((spec: { name: string; value: string }) => {
-        const specLabel = String(spec.name).toUpperCase().trim();
+        const specLabel = normalizeUpper(spec.name);
+        const groupLabel = normalizeUpper(group.specGroup);
         let item = availableSpecs.find(
-          (s) => s.label === specLabel && s.specGroup === group.specGroup,
+          (s) =>
+            normalizeUpper(s.label) === specLabel &&
+            normalizeUpper(s.specGroup) === groupLabel,
         );
-        if (!item) item = availableSpecs.find((s) => s.label === specLabel);
+        if (!item) {
+          const candidates = availableSpecs.filter(
+            (s) => normalizeUpper(s.label) === specLabel,
+          );
+          if (candidates.length === 1) item = candidates[0];
+        }
         if (item) values[`${item.specGroupId}-${item.label}`] = spec.value;
       });
     });
@@ -1392,8 +1420,9 @@ export default function AddNewProduct({
 
   useEffect(() => {
     if (editData && availableCats.length > 0 && !selectedCatId) {
+      const wantedFamily = normalizeUpper(editData.productFamily);
       const match = editData.productFamily
-        ? availableCats.find((c) => c.name === editData.productFamily)
+        ? availableCats.find((c) => normalizeUpper(c.name) === wantedFamily)
         : editData.category
           ? availableCats.find((c) => c.id === editData.category)
           : null;

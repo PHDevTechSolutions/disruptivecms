@@ -1,4 +1,5 @@
 import {
+  getDoc as fbGetDoc,
   getDocs as fbGetDocs,
   limit as fbLimit,
   onSnapshot as fbOnSnapshot,
@@ -50,6 +51,15 @@ function canUseRealtime(target: unknown): boolean {
   return REALTIME_COLLECTION_ALLOWLIST.has(collectionId);
 }
 
+function isDocumentReferenceLike(target: unknown): boolean {
+  const t = target as { type?: string; path?: string };
+  if (!t || typeof t !== "object") return false;
+  if (t.type === "document") return true;
+  if (typeof t.path !== "string") return false;
+  const segments = t.path.split("/").filter(Boolean);
+  return segments.length > 0 && segments.length % 2 === 0;
+}
+
 export const query = ((
   source: Parameters<typeof fbQuery>[0],
   ...constraints: QueryConstraint[]
@@ -64,15 +74,18 @@ export const query = ((
 export const getDocs = ((
   source: Parameters<typeof fbGetDocs>[0],
 ) => {
-  const maybeCollection = source as { id?: string };
-  if (typeof maybeCollection?.id === "string") {
+  const maybeCollection = source as { id?: string; type?: string };
+  if (
+    typeof maybeCollection?.id === "string" &&
+    maybeCollection?.type === "collection"
+  ) {
     return fbGetDocs(query(maybeCollection as never));
   }
   return fbGetDocs(source);
 }) as typeof fbGetDocs;
 
 export const onSnapshot = ((target: unknown, ...rest: unknown[]) => {
-  if (canUseRealtime(target)) {
+  if (isDocumentReferenceLike(target) || canUseRealtime(target)) {
     return (fbOnSnapshot as (...args: unknown[]) => () => void)(target, ...rest);
   }
 
@@ -102,7 +115,9 @@ export const onSnapshot = ((target: unknown, ...rest: unknown[]) => {
   const poll = async () => {
     if (stopped || !next) return;
     try {
-      const snapshot = await getDocs(target as never);
+      const snapshot = isDocumentReferenceLike(target)
+        ? await fbGetDoc(target as never)
+        : await getDocs(target as never);
       if (!stopped) next(snapshot);
     } catch (error) {
       if (!stopped && onError) onError(error);
