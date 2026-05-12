@@ -44,7 +44,7 @@ import {
 } from "@/lib/requestService";
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess } from "@/lib/rbac";
-import { Timestamp, doc, updateDoc } from "firebase/firestore";
+import { Timestamp, doc, updateDoc } from "@/lib/firestore/client";
 import { db } from "@/lib/firebase";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────

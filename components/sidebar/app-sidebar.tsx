@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc } from "@/lib/firestore/client";
 import { onAuthStateChanged } from "firebase/auth";
 import { canAccessRoute } from "@/lib/roleAccess";
 

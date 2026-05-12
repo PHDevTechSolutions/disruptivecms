@@ -33,7 +33,7 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { db } from "@/lib/firebase";
 import { sanitizeDocument } from "@/lib/firestore-sanitize";
 
@@ -339,7 +339,7 @@ export async function executeRequest(request: PendingRequest): Promise<void> {
           })();
 
         if (snapshot) {
-          const { writeBatch: makeBatch } = await import("firebase/firestore");
+          const { writeBatch: makeBatch } = await import("@/lib/firestore/client");
           const batch = makeBatch(db);
           const sanitizedSnapshot = sanitizeDocument(snapshot);
           const recycleBinPayload = sanitizeDocument({

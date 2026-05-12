@@ -11,7 +11,7 @@ import {
   doc,
   updateDoc,
   orderBy,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Trash2,
   Plus,

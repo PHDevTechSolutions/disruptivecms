@@ -10,7 +10,7 @@ import {
   onSnapshot,
   Timestamp,
   limit,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Shield,
   Search,

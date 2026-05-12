@@ -15,7 +15,11 @@ import {
   where,
   getDocs,
   arrayUnion,
+<<<<<<< HEAD
 } from "@firebase/firestore";
+=======
+} from "@/lib/firestore/client";
+>>>>>>> 627194da281b5f1571af9b174cfd3702afdadf3d
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess, getScopeAccessForRole } from "@/lib/rbac";

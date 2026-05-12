@@ -63,7 +63,7 @@ import {
   writeBatch,
   deleteDoc,
   doc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { logAuditEvent } from "@/lib/logger";
 import { sanitizeDocument } from "@/lib/firestore-sanitize";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";

@@ -18,7 +18,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "@/lib/firestore/client";
 import { db } from "@/lib/firebase";
 import { toast } from "sonner";
 import {

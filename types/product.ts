@@ -130,7 +130,7 @@ export function migrateToItemCodes(data: {
 // ─── Product type ──────────────────────────────────────────────────────────────
 
 export type ProductStatus = "draft" | "public";
-export type ProductClass = "spf" | "standard" | "";
+export type ProductClass = "spf" | "standard" | "non-standard" | "usl" | "";
 export type ProductUsage = "INDOOR" | "OUTDOOR" | "SOLAR";
 
 export interface TechnicalSpec {

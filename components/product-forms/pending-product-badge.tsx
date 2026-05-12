@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/firebase";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "@/lib/firestore/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

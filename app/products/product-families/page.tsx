@@ -27,7 +27,7 @@ import {
   where,
   getDocs,
   writeBatch,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Check,
   ChevronDown,

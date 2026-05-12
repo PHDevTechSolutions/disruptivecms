@@ -14,7 +14,7 @@ import {
   serverTimestamp,
   query,
   orderBy,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Pencil,
   Trash2,

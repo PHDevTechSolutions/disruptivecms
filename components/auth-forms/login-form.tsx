@@ -7,7 +7,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc } from "@/lib/firestore/client";
 import { auth, db } from "@/lib/firebase";
 import { useAuth, User } from "@/lib/useAuth";
 import { getPrimaryRouteForRole } from "@/lib/roleAccess";

@@ -8,7 +8,7 @@ import {
   query,
   orderBy,
   where,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   Download,
   ChevronDown,

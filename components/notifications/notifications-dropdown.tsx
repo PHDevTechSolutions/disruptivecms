@@ -34,7 +34,7 @@ import {
   Timestamp,
   doc,
   updateDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 
 import { useAuth } from "@/lib/useAuth";
 import { canSeeNotifications, hasAccess } from "@/lib/rbac";

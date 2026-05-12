@@ -75,7 +75,7 @@ import {
   where,
   onSnapshot,
   Timestamp,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess } from "@/lib/rbac";

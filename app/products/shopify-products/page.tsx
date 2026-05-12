@@ -58,7 +58,7 @@ import {
 } from "@/components/ui/select";
 
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy } from "@/lib/firestore/client";
 import { toast } from "sonner";
 
 import ShopifyAddNewProduct from "@/components/product-forms/shopify-add-new-product-form";

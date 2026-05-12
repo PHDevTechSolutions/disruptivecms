@@ -16,7 +16,7 @@ import {
   orderBy,
   getDocs,
   getDoc,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import {
   ImagePlus,
   X,
