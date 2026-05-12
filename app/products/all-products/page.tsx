@@ -458,7 +458,7 @@ const PRODUCT_CLASS_OPTIONS: {
   {
     value: "usl",
     label: "USL",
-    description: "Unspecified or legacy items",
+    description: "Until Supply Lasts",
     icon: <AlertCircle className="w-4 h-4" />,
     color: "bg-rose-50 border-rose-200 text-rose-700",
     activeColor: "bg-rose-100 border-rose-500 text-rose-800",
