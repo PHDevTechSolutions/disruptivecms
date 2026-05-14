@@ -131,7 +131,7 @@ import {
   orderBy,
   serverTimestamp,
   where,
-} from "firebase/firestore";
+} from "@/lib/firestore/client";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
