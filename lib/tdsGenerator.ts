@@ -68,6 +68,7 @@ export interface GenerateTdsInput {
   terminalLayoutUrl?: string;
   accessoriesImageUrl?: string;
   typeOfPlugUrl?: string;
+  wiringConnectionUrl?: string;
 }
 
 /** Input for a blank template TDS (saved against a productFamily) */
@@ -283,10 +284,24 @@ async function buildTdsPdf(
   const COL_VALUE = TABLE_W - COL_LABEL;
 
   // When brand assets are included, reserve header space; otherwise start closer to top
-  const effectiveHeaderH = includeBrandAssets ? HEADER_H : 20;
+  let effectiveHeaderH = includeBrandAssets ? HEADER_H : 20;
+  let effectiveFooterReserve = includeBrandAssets ? FOOTER_RESERVE_H : 20;
+
+  // ── Optional brand header ─────────────────────────────────────────────────
+  if (includeBrandAssets) {
+    const assets = brandAssets(brand);
+    const headerB64 = await urlToBase64(`${origin}${assets.header}`);
+    if (headerB64) {
+      const { w: fw, h: fh } = await getImageDimensions(headerB64);
+      const ratio = PW / fw;
+      const finalH = fh * ratio;
+      pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, finalH);
+      effectiveHeaderH = Math.max(finalH, 20);
+    }
+  }
+
   const TOP_BLOCK_Y = effectiveHeaderH + 24;
   const TABLE_Y = TOP_BLOCK_Y + BOX_H + 20;
-  const effectiveFooterReserve = includeBrandAssets ? FOOTER_RESERVE_H : 20;
 
   const activeSlots = drawingSlots.filter((s) => !!s.url.trim());
 
@@ -308,15 +323,6 @@ async function buildTdsPdf(
     fontSize = Math.round((fontSize - FONT_SHRINK_STEP) * 100) / 100;
   }
   fontSize = Math.max(fontSize, MIN_FONT_SIZE);
-
-  // ── Optional brand header ─────────────────────────────────────────────────
-  if (includeBrandAssets) {
-    const assets = brandAssets(brand);
-    const headerB64 = await urlToBase64(`${origin}${assets.header}`);
-    if (headerB64) {
-      pdf.addImage(headerB64, imgFormat(headerB64), 0, 0, PW, HEADER_H);
-    }
-  }
 
   // Product image box
   pdf.setDrawColor(0, 0, 0);
@@ -482,6 +488,7 @@ async function buildTdsPdf(
       const ratio = PW / fw;
       const finalH = fh * ratio;
       pdf.addImage(footerB64, imgFormat(footerB64), 0, PH - finalH, PW, finalH);
+      // Update reserve for next calculations if needed, though this is the end of buildTdsPdf
     }
   }
 
@@ -559,6 +566,7 @@ function buildDrawingSlots(input: GenerateTdsInput): DrawingSlot[] {
     { label: "Terminal Layout", url: input.terminalLayoutUrl ?? "" },
     { label: "Accessories", url: input.accessoriesImageUrl ?? "" },
     { label: "Type of Plug", url: input.typeOfPlugUrl ?? "" },
+    { label: "Wiring Connection", url: input.wiringConnectionUrl ?? "" },
   ].filter((s) => !!s.url.trim());
 }
 

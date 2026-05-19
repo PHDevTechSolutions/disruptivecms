@@ -93,6 +93,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -736,15 +743,15 @@ function BulkGenerateTdsDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   jobs: TdsJob[];
-  onStart: (brand: "LIT" | "ECOSHIFT") => void;
+  onStart: (brand: "LIT" | "ECOSHIFT" | "PLAIN") => void;
   isRunning: boolean;
 }) {
   const [selectedBrand, setSelectedBrand] = React.useState<
-    "LIT" | "ECOSHIFT" | null
-  >(null);
+    "LIT" | "ECOSHIFT" | "PLAIN"
+  >("PLAIN");
 
   React.useEffect(() => {
-    if (open) setSelectedBrand(null);
+    if (open) setSelectedBrand("PLAIN");
   }, [open]);
 
   const total = jobs.length;
@@ -786,38 +793,33 @@ function BulkGenerateTdsDialog({
         </DialogHeader>
 
         {!isRunning && !isComplete && (
-          <div className="space-y-2.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Select Brand
-            </p>
-            {TDS_BRAND_OPTIONS.map((opt) => {
-              const isSelected = selectedBrand === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setSelectedBrand(opt.value)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all ${isSelected ? `${opt.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? opt.dot : "bg-muted-foreground/30"}`}
-                  />
-                  <span className="flex flex-col flex-1">
-                    <span className="text-sm font-semibold">{opt.label}</span>
-                    <span
-                      className={`text-[11px] ${isSelected ? "opacity-70" : "text-muted-foreground"}`}
-                    >
-                      {opt.description}
-                    </span>
-                  </span>
-                  <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
-                  >
-                    <Check className="w-3 h-3" />
-                  </span>
-                </button>
-              );
-            })}
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Select Template
+              </p>
+              <Select
+                value={selectedBrand}
+                onValueChange={(v: any) => setSelectedBrand(v)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="No template (plain TDS)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PLAIN">No template (plain TDS)</SelectItem>
+                  <SelectItem value="LIT">LIT Template</SelectItem>
+                  <SelectItem value="ECOSHIFT">ECOSHIFT Template</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-lg bg-muted/50 p-3 border border-dashed">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {selectedBrand === "PLAIN"
+                  ? "Generated PDFs will contain core product data in a clean tabular format without brand headers or footers."
+                  : `Generated PDFs will include branded ${selectedBrand} header and footer images, while preserving all core TDS content.`}
+              </p>
+            </div>
           </div>
         )}
 
@@ -2234,7 +2236,7 @@ function FullAllProductsView() {
     setBulkTdsOpen(true);
   };
 
-  const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
+  const handleStartBulkTds = async (template: "LIT" | "ECOSHIFT" | "PLAIN") => {
     setIsTdsRunning(true);
     const productMap = new Map<string, Product>(
       table.getSelectedRowModel().rows.map((r) => [r.original.id, r.original]),
@@ -2270,6 +2272,12 @@ function FullAllProductsView() {
           }))
           .filter((group) => (group.specs ?? []).length > 0);
 
+        const brand = Array.isArray(product.brands)
+          ? (product.brands[0] ?? "")
+          : Array.isArray(product.brand)
+            ? ((product.brand as string[])[0] ?? "")
+            : ((product.brand as string) ?? "");
+
         const p = product as any;
 
         const tdsBlob = await generateTdsPdf({
@@ -2278,8 +2286,8 @@ function FullAllProductsView() {
           litItemCode: resolvedCodes.LIT,
           ecoItemCode: resolvedCodes.ECOSHIFT,
           technicalSpecs,
-          brand,
-          includeBrandAssets: false,
+          brand: template === "PLAIN" ? (brand as any) : template,
+          includeBrandAssets: template !== "PLAIN",
           mainImageUrl:
             product.mainImage ||
             (Array.isArray(product.rawImage)
@@ -2300,6 +2308,8 @@ function FullAllProductsView() {
           wiringLayoutUrl: p.wiringLayoutImage || undefined,
           terminalLayoutUrl: p.terminalLayoutImage || undefined,
           accessoriesImageUrl: p.accessoriesImage || undefined,
+          typeOfPlugUrl: p.typeOfPlugImage || undefined,
+          wiringConnectionUrl: p.wiringConnectionImage || undefined,
         });
 
         const primaryCode =
@@ -2353,7 +2363,7 @@ function FullAllProductsView() {
         bulk: true,
       },
       metadata: {
-        brand,
+        template,
         total: tdsJobs.length,
         productIds: tdsJobs.map((j) => j.productId),
       },
@@ -3023,6 +3033,14 @@ function FullAllProductsView() {
           </p>
         </div>
         <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={handleOpenBulkTds}
+            disabled={selectedCount === 0}
+            className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FilePlus2 className="h-4 w-4" /> Bulk Generate TDS
+          </Button>
           <Button
             variant="outline"
             onClick={() => setBulkDownloadTdsOpen(true)}

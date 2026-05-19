@@ -181,6 +181,7 @@ export interface Product {
   terminalLayoutImage?: string;
   accessoriesImage?: string;
   typeOfPlugImage?: string;
+  wiringConnectionImage?: string;
   createdAt?: any;
   updatedAt?: any;
   importSource?: string;

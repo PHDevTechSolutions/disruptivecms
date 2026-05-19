@@ -207,6 +207,7 @@ async function regenerateTdsAfterUpdate(
       terminalLayoutUrl: p.terminalLayoutImage || undefined,
       accessoriesImageUrl: p.accessoriesImage || undefined,
       typeOfPlugUrl: p.typeOfPlugImage || undefined,
+      wiringConnectionUrl: p.wiringConnectionImage || undefined,
     });
 
     const filename = `${resolveTdsCode(p, productId)}_TDS.pdf`;

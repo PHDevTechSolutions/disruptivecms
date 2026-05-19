@@ -21,6 +21,7 @@ export interface ImageUrlsMap {
   wiringLayout?: string;
   terminalLayout?: string;
   accessories?: string;
+  wiringConnection?: string;
 }
 
 /**
@@ -93,6 +94,10 @@ function matchImageToPlaceholder(filename: string): keyof ImageUrlsMap | null {
       patterns: ["accessor", "addon", "accessory"],
     },
     {
+      key: "wiringConnection",
+      patterns: ["wiringconnection", "wireconn", "connection"],
+    },
+    {
       key: "main",
       patterns: [
         "productimage",
@@ -162,6 +167,7 @@ export function getPlaceholderLabel(key: keyof ImageUrlsMap): string {
     wiringLayout: "Wiring Layout",
     terminalLayout: "Terminal Layout",
     accessories: "Accessories",
+    wiringConnection: "Wiring Connection",
   };
   return labels[key];
 }

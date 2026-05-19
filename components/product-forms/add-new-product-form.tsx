@@ -1064,6 +1064,7 @@ export default function AddNewProduct({
   );
   const [accessoriesImage, setAccessoriesImage] = useState<File | null>(null);
   const [typeOfPlugImage, setTypeOfPlugImage] = useState<File | null>(null);
+  const [wiringConnectionImage, setWiringConnectionImage] = useState<File | null>(null);
 
   const [existingMainImage, setExistingMainImage] = useState("");
   const [existingRawImage, setExistingRawImage] = useState("");
@@ -1094,6 +1095,7 @@ export default function AddNewProduct({
     useState("");
   const [existingAccessoriesImage, setExistingAccessoriesImage] = useState("");
   const [existingTypeOfPlugImage, setExistingTypeOfPlugImage] = useState("");
+  const [existingWiringConnectionImage, setExistingWiringConnectionImage] = useState("");
 
   const [mediaOpen, setMediaOpen] = useState(true);
   const [techDrawingsOpen, setTechDrawingsOpen] = useState(false);
@@ -1130,6 +1132,8 @@ export default function AddNewProduct({
       editData.wiringLayoutImage,
       editData.terminalLayoutImage,
       editData.accessoriesImage,
+      editData.typeOfPlugImage,
+      editData.wiringConnectionImage,
     ].some(Boolean);
     if (hasTechDrawings) setTechDrawingsOpen(true);
   }, [editData]);
@@ -1390,6 +1394,7 @@ export default function AddNewProduct({
     setExistingTerminalLayoutImage(editData.terminalLayoutImage || "");
     setExistingAccessoriesImage(editData.accessoriesImage || "");
     setExistingTypeOfPlugImage(editData.typeOfPlugImage || "");
+    setExistingWiringConnectionImage(editData.wiringConnectionImage || "");
   }, [editData]);
 
   // ── UPDATED: Hydrate spec values via hook instead of setSpecValues ─────────
@@ -1798,6 +1803,9 @@ export default function AddNewProduct({
       const typeOfPlugUrl = typeOfPlugImage
         ? await uploadToCloudinary(typeOfPlugImage)
         : existingTypeOfPlugImage;
+      const wiringConnectionUrl = wiringConnectionImage
+        ? await uploadToCloudinary(wiringConnectionImage)
+        : existingWiringConnectionImage;
       const gallery = await Promise.all(galleryImages.map(uploadToCloudinary));
 
       // ── UPDATED: Merge all spec values from the hook for save ─────────────
@@ -1898,6 +1906,7 @@ export default function AddNewProduct({
         terminalLayoutImage: terminalLayoutUrl,
         accessoriesImage: accessoriesUrl,
         typeOfPlugImage: typeOfPlugUrl,
+        wiringConnectionImage: wiringConnectionUrl,
         galleryImages: [...existingGalleryImages, ...gallery],
         website: selectedWebs,
         websites: selectedWebs,
@@ -2046,6 +2055,7 @@ export default function AddNewProduct({
             terminalLayoutUrl: terminalLayoutUrl || undefined,
             accessoriesImageUrl: accessoriesUrl || undefined,
             typeOfPlugUrl: typeOfPlugUrl || undefined,
+            wiringConnectionUrl: wiringConnectionUrl || undefined,
           });
           const filename = `${resolvedPrimaryCode}_TDS.pdf`;
           const generatedTdsUrl = await uploadTdsPdf(
@@ -2125,6 +2135,9 @@ export default function AddNewProduct({
   const onDropTypePlug = useCallback((f: File[]) => {
     if (f[0]) setTypeOfPlugImage(f[0]);
   }, []);
+  const onDropWiringConnection = useCallback((f: File[]) => {
+    if (f[0]) setWiringConnectionImage(f[0]);
+  }, []);
 
   const { getRootProps: mainRoot, getInputProps: mainInput } = useDropzone({
     onDrop: onDropMain,
@@ -2166,6 +2179,10 @@ export default function AddNewProduct({
     useDropzone({ onDrop: onDropAccessories, maxFiles: 1 });
   const { getRootProps: typeOfPlugRoot, getInputProps: typeOfPlugInput } =
     useDropzone({ onDrop: onDropTypePlug, maxFiles: 1 });
+  const {
+    getRootProps: wiringConnectionRoot,
+    getInputProps: wiringConnectionInput,
+  } = useDropzone({ onDrop: onDropWiringConnection, maxFiles: 1 });
 
   const toggleWebsite = (web: string) =>
     setSelectedWebs((p) =>
@@ -2527,6 +2544,8 @@ export default function AddNewProduct({
                           wiringLayoutImage || existingWiringLayoutImage,
                           terminalLayoutImage || existingTerminalLayoutImage,
                           accessoriesImage || existingAccessoriesImage,
+                          typeOfPlugImage || existingTypeOfPlugImage,
+                          wiringConnectionImage || existingWiringConnectionImage,
                         ].filter(Boolean).length;
                         return filledCount > 0 ? (
                           <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
@@ -2683,6 +2702,18 @@ export default function AddNewProduct({
                           },
                           icon: <Zap className="h-3 w-3" />,
                           label: "Type of Plug",
+                        })}
+                        {renderSimpleDropzone({
+                          rootProps: wiringConnectionRoot,
+                          inputProps: wiringConnectionInput,
+                          file: wiringConnectionImage,
+                          existingUrl: existingWiringConnectionImage,
+                          onClear: () => {
+                            setWiringConnectionImage(null);
+                            setExistingWiringConnectionImage("");
+                          },
+                          icon: <GitBranch className="h-3 w-3" />,
+                          label: "Wiring Connection",
                         })}
                       </div>
                     </div>
