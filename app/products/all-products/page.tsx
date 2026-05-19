@@ -1,22 +1,6 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// app/products/all-products/page.tsx  (REFACTORED)
-//
-// Changes from original:
-//  - Added ReadOnlyProductsView for roles with read:products only
-//    (office_sales, project_sales, director)
-//  - Read-only view: mobile-first, dark portal aesthetic, framer-motion
-//  - Read-only view: search, filters, product list, view/download TDS,
-//    bulk download TDS — NO checkboxes, NO write actions
-//  - All existing write/verify logic PRESERVED exactly
-//  - Render branching: canWrite → existing full UI | !canWrite → read-only view
-//
-// TS FIXES applied:
-//  1. listItemVariants ease array cast `as const` to satisfy Framer Motion Easing type
-//  2. activeFamilyFilter + activeUsageFilter moved AFTER useReactTable() declaration
-// ─────────────────────────────────────────────────────────────────────────────
-
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -28,8 +12,10 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
   getSortedRowModel,
+  getFilteredRowModel,
   useReactTable,
   FilterFn,
+  ColumnFiltersState,
 } from "@tanstack/react-table";
 import {
   Pencil,
@@ -1122,9 +1108,28 @@ function AssignProductClassDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAssigning}>Cancel</Button>
-          <Button onClick={handleConfirm} disabled={!selectedClass || isAssigning} className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}>
-            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Tag className="h-4 w-4" /> Set as {selectedClass === "spf" ? "SPF" : "Standard"}</>}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={!selectedClass || isAssigning}
+            className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
+              </>
+            ) : (
+              <>
+                <Tag className="h-4 w-4" /> Set as{" "}
+                {selectedClass === "spf" ? "SPF" : "Standard"}
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1312,7 +1317,9 @@ function ReadOnlyProductCard({
               </span>
             )}
             {cls && (
-              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}>
+              <span
+                className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}
+              >
                 {cls === "spf" ? "SPF" : "Std"}
               </span>
             )}
@@ -1406,7 +1413,10 @@ function ReadOnlyFilterPanel({
                 Filter by Family
               </p>
               <button
-                onClick={() => { onFamilyChange(""); onClose(); }}
+                onClick={() => {
+                  onFamilyChange("");
+                  onClose();
+                }}
                 className="text-[9px] font-black uppercase text-gray-500 hover:text-white transition-colors"
               >
                 Clear Family
@@ -1421,7 +1431,10 @@ function ReadOnlyFilterPanel({
                   <button
                     key={fam || "all"}
                     type="button"
-                    onClick={() => { onFamilyChange(fam); onClose(); }}
+                    onClick={() => {
+                      onFamilyChange(fam);
+                      onClose();
+                    }}
                     className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all text-left ${isActive ? "border-[#d11a2a]/50 bg-[#d11a2a]/10 text-white" : "border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/[0.08]"}`}
                   >
                     <span className="text-[11px] font-black uppercase truncate">
@@ -1462,6 +1475,49 @@ function ReadOnlyAllProductsView() {
   const [tdsPreviewProduct, setTdsPreviewProduct] =
     React.useState<Product | null>(null);
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
+
+  // ── URL Syncing (Persistence) ─────────────────────────────────────────────
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  React.useEffect(() => {
+    if (loading) return;
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (search) params.set("q", search);
+    else params.delete("q");
+
+    if (usageTab) params.set("usage", usageTab);
+    else params.delete("usage");
+
+    if (familyFilter) params.set("family", familyFilter);
+    else params.delete("family");
+
+    if (classFilters.length > 0) params.set("class", classFilters.join(","));
+    else params.delete("class");
+
+    const newQuery = params.toString();
+    if (newQuery !== searchParams.toString()) {
+      router.replace(`${pathname}?${newQuery}`, { scroll: false });
+    }
+  }, [search, usageTab, familyFilter, classFilters, loading]);
+
+  // Initial load from URL
+  React.useEffect(() => {
+    if (loading) return;
+    const q = searchParams.get("q");
+    if (q) setSearch(q);
+
+    const u = searchParams.get("usage") as UsageFilter;
+    if (u) setUsageTab(u);
+
+    const f = searchParams.get("family");
+    if (f) setFamilyFilter(f);
+
+    const c = searchParams.get("class");
+    if (c) setClassFilters(c.split(",") as any);
+  }, [loading]);
 
   React.useEffect(() => {
     const mergeAndSort = (a: Product[], b: Product[]): Product[] => {
@@ -1511,17 +1567,33 @@ function ReadOnlyAllProductsView() {
     );
 
     const unsubA = onSnapshot(qAssigned, (snap) => {
-      assignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
+      assignedData = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as Product[];
       assignedReady = true;
       flush();
     });
-    const unsubU = onSnapshot(qUnassigned, (snap) => {
-      unassignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      unassignedReady = true;
-      flush();
-    }, () => { unassignedReady = true; flush(); });
+    const unsubU = onSnapshot(
+      qUnassigned,
+      (snap) => {
+        unassignedData = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Product[];
+        unassignedReady = true;
+        flush();
+      },
+      () => {
+        unassignedReady = true;
+        flush();
+      },
+    );
 
-    return () => { unsubA(); unsubU(); };
+    return () => {
+      unsubA();
+      unsubU();
+    };
   }, []);
 
   const uniqueFamilies = React.useMemo(() => {
@@ -1917,6 +1989,9 @@ function FullAllProductsView() {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
+    [],
+  );
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
@@ -1938,6 +2013,87 @@ function FullAllProductsView() {
   const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
+
+  // ── URL Syncing (Persistence) ─────────────────────────────────────────────
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  React.useEffect(() => {
+    if (loading) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+
+    // Sync column filters to URL
+    columnFilters.forEach((f) => {
+      if (Array.isArray(f.value)) {
+        params.set(f.id, f.value.join(","));
+      } else if (f.value) {
+        params.set(f.id, String(f.value));
+      } else {
+        params.delete(f.id);
+      }
+    });
+
+    // Remove params for cleared filters
+    [
+      "productClass",
+      "productUsage",
+      "productFamilyFilter",
+      "brandFilter",
+      "websiteFilter",
+    ].forEach((id) => {
+      if (!columnFilters.find((f) => f.id === id)) {
+        params.delete(id);
+      }
+    });
+
+    if (globalFilter) params.set("q", globalFilter);
+    else params.delete("q");
+
+    if (sortOption) params.set("sort", sortOption);
+    else params.delete("sort");
+
+    const newQuery = params.toString();
+    const currentQuery = searchParams.toString();
+
+    if (newQuery !== currentQuery) {
+      router.replace(`${pathname}?${newQuery}`, { scroll: false });
+    }
+  }, [columnFilters, globalFilter, sortOption, loading]);
+
+  // Initial load from URL
+  React.useEffect(() => {
+    if (loading) return;
+
+    const newFilters: ColumnFiltersState = [];
+    const q = searchParams.get("q");
+    if (q) setGlobalFilter(q);
+
+    const s = searchParams.get("sort") as SortOption;
+    if (s) setSortOption(s);
+
+    searchParams.forEach((value: string, key: string) => {
+      if (
+        [
+          "productClass",
+          "productUsage",
+          "productFamilyFilter",
+          "brandFilter",
+          "websiteFilter",
+        ].includes(key)
+      ) {
+        if (key === "productClass") {
+          newFilters.push({ id: key, value: value.split(",") });
+        } else {
+          newFilters.push({ id: key, value });
+        }
+      }
+    });
+
+    if (newFilters.length > 0) setColumnFilters(newFilters);
+  }, [loading]);
+
   // ── Data Fetching ─────────────────────────────────────────────────────────
 
   React.useEffect(() => {
@@ -2204,13 +2360,24 @@ function FullAllProductsView() {
     const t = toast.loading(
       `${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`,
     );
-    let direct = 0, pending = 0, errors = 0;
-    await Promise.all(rows.map(async (product) => {
-      try {
-        const result = await submitProductSetClass({ product, productClass, originPage: "/products/all-products", source: "all-products:bulk-set-product-class" });
-        result.mode === "pending" ? pending++ : direct++;
-      } catch { errors++; }
-    }));
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const result = await submitProductSetClass({
+            product,
+            productClass,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-set-product-class",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
     if (errors === 0) {
       const parts: string[] = [];
       if (direct > 0) parts.push(`${direct} set to "${label}"`);
@@ -2771,6 +2938,38 @@ function FullAllProductsView() {
       },
     },
     {
+      id: "brandFilter",
+      accessorFn: (row) =>
+        Array.isArray(row.brands) ? row.brands : [row.brand || ""],
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        const brands = Array.isArray(row.original.brands)
+          ? row.original.brands
+          : [row.original.brand || ""];
+        return brands.some((b) => b === filterValue);
+      },
+      enableHiding: true,
+    },
+    {
+      id: "websiteFilter",
+      accessorFn: (row) =>
+        Array.isArray(row.websites)
+          ? row.websites
+          : row.website
+            ? [row.website]
+            : [],
+      filterFn: (row, _, filterValue) => {
+        if (!filterValue) return true;
+        const websites = Array.isArray(row.original.websites)
+          ? row.original.websites
+          : row.original.website
+            ? [row.original.website]
+            : [];
+        return websites.some((w) => w === filterValue);
+      },
+      enableHiding: true,
+    },
+    {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Class</div>,
       cell: ({ row }) => (
@@ -2786,7 +2985,10 @@ function FullAllProductsView() {
         />
       ),
       filterFn: (row, _, filterValue) => {
-        if (!filterValue || (Array.isArray(filterValue) && filterValue.length === 0))
+        if (
+          !filterValue ||
+          (Array.isArray(filterValue) && filterValue.length === 0)
+        )
           return true;
         const val = row.getValue("productClass") as string;
         if (Array.isArray(filterValue)) {
@@ -2957,20 +3159,29 @@ function FullAllProductsView() {
     data: sortedData,
     columns,
     onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
-    state: { sorting, columnVisibility, rowSelection },
+    state: { sorting, columnVisibility, rowSelection, columnFilters },
     filterFns: { multiValue: multiValueFilter },
   });
 
   // FIX 2: These two derivations now appear AFTER `table` is initialised above,
   // eliminating TS2448 ("used before its declaration") and TS2454 ("used before assigned").
-  const activeFamilyFilter = (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
-  const activeUsageFilter = (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
-  const activeClassFilter = (table.getColumn("productClass")?.getFilterValue() as string[]) ?? [];
+  const activeFamilyFilter =
+    (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
+  const activeUsageFilter =
+    (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
+  const activeClassFilter =
+    (table.getColumn("productClass")?.getFilterValue() as string[]) ?? [];
+  const activeBrandFilter =
+    (table.getColumn("brandFilter")?.getFilterValue() as string) ?? "";
+  const activeWebsiteFilter =
+    (table.getColumn("websiteFilter")?.getFilterValue() as string) ?? "";
 
   const selectedCount = Object.keys(rowSelection).length;
   const totalCount = data.length;
@@ -2978,7 +3189,9 @@ function FullAllProductsView() {
     Boolean(globalFilter.trim()) ||
     Boolean(activeFamilyFilter) ||
     Boolean(activeUsageFilter) ||
-    Boolean(activeClassFilter) ||
+    Boolean(activeClassFilter.length > 0) ||
+    Boolean(activeBrandFilter) ||
+    Boolean(activeWebsiteFilter) ||
     sortOption === "recent-12h";
 
   const renderEditMode = () => (
@@ -3033,14 +3246,6 @@ function FullAllProductsView() {
           </p>
         </div>
         <div className="flex gap-3">
-          <Button
-            variant="outline"
-            onClick={handleOpenBulkTds}
-            disabled={selectedCount === 0}
-            className="gap-2 border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <FilePlus2 className="h-4 w-4" /> Bulk Generate TDS
-          </Button>
           <Button
             variant="outline"
             onClick={() => setBulkDownloadTdsOpen(true)}
@@ -3247,7 +3452,9 @@ function FullAllProductsView() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-60">
             <DropdownMenuItem
-              onClick={() => table.getColumn("productClass")?.setFilterValue([])}
+              onClick={() =>
+                table.getColumn("productClass")?.setFilterValue([])
+              }
               className="flex items-center justify-between"
             >
               <span>All Classes</span>
@@ -3332,7 +3539,9 @@ function FullAllProductsView() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem
-              onClick={() => table.getColumn("productUsage")?.setFilterValue("")}
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("")
+              }
               className="flex items-center justify-between"
             >
               <span>All Usage</span>
@@ -3382,6 +3591,104 @@ function FullAllProductsView() {
                     variant={variant}
                   />
                   {activeUsageFilter === key && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Brand filter */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeBrandFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              <Tag className="h-4 w-4" />
+              {activeBrandFilter || "Brand"}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem
+              onClick={() => table.getColumn("brandFilter")?.setFilterValue("")}
+              className="flex items-center justify-between"
+            >
+              <span>All Brands</span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={data.length} />
+                {!activeBrandFilter && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {uniqueBrands.map((brand) => (
+              <DropdownMenuItem
+                key={brand}
+                onClick={() =>
+                  table
+                    .getColumn("brandFilter")
+                    ?.setFilterValue(activeBrandFilter === brand ? "" : brand)
+                }
+                className="flex items-center justify-between"
+              >
+                <span>{brand}</span>
+                <div className="flex items-center gap-1.5">
+                  <CountPill count={brandCounts.get(brand) ?? 0} />
+                  {activeBrandFilter === brand && (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Website filter */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className={`gap-2 ${activeWebsiteFilter ? "border-primary text-primary bg-primary/5" : ""}`}
+            >
+              <Globe className="h-4 w-4" />
+              {activeWebsiteFilter || "Website"}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem
+              onClick={() =>
+                table.getColumn("websiteFilter")?.setFilterValue("")
+              }
+              className="flex items-center justify-between"
+            >
+              <span>All Websites</span>
+              <div className="flex items-center gap-1.5">
+                <CountPill count={data.length} />
+                {!activeWebsiteFilter && (
+                  <Check className="h-3.5 w-3.5 text-primary" />
+                )}
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {uniqueWebsites.map((web) => (
+              <DropdownMenuItem
+                key={web}
+                onClick={() =>
+                  table
+                    .getColumn("websiteFilter")
+                    ?.setFilterValue(activeWebsiteFilter === web ? "" : web)
+                }
+                className="flex items-center justify-between"
+              >
+                <span className="truncate max-w-40">{web}</span>
+                <div className="flex items-center gap-1.5">
+                  <CountPill count={websiteCounts.get(web) ?? 0} />
+                  {activeWebsiteFilter === web && (
                     <Check className="h-3.5 w-3.5 text-primary" />
                   )}
                 </div>
@@ -3615,7 +3922,9 @@ function FullAllProductsView() {
                   onClick={() =>
                     table
                       .getColumn("productClass")
-                      ?.setFilterValue(activeClassFilter.filter((v) => v !== cls))
+                      ?.setFilterValue(
+                        activeClassFilter.filter((v) => v !== cls),
+                      )
                   }
                   className="ml-0.5 hover:opacity-60 transition-opacity"
                 >
@@ -3632,6 +3941,36 @@ function FullAllProductsView() {
                 type="button"
                 onClick={() =>
                   table.getColumn("productFamilyFilter")?.setFilterValue("")
+                }
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {activeBrandFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+              <Tag className="h-3 w-3" />
+              {activeBrandFilter}
+              <button
+                type="button"
+                onClick={() =>
+                  table.getColumn("brandFilter")?.setFilterValue("")
+                }
+                className="ml-0.5 hover:text-destructive transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {activeWebsiteFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+              <Globe className="h-3 w-3" />
+              {activeWebsiteFilter}
+              <button
+                type="button"
+                onClick={() =>
+                  table.getColumn("websiteFilter")?.setFilterValue("")
                 }
                 className="ml-0.5 hover:text-destructive transition-colors"
               >
