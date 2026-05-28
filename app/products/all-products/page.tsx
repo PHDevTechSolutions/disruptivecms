@@ -492,6 +492,22 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
   return String(value).toLowerCase().includes(filter);
 };
 
+function formatTimestamp(ts: any): string {
+  if (!ts) return "—";
+  try {
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    if (isNaN(date.getTime())) return "—";
+
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+
+    return `${y}-${m}-${d}`;
+  } catch (e) {
+    return "—";
+  }
+}
+
 // ─── Badge components (PRESERVED) ────────────────────────────────────────────
 
 function ProductClassBadge({
@@ -1296,6 +1312,12 @@ function ReadOnlyProductCard({
               {family}
             </p>
           )}
+
+          {/* Created At */}
+          <p className="text-[8px] font-medium text-gray-600 mt-1 flex items-center gap-1">
+            <Clock size={8} />
+            {formatTimestamp(product.createdAt)}
+          </p>
         </div>
 
         {/* Right column: usage + class + action */}
@@ -3068,6 +3090,21 @@ function FullAllProductsView() {
         );
       },
       filterFn: multiValueFilter,
+    },
+    {
+      accessorKey: "createdAt",
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          Created At
+        </div>
+      ),
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {formatTimestamp(row.original.createdAt)}
+        </span>
+      ),
+      enableHiding: true,
     },
     {
       id: "actions",
