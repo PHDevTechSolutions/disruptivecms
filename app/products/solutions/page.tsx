@@ -80,7 +80,7 @@ import { cn } from "@/lib/utils";
 const WEBSITE_OPTIONS = [
   "Disruptive Solutions Inc",
   "Ecoshift Corporation",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
 ];
 const LABEL_OPTIONS = ["BUILD", "PROTECT", "FINISH", "REPAIR"];
 

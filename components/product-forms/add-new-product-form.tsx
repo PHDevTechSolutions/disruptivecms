@@ -833,20 +833,20 @@ const PRODUCT_CLASS_OPTIONS: {
 const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Disruptive Solutions Inc",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
   "Taskflow",
 ];
 
 const WEBSITE_PRODUCT_PATH: Record<string, string> = {
   "Ecoshift Corporation": "/products",
   "Disruptive Solutions Inc.": "/products",
-  "Value Acquisitions Holdings": "/solutions",
+  "Buildchem Solutions Inc": "/solutions",
 };
 
 const WEBSITE_DOMAINS: Record<string, string> = {
   "Ecoshift Corporation": "https://ecoshift-website.vercel.app",
   "Disruptive Solutions Inc.": "https://disruptive-solutions-inc.vercel.app",
-  "Value Acquisitions Holdings": "https://vah.com.ph",
+  "Buildchem Solutions Inc": "https://buildchemsolutions.com.ph",
 };
 
 const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"] as const;

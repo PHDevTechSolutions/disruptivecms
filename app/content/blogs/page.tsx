@@ -61,7 +61,7 @@ const WEBSITE_FILTER_OPTIONS = [
   { label: "All Websites", value: "all" },
   { label: "Disruptive Solutions Inc", value: "disruptivesolutionsinc" },
   { label: "Ecoshift Corporation", value: "ecoshiftcorporation" },
-  { label: "VAH", value: "VAH" },
+  { label: "Buildchem Solutions Inc", value: "buildchem" },
 ];
 
 export default function BlogManager() {

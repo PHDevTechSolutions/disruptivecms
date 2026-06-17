@@ -105,7 +105,7 @@ const STATUS_OPTIONS = ["Published", "Draft"];
 const WEBSITE_OPTIONS = [
   { label: "Disruptive Solutions Inc", value: "disruptivesolutionsinc" },
   { label: "Ecoshift Corporation", value: "ecoshiftcorporation" },
-  { label: "Buildchem Solutions Inc.", value: "buildchemsolutionsinc" },
+  { label: "Buildchem Solutions Inc.", value: "buildchem" },
 ];
 
 const COLORS = [

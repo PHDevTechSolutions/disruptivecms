@@ -77,7 +77,7 @@ import { cn } from "@/lib/utils";
 const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Disruptive Solutions Inc",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
 ];
 
 type Alignment = "left" | "center" | "right";

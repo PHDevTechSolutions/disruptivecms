@@ -126,7 +126,7 @@ const ALL_CATEGORIES = "All Categories";
 const WEBSITE_OPTIONS = [
   "Disruptive Solutions Inc",
   "Ecoshift Corporation",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
 ];
 
 const BULK_STEPS: { key: BulkStep; label: string }[] = [
