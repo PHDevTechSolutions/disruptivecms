@@ -421,43 +421,43 @@ const PRODUCT_CLASS_OPTIONS: {
   activeColor: string;
   dot: string;
 }[] = [
-  {
-    value: "spf",
-    label: "SPF",
-    description: "Special product family items",
-    icon: <Sparkles className="w-4 h-4" />,
-    color: "bg-violet-50 border-violet-200 text-violet-700",
-    activeColor: "bg-violet-100 border-violet-500 text-violet-800",
-    dot: "bg-violet-500",
-  },
-  {
-    value: "standard",
-    label: "Standard",
-    description: "Regular inventory items",
-    icon: <Package className="w-4 h-4" />,
-    color: "bg-slate-50 border-slate-200 text-slate-700",
-    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
-    dot: "bg-slate-500",
-  },
-  {
-    value: "non-standard",
-    label: "Non-Standard",
-    description: "Custom or non-regular items",
-    icon: <CircleDashed className="w-4 h-4" />,
-    color: "bg-amber-50 border-amber-200 text-amber-700",
-    activeColor: "bg-amber-100 border-amber-500 text-amber-800",
-    dot: "bg-amber-500",
-  },
-  {
-    value: "usl",
-    label: "USL",
-    description: "Unspecified or legacy items",
-    icon: <AlertCircle className="w-4 h-4" />,
-    color: "bg-rose-50 border-rose-200 text-rose-700",
-    activeColor: "bg-rose-100 border-rose-500 text-rose-800",
-    dot: "bg-rose-500",
-  },
-];
+    {
+      value: "spf",
+      label: "SPF",
+      description: "Special product family items",
+      icon: <Sparkles className="w-4 h-4" />,
+      color: "bg-violet-50 border-violet-200 text-violet-700",
+      activeColor: "bg-violet-100 border-violet-500 text-violet-800",
+      dot: "bg-violet-500",
+    },
+    {
+      value: "standard",
+      label: "Standard",
+      description: "Regular inventory items",
+      icon: <Package className="w-4 h-4" />,
+      color: "bg-slate-50 border-slate-200 text-slate-700",
+      activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+      dot: "bg-slate-500",
+    },
+    {
+      value: "non-standard",
+      label: "Non-Standard",
+      description: "Custom or non-regular items",
+      icon: <CircleDashed className="w-4 h-4" />,
+      color: "bg-amber-50 border-amber-200 text-amber-700",
+      activeColor: "bg-amber-100 border-amber-500 text-amber-800",
+      dot: "bg-amber-500",
+    },
+    {
+      value: "usl",
+      label: "USL",
+      description: "Unspecified or legacy items",
+      icon: <AlertCircle className="w-4 h-4" />,
+      color: "bg-rose-50 border-rose-200 text-rose-700",
+      activeColor: "bg-rose-100 border-rose-500 text-rose-800",
+      dot: "bg-rose-500",
+    },
+  ];
 
 const TDS_BRAND_OPTIONS: {
   value: "LIT" | "ECOSHIFT";
@@ -466,21 +466,21 @@ const TDS_BRAND_OPTIONS: {
   activeColor: string;
   dot: string;
 }[] = [
-  {
-    value: "LIT",
-    label: "LIT",
-    description: "LIT brand header & footer",
-    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
-    dot: "bg-slate-500",
-  },
-  {
-    value: "ECOSHIFT",
-    label: "Ecoshift",
-    description: "Ecoshift brand header & footer",
-    activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
-    dot: "bg-emerald-500",
-  },
-];
+    {
+      value: "LIT",
+      label: "LIT",
+      description: "LIT brand header & footer",
+      activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+      dot: "bg-slate-500",
+    },
+    {
+      value: "ECOSHIFT",
+      label: "Ecoshift",
+      description: "Ecoshift brand header & footer",
+      activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
+      dot: "bg-emerald-500",
+    },
+  ];
 
 // ─── Custom filter (PRESERVED) ────────────────────────────────────────────────
 
@@ -1216,10 +1216,9 @@ function ReadOnlyTdsButton({
       disabled={!hasTds}
       className={`
         shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all active:scale-95
-        ${
-          hasTds
-            ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
-            : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
+        ${hasTds
+          ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
+          : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
         }
       `}
     >
@@ -1722,11 +1721,10 @@ function ReadOnlyAllProductsView() {
                 key={tab.value || "all"}
                 type="button"
                 onClick={() => setUsageTab(tab.value as UsageFilter)}
-                className={`shrink-0 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${
-                  isActive
+                className={`shrink-0 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${isActive
                     ? "bg-[#d11a2a] text-white shadow-lg shadow-[#d11a2a]/20"
                     : "bg-white/5 border border-white/10 text-gray-500 hover:text-white hover:bg-white/10"
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>
@@ -1784,11 +1782,10 @@ function ReadOnlyAllProductsView() {
         <button
           type="button"
           onClick={() => setFilterPanelOpen(true)}
-          className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${
-            familyFilter || classFilters.length > 0
+          className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${familyFilter || classFilters.length > 0
               ? "bg-[#d11a2a]/10 border-[#d11a2a]/40 text-[#d11a2a]"
               : "bg-white/5 border-white/10 text-gray-500 hover:text-white"
-          }`}
+            }`}
         >
           <FilterIcon size={12} />
           {familyFilter || classFilters.length > 0
@@ -1905,11 +1902,10 @@ function ReadOnlyAllProductsView() {
               key={n}
               type="button"
               onClick={() => setCurrentPage(n)}
-              className={`w-8 h-8 rounded-xl text-[10px] font-black transition-all active:scale-95 ${
-                n === currentPage
+              className={`w-8 h-8 rounded-xl text-[10px] font-black transition-all active:scale-95 ${n === currentPage
                   ? "bg-[#d11a2a] text-white shadow-lg shadow-[#d11a2a]/20"
                   : "bg-white/5 border border-white/10 text-gray-500 hover:text-white"
-              }`}
+                }`}
             >
               {n}
             </button>
@@ -1938,11 +1934,10 @@ function ReadOnlyAllProductsView() {
               <button
                 key={label}
                 type="button"
-                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-[80px] ${
-                  active
+                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-[80px] ${active
                     ? "bg-[#d11a2a]/10 text-[#d11a2a]"
                     : "text-gray-600 hover:text-white"
-                }`}
+                  }`}
               >
                 <Icon size={18} />
                 <span className="text-[8px] font-black uppercase tracking-wider">
@@ -2062,8 +2057,6 @@ function FullAllProductsView() {
       "productClass",
       "productUsage",
       "productFamilyFilter",
-      "brandFilter",
-      "websiteFilter",
     ].forEach((id) => {
       if (!columnFilters.find((f) => f.id === id)) {
         params.delete(id);
@@ -2101,8 +2094,6 @@ function FullAllProductsView() {
           "productClass",
           "productUsage",
           "productFamilyFilter",
-          "brandFilter",
-          "websiteFilter",
         ].includes(key)
       ) {
         if (key === "productClass") {
@@ -2529,10 +2520,10 @@ function FullAllProductsView() {
           prev.map((j) =>
             j.productId === job.productId
               ? {
-                  ...j,
-                  status: "error",
-                  error: err?.message ?? "Unknown error",
-                }
+                ...j,
+                status: "error",
+                error: err?.message ?? "Unknown error",
+              }
               : j,
           ),
         );
@@ -2960,49 +2951,17 @@ function FullAllProductsView() {
       },
     },
     {
-      id: "brandFilter",
-      accessorFn: (row) =>
-        Array.isArray(row.brands) ? row.brands : [row.brand || ""],
-      filterFn: (row, _, filterValue) => {
-        if (!filterValue) return true;
-        const brands = Array.isArray(row.original.brands)
-          ? row.original.brands
-          : [row.original.brand || ""];
-        return brands.some((b) => b === filterValue);
-      },
-      enableHiding: true,
-    },
-    {
-      id: "websiteFilter",
-      accessorFn: (row) =>
-        Array.isArray(row.websites)
-          ? row.websites
-          : row.website
-            ? [row.website]
-            : [],
-      filterFn: (row, _, filterValue) => {
-        if (!filterValue) return true;
-        const websites = Array.isArray(row.original.websites)
-          ? row.original.websites
-          : row.original.website
-            ? [row.original.website]
-            : [];
-        return websites.some((w) => w === filterValue);
-      },
-      enableHiding: true,
-    },
-    {
       accessorKey: "productClass",
       header: () => <div className="text-xs font-medium">Class</div>,
       cell: ({ row }) => (
         <ProductClassBadge
           value={
             row.getValue("productClass") as
-              | "spf"
-              | "standard"
-              | "non-standard"
-              | "usl"
-              | ""
+            | "spf"
+            | "standard"
+            | "non-standard"
+            | "usl"
+            | ""
           }
         />
       ),
@@ -3215,10 +3174,6 @@ function FullAllProductsView() {
     (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
   const activeClassFilter =
     (table.getColumn("productClass")?.getFilterValue() as string[]) ?? [];
-  const activeBrandFilter =
-    (table.getColumn("brandFilter")?.getFilterValue() as string) ?? "";
-  const activeWebsiteFilter =
-    (table.getColumn("websiteFilter")?.getFilterValue() as string) ?? "";
 
   const selectedCount = Object.keys(rowSelection).length;
   const totalCount = data.length;
@@ -3227,8 +3182,6 @@ function FullAllProductsView() {
     Boolean(activeFamilyFilter) ||
     Boolean(activeUsageFilter) ||
     Boolean(activeClassFilter.length > 0) ||
-    Boolean(activeBrandFilter) ||
-    Boolean(activeWebsiteFilter) ||
     sortOption === "recent-12h";
 
   const renderEditMode = () => (
@@ -3290,7 +3243,7 @@ function FullAllProductsView() {
           >
             <Download className="h-4 w-4" /> Bulk Download TDS
           </Button>
-          <BulkUploader onUploadComplete={() => {}} />
+          <BulkUploader onUploadComplete={() => { }} />
           {userCanWrite && (
             <Button
               onClick={() => {
@@ -3481,8 +3434,8 @@ function FullAllProductsView() {
                 ? "Product Class"
                 : activeClassFilter.length === 1
                   ? PRODUCT_CLASS_OPTIONS.find(
-                      (o) => o.value === activeClassFilter[0],
-                    )?.label
+                    (o) => o.value === activeClassFilter[0],
+                  )?.label
                   : `${activeClassFilter.length} Classes`}
               <ChevronDown className="h-4 w-4" />
             </Button>
@@ -3520,11 +3473,11 @@ function FullAllProductsView() {
                   <span className="flex items-center gap-2">
                     {React.isValidElement(option.icon)
                       ? React.cloneElement(
-                          option.icon as React.ReactElement<any>,
-                          {
-                            className: "w-3.5 h-3.5",
-                          },
-                        )
+                        option.icon as React.ReactElement<any>,
+                        {
+                          className: "w-3.5 h-3.5",
+                        },
+                      )
                       : null}{" "}
                     {option.label}
                   </span>
@@ -3569,7 +3522,7 @@ function FullAllProductsView() {
               )}
               {activeUsageFilter
                 ? activeUsageFilter.charAt(0).toUpperCase() +
-                  activeUsageFilter.slice(1).toLowerCase()
+                activeUsageFilter.slice(1).toLowerCase()
                 : "Usage"}
               <ChevronDown className="h-4 w-4" />
             </Button>
@@ -3637,102 +3590,6 @@ function FullAllProductsView() {
         </DropdownMenu>
 
         {/* Brand filter */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              className={`gap-2 ${activeBrandFilter ? "border-primary text-primary bg-primary/5" : ""}`}
-            >
-              <Tag className="h-4 w-4" />
-              {activeBrandFilter || "Brand"}
-              <ChevronDown className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem
-              onClick={() => table.getColumn("brandFilter")?.setFilterValue("")}
-              className="flex items-center justify-between"
-            >
-              <span>All Brands</span>
-              <div className="flex items-center gap-1.5">
-                <CountPill count={data.length} />
-                {!activeBrandFilter && (
-                  <Check className="h-3.5 w-3.5 text-primary" />
-                )}
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {uniqueBrands.map((brand) => (
-              <DropdownMenuItem
-                key={brand}
-                onClick={() =>
-                  table
-                    .getColumn("brandFilter")
-                    ?.setFilterValue(activeBrandFilter === brand ? "" : brand)
-                }
-                className="flex items-center justify-between"
-              >
-                <span>{brand}</span>
-                <div className="flex items-center gap-1.5">
-                  <CountPill count={brandCounts.get(brand) ?? 0} />
-                  {activeBrandFilter === brand && (
-                    <Check className="h-3.5 w-3.5 text-primary" />
-                  )}
-                </div>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* Website filter */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              className={`gap-2 ${activeWebsiteFilter ? "border-primary text-primary bg-primary/5" : ""}`}
-            >
-              <Globe className="h-4 w-4" />
-              {activeWebsiteFilter || "Website"}
-              <ChevronDown className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem
-              onClick={() =>
-                table.getColumn("websiteFilter")?.setFilterValue("")
-              }
-              className="flex items-center justify-between"
-            >
-              <span>All Websites</span>
-              <div className="flex items-center gap-1.5">
-                <CountPill count={data.length} />
-                {!activeWebsiteFilter && (
-                  <Check className="h-3.5 w-3.5 text-primary" />
-                )}
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {uniqueWebsites.map((web) => (
-              <DropdownMenuItem
-                key={web}
-                onClick={() =>
-                  table
-                    .getColumn("websiteFilter")
-                    ?.setFilterValue(activeWebsiteFilter === web ? "" : web)
-                }
-                className="flex items-center justify-between"
-              >
-                <span className="truncate max-w-40">{web}</span>
-                <div className="flex items-center gap-1.5">
-                  <CountPill count={websiteCounts.get(web) ?? 0} />
-                  {activeWebsiteFilter === web && (
-                    <Check className="h-3.5 w-3.5 text-primary" />
-                  )}
-                </div>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
 
         {/* Product Family filter */}
         <DropdownMenu
@@ -3938,122 +3795,92 @@ function FullAllProductsView() {
         activeUsageFilter ||
         activeClassFilter.length > 0 ||
         (sortOption && sortOption !== "newest")) && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted-foreground">Active:</span>
-          {activeClassFilter.map((cls) => {
-            const option = PRODUCT_CLASS_OPTIONS.find((o) => o.value === cls);
-            if (!option) return null;
-            return (
-              <span
-                key={cls}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${option.color}`}
-              >
-                {React.isValidElement(option.icon)
-                  ? React.cloneElement(option.icon as React.ReactElement<any>, {
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground">Active:</span>
+            {activeClassFilter.map((cls) => {
+              const option = PRODUCT_CLASS_OPTIONS.find((o) => o.value === cls);
+              if (!option) return null;
+              return (
+                <span
+                  key={cls}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${option.color}`}
+                >
+                  {React.isValidElement(option.icon)
+                    ? React.cloneElement(option.icon as React.ReactElement<any>, {
                       className: "h-3 w-3",
                     })
-                  : null}
-                {option.label}
+                    : null}
+                  {option.label}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      table
+                        .getColumn("productClass")
+                        ?.setFilterValue(
+                          activeClassFilter.filter((v) => v !== cls),
+                        )
+                    }
+                    className="ml-0.5 hover:opacity-60 transition-opacity"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+            {activeFamilyFilter && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+                <Layers className="h-3 w-3" />
+                {activeFamilyFilter}
                 <button
                   type="button"
                   onClick={() =>
-                    table
-                      .getColumn("productClass")
-                      ?.setFilterValue(
-                        activeClassFilter.filter((v) => v !== cls),
-                      )
+                    table.getColumn("productFamilyFilter")?.setFilterValue("")
+                  }
+                  className="ml-0.5 hover:text-destructive transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {activeUsageFilter && (
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
+              >
+                {activeUsageFilter === "OUTDOOR" ? (
+                  <Trees className="h-3 w-3" />
+                ) : activeUsageFilter === "INDOOR" ? (
+                  <Home className="h-3 w-3" />
+                ) : (
+                  <Sun className="h-3 w-3" />
+                )}
+                {activeUsageFilter.charAt(0).toUpperCase() +
+                  activeUsageFilter.slice(1).toLowerCase()}
+                <button
+                  type="button"
+                  onClick={() =>
+                    table.getColumn("productUsage")?.setFilterValue("")
                   }
                   className="ml-0.5 hover:opacity-60 transition-opacity"
                 >
                   <X className="h-3 w-3" />
                 </button>
               </span>
-            );
-          })}
-          {activeFamilyFilter && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <Layers className="h-3 w-3" />
-              {activeFamilyFilter}
-              <button
-                type="button"
-                onClick={() =>
-                  table.getColumn("productFamilyFilter")?.setFilterValue("")
-                }
-                className="ml-0.5 hover:text-destructive transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {activeBrandFilter && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <Tag className="h-3 w-3" />
-              {activeBrandFilter}
-              <button
-                type="button"
-                onClick={() =>
-                  table.getColumn("brandFilter")?.setFilterValue("")
-                }
-                className="ml-0.5 hover:text-destructive transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {activeWebsiteFilter && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <Globe className="h-3 w-3" />
-              {activeWebsiteFilter}
-              <button
-                type="button"
-                onClick={() =>
-                  table.getColumn("websiteFilter")?.setFilterValue("")
-                }
-                className="ml-0.5 hover:text-destructive transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {activeUsageFilter && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
-            >
-              {activeUsageFilter === "OUTDOOR" ? (
-                <Trees className="h-3 w-3" />
-              ) : activeUsageFilter === "INDOOR" ? (
-                <Home className="h-3 w-3" />
-              ) : (
-                <Sun className="h-3 w-3" />
-              )}
-              {activeUsageFilter.charAt(0).toUpperCase() +
-                activeUsageFilter.slice(1).toLowerCase()}
-              <button
-                type="button"
-                onClick={() =>
-                  table.getColumn("productUsage")?.setFilterValue("")
-                }
-                className="ml-0.5 hover:opacity-60 transition-opacity"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {sortOption && sortOption !== "newest" && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <SlidersHorizontal className="h-3 w-3" />
-              {sortLabel[sortOption]}
-              <button
-                type="button"
-                onClick={() => setSortOption(null)}
-                className="ml-0.5 hover:text-destructive transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-        </div>
-      )}
+            )}
+            {sortOption && sortOption !== "newest" && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+                <SlidersHorizontal className="h-3 w-3" />
+                {sortLabel[sortOption]}
+                <button
+                  type="button"
+                  onClick={() => setSortOption(null)}
+                  className="ml-0.5 hover:text-destructive transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
 
       {/* Table */}
       <div className="rounded-lg border">
@@ -4066,9 +3893,9 @@ function FullAllProductsView() {
                     {header.isPlaceholder
                       ? null
                       : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
                   </TableHead>
                 ))}
               </TableRow>
