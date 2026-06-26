@@ -16,7 +16,6 @@ import {
   getDocs,
   arrayUnion,
 } from "@/lib/firestore/client";
-
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/useAuth";
 import { hasAccess, getScopeAccessForRole } from "@/lib/rbac";
