@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 interface DeleteToRecycleBinDialogProps {
@@ -37,6 +38,10 @@ interface DeleteToRecycleBinDialogProps {
    * copy / iconography so the UI matches the user's permission level.
    */
   requestMode?: boolean;
+  /** Optional: plural form of item name for bulk operations (default: "Products") */
+  itemNamePlural?: string;
+  /** Optional: singular form of item name (default: "Product") */
+  itemNameSingular?: string;
 }
 
 const LONG_PRESS_MS = 2000;
@@ -49,6 +54,8 @@ export function DeleteToRecycleBinDialog({
   onConfirm,
   count = 1,
   requestMode = false,
+  itemNamePlural = "Products",
+  itemNameSingular = "Product",
 }: DeleteToRecycleBinDialogProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -144,10 +151,10 @@ export function DeleteToRecycleBinDialog({
   // ── Derived copy based on requestMode ────────────────────────────────────
   const dialogTitle = requestMode
     ? isBulk
-      ? `Submit Delete Request for ${count} Products`
+      ? `Submit Delete Request for ${count} ${itemNamePlural}`
       : "Submit Delete Request"
     : isBulk
-      ? `Move ${count} Products to Recycle Bin`
+      ? `Move ${count} ${itemNamePlural} to Recycle Bin`
       : "Move to Recycle Bin";
 
   const dialogDescription = requestMode
@@ -163,7 +170,7 @@ export function DeleteToRecycleBinDialog({
       : "Move to Recycle Bin";
 
   const noteText = requestMode
-    ? "This request will be reviewed before any product is deleted. You can track its status on the Requests page."
+    ? `This request will be reviewed before any ${itemNameSingular.toLowerCase()} is deleted. You can track its status on the Requests page.`
     : "Items in the recycle bin can be restored or permanently deleted from the Recycle Bin page.";
 
   const NoteIcon = requestMode ? Clock : Trash2;
@@ -173,7 +180,7 @@ export function DeleteToRecycleBinDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-lg">
+      <DialogContent className="rounded-none max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-lg">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
             <div
@@ -201,86 +208,88 @@ export function DeleteToRecycleBinDialog({
           </div>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
-          {/* Single: show item name */}
-          {!isBulk && (
-            <div className="rounded-none bg-muted/50 border px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">
-                Item
-              </p>
-              <p className="text-sm font-medium truncate">{itemName}</p>
-            </div>
-          )}
-
-          {/* Bulk: long-press instruction */}
-          {isBulk ? (
-            <div className="rounded-none bg-muted/50 border px-3 py-3 space-y-1">
-              <p className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  {count} products
-                </span>{" "}
-                {requestMode
-                  ? "will be submitted for delete approval."
-                  : "will be moved to the recycle bin."}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                Hold the button below for 2 seconds to confirm.
-              </p>
-            </div>
-          ) : (
-            /* Single: typed confirmation */
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">
-                Type{" "}
-                <span className="font-bold text-foreground font-mono">
-                  {required}
-                </span>{" "}
-                to confirm
-              </Label>
-              <Input
-                autoFocus
-                placeholder={required}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && isMatch) handleConfirmSingle();
-                }}
-                className={cn(
-                  "rounded-none font-mono text-sm transition-colors",
-                  inputValue.length > 0 &&
-                    (isMatch
-                      ? "border-emerald-500 focus-visible:ring-emerald-500/20"
-                      : "border-destructive/50 focus-visible:ring-destructive/20"),
-                )}
-              />
-              {inputValue.length > 0 && !isMatch && (
-                <p className="text-[10px] text-destructive">
-                  Name doesn&apos;t match. Please type exactly as shown.
+        <ScrollArea className="max-h-[60vh]">
+          <div className="space-y-4 py-2 pr-2">
+            {/* Single: show item name */}
+            {!isBulk && (
+              <div className="rounded-none bg-muted/50 border px-3 py-2">
+                <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">
+                  Item
                 </p>
-              )}
-              {isMatch && (
-                <p className="text-[10px] text-emerald-600 font-medium">
-                  {requestMode
-                    ? "✓ Confirmed — ready to submit delete request."
-                    : "✓ Confirmed — ready to move to recycle bin."}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Info note */}
-          <div
-            className={cn(
-              "flex items-start gap-2 rounded-none border px-3 py-2.5",
-              noteColor,
+                <p className="text-sm font-medium truncate">{itemName}</p>
+              </div>
             )}
-          >
-            <NoteIcon className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600" />
-            <p className="text-[10px] leading-relaxed">{noteText}</p>
-          </div>
-        </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
+            {/* Bulk: long-press instruction */}
+            {isBulk ? (
+              <div className="rounded-none bg-muted/50 border px-3 py-3 space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    {count} {itemNamePlural.toLowerCase()}
+                  </span>{" "}
+                  {requestMode
+                    ? "will be submitted for delete approval."
+                    : "will be moved to the recycle bin."}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Hold the button below for 2 seconds to confirm.
+                </p>
+              </div>
+            ) : (
+              /* Single: typed confirmation */
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">
+                  Type{" "}
+                  <span className="font-bold text-foreground font-mono">
+                    {required}
+                  </span>{" "}
+                  to confirm
+                </Label>
+                <Input
+                  autoFocus
+                  placeholder={required}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && isMatch) handleConfirmSingle();
+                  }}
+                  className={cn(
+                    "rounded-none font-mono text-sm transition-colors",
+                    inputValue.length > 0 &&
+                      (isMatch
+                        ? "border-emerald-500 focus-visible:ring-emerald-500/20"
+                        : "border-destructive/50 focus-visible:ring-destructive/20"),
+                  )}
+                />
+                {inputValue.length > 0 && !isMatch && (
+                  <p className="text-[10px] text-destructive">
+                    Name doesn&apos;t match. Please type exactly as shown.
+                  </p>
+                )}
+                {isMatch && (
+                  <p className="text-[10px] text-emerald-600 font-medium">
+                    {requestMode
+                      ? "✓ Confirmed — ready to submit delete request."
+                      : "✓ Confirmed — ready to move to recycle bin."}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Info note */}
+            <div
+              className={cn(
+                "flex items-start gap-2 rounded-none border px-3 py-2.5",
+                noteColor,
+              )}
+            >
+              <NoteIcon className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600" />
+              <p className="text-[10px] leading-relaxed">{noteText}</p>
+            </div>
+          </div>
+        </ScrollArea>
+
+        <DialogFooter className="gap-2 sm:gap-2 pt-2">
           <Button
             variant="outline"
             size="sm"

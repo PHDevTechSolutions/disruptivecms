@@ -22,6 +22,7 @@ import {
   Palette,
   Type,
   Save,
+  Clock,
 } from "lucide-react";
 
 import { uploadToCloudinary } from "@/lib/cloudinary";
@@ -32,6 +33,10 @@ import { Placeholder } from "@tiptap/extension-placeholder";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import { FontFamily } from "@tiptap/extension-font-family";
+import { format } from "date-fns";
+
+import { Timestamp } from "@/lib/firestore/client";
+import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +51,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { DatePickerTime } from "@/components/date-picker";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -69,12 +80,14 @@ export type SeoData = {
 export type BlogPayload = {
   title: string;
   category: string;
-  status: string;
+  isPublished: boolean;
   website: string;
   coverImage: string | null;
   sections: Omit<Section, "imageFile">[];
   slug: string;
   seo: SeoData;
+  /** Firestore Timestamp for when a scheduled blog should auto-publish. Null otherwise. */
+  scheduledFor: Timestamp | null;
 };
 
 interface BlogCreatorProps {
@@ -87,9 +100,10 @@ interface BlogCreatorProps {
     sections?: Section[];
     seo?: SeoData;
     slug?: string;
-    status?: string;
+    isPublished?: boolean;
     website?: string;
     category?: string;
+    scheduledFor?: Timestamp | null;
   } | null;
 }
 
@@ -101,11 +115,11 @@ const CATEGORY_OPTIONS = [
   "Tech Updates",
   "Case Study",
 ];
-const STATUS_OPTIONS = ["Published", "Draft"];
+const STATUS_OPTIONS = ["Published", "Draft", "Scheduled"];
 const WEBSITE_OPTIONS = [
   { label: "Disruptive Solutions Inc", value: "disruptivesolutionsinc" },
   { label: "Ecoshift Corporation", value: "ecoshiftcorporation" },
-  { label: "Buildchem Solutions Inc.", value: "buildchem" },
+  { label: "Buildchem Solutions Inc.", value: "buildchemsolutionsinc" },
 ];
 
 const COLORS = [
@@ -457,6 +471,14 @@ export default function BlogCreator({
 }: BlogCreatorProps) {
   const editingId = initialData?.id ?? null;
 
+  // Map initial data to our new structure
+  const getInitialStatusOption = () => {
+    if (!initialData) return "Published";
+    if (initialData.isPublished) return "Published";
+    if (initialData.scheduledFor) return "Scheduled";
+    return "Draft";
+  };
+
   // Reverse-map stored website value → display label for the select
   const resolveWebsiteLabel = (stored?: string) => {
     const match = WEBSITE_OPTIONS.find((o) => o.value === stored);
@@ -468,9 +490,19 @@ export default function BlogCreator({
   const [category, setCategory] = useState(
     initialData?.category ?? "Industry News",
   );
-  const [status, setStatus] = useState(initialData?.status ?? "Published");
+  const [statusOption, setStatusOption] = useState(getInitialStatusOption());
   const [website, setWebsite] = useState(
     resolveWebsiteLabel(initialData?.website),
+  );
+  const [scheduledDate, setScheduledDate] = useState<Date | undefined>(
+    initialData?.scheduledFor
+      ? initialData.scheduledFor.toDate()
+      : undefined,
+  );
+  const [scheduledTime, setScheduledTime] = useState<string>(
+    initialData?.scheduledFor
+      ? format(initialData.scheduledFor.toDate(), "HH:mm:ss")
+      : "10:00:00",
   );
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [mainImagePrev, setMainImagePrev] = useState<string | null>(
@@ -525,6 +557,23 @@ export default function BlogCreator({
       return;
     }
 
+    if (statusOption === "Scheduled" && !scheduledDate) {
+      toast.error("Please pick a publish date for this scheduled story.");
+      return;
+    }
+
+    if (statusOption === "Scheduled" && scheduledDate) {
+      const [hours, minutes, seconds = 0] = scheduledTime
+        .split(":")
+        .map(Number);
+      const combinedDate = new Date(scheduledDate);
+      combinedDate.setHours(hours, minutes, seconds);
+      if (Number.isNaN(combinedDate.getTime())) {
+        toast.error("Invalid publish date or time.");
+        return;
+      }
+    }
+
     setIsSubmitLoading(true);
     try {
       let coverUrl = mainImagePrev;
@@ -547,10 +596,24 @@ export default function BlogCreator({
         .replace(/[^\w ]+/g, "")
         .replace(/ +/g, "-");
 
+      // Determine isPublished and scheduledFor
+      const isPublished = statusOption === "Published";
+      const scheduledFor =
+        statusOption === "Scheduled" && scheduledDate
+          ? (() => {
+              const [hours, minutes, seconds = 0] = scheduledTime
+                .split(":")
+                .map(Number);
+              const combinedDate = new Date(scheduledDate);
+              combinedDate.setHours(hours, minutes, seconds);
+              return Timestamp.fromDate(combinedDate);
+            })()
+          : null;
+
       const payload: BlogPayload = {
         title: mainTitle,
         category,
-        status,
+        isPublished,
         website,
         coverImage: coverUrl,
         sections: updatedSections,
@@ -560,10 +623,29 @@ export default function BlogCreator({
           slug: seoData.slug || autoSlug,
           description: seoData.description || "",
         },
+        scheduledFor,
       };
 
+      // #region debug-point E:client-payload
+      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"blog-schedule-not-publishing",runId:"pre-fix",hypothesisId:"E",location:"BlogCreator.tsx:handleSubmit",msg:"[DEBUG] client prepared blog payload",data:{editingId,title:payload.title,statusOption,isPublished:payload.isPublished,scheduledFor:payload.scheduledFor?.toDate().toISOString() ?? null,website:payload.website},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+
       await onSubmit(payload, editingId);
-      toast.success("Publication Synced");
+      toast.success(
+        statusOption === "Scheduled" && scheduledDate
+          ? `Story scheduled for ${format(
+              (() => {
+                const [hours, minutes, seconds = 0] = scheduledTime
+                  .split(":")
+                  .map(Number);
+                const d = new Date(scheduledDate);
+                d.setHours(hours, minutes, seconds);
+                return d;
+              })(),
+              "MMM d, yyyy HH:mm",
+            )}`
+          : "Publication Synced",
+      );
       onClose();
     } catch {
       toast.error("Sync Failed");
@@ -621,7 +703,7 @@ export default function BlogCreator({
                 <label className="text-[9px] font-bold uppercase tracking-widest opacity-40 block">
                   Visibility
                 </label>
-                <Select value={status} onValueChange={setStatus}>
+                <Select value={statusOption} onValueChange={setStatusOption}>
                   <SelectTrigger className="h-8 w-36 text-[10px] font-bold uppercase">
                     <SelectValue />
                   </SelectTrigger>
@@ -692,6 +774,24 @@ export default function BlogCreator({
             )}
 
             <Separator className="opacity-5" />
+
+            {statusOption === "Scheduled" && (
+              <div className="space-y-2 border border-foreground/10 p-4 bg-gray-50/50">
+                <label className="text-[9px] font-bold uppercase tracking-widest opacity-40 block">
+                  Publish Date & Time
+                </label>
+                <DatePickerTime
+                  date={scheduledDate}
+                  onDateChange={setScheduledDate}
+                  time={scheduledTime}
+                  onTimeChange={setScheduledTime}
+                />
+                <p className="text-[8px] font-bold uppercase tracking-wide opacity-30 flex items-center gap-1">
+                  <Clock size={9} />
+                  Auto-publishes once this date and time arrives
+                </p>
+              </div>
+            )}
 
             {/* Content blocks */}
             <div className="space-y-12">
@@ -958,15 +1058,17 @@ export default function BlogCreator({
           {isSubmitLoading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Publishing...
+              {statusOption === "Scheduled" ? "Scheduling…" : "Publishing…"}
             </>
           ) : editingId ? (
             <>
-              <Save size={14} className="mr-2" /> Update Story
+              <Save size={14} className="mr-2" />
+              {statusOption === "Scheduled" ? "Update Schedule" : "Update Story"}
             </>
           ) : (
             <>
-              <Save size={14} className="mr-2" /> Publish Story
+              <Save size={14} className="mr-2" />
+              {statusOption === "Scheduled" ? "Schedule Story" : "Publish Story"}
             </>
           )}
         </Button>
