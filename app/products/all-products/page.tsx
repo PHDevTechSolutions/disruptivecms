@@ -124,7 +124,7 @@ import {
   orderBy,
   serverTimestamp,
   where,
-} from "@/lib/firestore/client";
+} from "firebase/firestore";
 import { toast } from "sonner";
 import { logAuditEvent } from "@/lib/logger";
 import { useProductWorkflow } from "@/lib/useProductWorkflow";
@@ -1258,7 +1258,7 @@ function ReadOnlyProductCard({
   return (
     <motion.div
       variants={listItemVariants}
-      className="bg-white/5 border border-white/10 rounded-4xl p-4 hover:bg-white/8 hover:border-[#d11a2a]/20 transition-all relative overflow-hidden group"
+      className="bg-white/5 border border-white/10 rounded-[20px] p-4 hover:bg-white/[0.08] hover:border-[#d11a2a]/20 transition-all relative overflow-hidden group"
     >
       {/* Red accent glow on hover */}
       <div className="absolute -bottom-10 -right-10 w-28 h-28 bg-[#d11a2a]/5 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
@@ -1452,8 +1452,11 @@ function ReadOnlyFilterPanel({
                   <button
                     key={fam || "all"}
                     type="button"
-                    onClick={() => { onFamilyChange(fam); onClose(); }}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all text-left ${isActive ? "border-[#d11a2a]/50 bg-[#d11a2a]/10 text-white" : "border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/8"}`}
+                    onClick={() => {
+                      onFamilyChange(fam);
+                      onClose();
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all text-left ${isActive ? "border-[#d11a2a]/50 bg-[#d11a2a]/10 text-white" : "border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/[0.08]"}`}
                   >
                     <span className="text-[11px] font-black uppercase truncate">
                       {label}
@@ -1931,8 +1934,7 @@ function ReadOnlyAllProductsView() {
               <button
                 key={label}
                 type="button"
-                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-20 ${
-                  active
+                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all flex-1 max-w-[80px] ${active
                     ? "bg-[#d11a2a]/10 text-[#d11a2a]"
                     : "text-gray-600 hover:text-white"
                   }`}
@@ -2009,11 +2011,6 @@ function FullAllProductsView() {
   );
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
-  const [usageFilter, setUsageFilter] = React.useState("");
-  const [familyFilter, setFamilyFilter] = React.useState("");
-  const [classFilters, setClassFilters] = React.useState<
-    ("spf" | "standard" | "non-standard" | "usl")[]
-  >([]);
   const [rowsPerPageInput, setRowsPerPageInput] = React.useState("10");
 
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -2202,84 +2199,23 @@ function FullAllProductsView() {
 
   // Client-side search across itemDescription, all item codes, and name
   const filteredData = React.useMemo(() => {
-    try {
-      const results = data.filter((p) => {
-        // 1. Usage Filter
-        if (usageFilter) {
-          const usages = Array.isArray(p.productUsage) ? p.productUsage : [];
-          if (
-            !usages.some(
-              (u) => u.toUpperCase() === usageFilter.toUpperCase(),
-            )
-          )
-            return false;
-        }
-
-        // 2. Family Filter
-        if (familyFilter) {
-          const fam = p.productFamily || (p.categories as string) || "";
-          if (fam !== familyFilter) return false;
-        }
-
-        // 3. Class Filter
-        if (classFilters.length > 0) {
-          if (!classFilters.includes(p.productClass as any)) return false;
-        }
-
-        // 4. Date Filter (Recent 12h)
-        if (sortOption === "recent-12h") {
-          const ts =
-            p.createdAt?.toMillis?.() ??
-            (typeof p.createdAt === "number" ? p.createdAt : 0);
-          const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000;
-          if (ts < twelveHoursAgo) return false;
-        }
-
-        // 5. Search Filter
-        const q = globalFilter.trim().toLowerCase();
-        if (q) {
-          const descMatch = (p.itemDescription || p.name || "")
-            .toLowerCase()
-            .includes(q);
-          const litMatch = (p.litItemCode || "").toLowerCase().includes(q);
-          const ecoMatch = (p.ecoItemCode || "").toLowerCase().includes(q);
-          const itemMatch = (p.itemCode || "").toLowerCase().includes(q);
-
-          let codeMatch = false;
-          if (p.itemCodes) {
-            const codes = getFilledItemCodes(p.itemCodes);
-            codeMatch = codes.some(({ code }) =>
-              code.toLowerCase().includes(q),
-            );
-          }
-
-          if (
-            !descMatch &&
-            !litMatch &&
-            !ecoMatch &&
-            !itemMatch &&
-            !codeMatch
-          )
-            return false;
-        }
-
+    let items = data as unknown as Product[];
+    const q = globalFilter.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((p) => {
+      if ((p.itemDescription || p.name || "").toLowerCase().includes(q))
         return true;
-      });
-
-      console.log(`[Filtering] Applied. In: ${data.length}, Out: ${results.length}`, {
-        globalFilter,
-        usageFilter,
-        familyFilter,
-        classFilters,
-        sortOption,
-      });
-
-      return results;
-    } catch (error) {
-      console.error("[Filtering] Error applying filters:", error);
-      return data;
-    }
-  }, [data, globalFilter, usageFilter, familyFilter, classFilters, sortOption]);
+      if ((p.litItemCode || "").toLowerCase().includes(q)) return true;
+      if ((p.ecoItemCode || "").toLowerCase().includes(q)) return true;
+      if ((p.itemCode || "").toLowerCase().includes(q)) return true;
+      if (p.itemCodes) {
+        const codes = getFilledItemCodes(p.itemCodes);
+        if (codes.some(({ code }) => code.toLowerCase().includes(q)))
+          return true;
+      }
+      return false;
+    });
+  }, [data, globalFilter]);
 
   const [familySearch, setFamilySearch] = React.useState("");
 
@@ -3240,7 +3176,7 @@ function FullAllProductsView() {
     (table.getColumn("productClass")?.getFilterValue() as string[]) ?? [];
 
   const selectedCount = Object.keys(rowSelection).length;
-  const totalCount = filteredData.length;
+  const totalCount = data.length;
   const isFiltered =
     Boolean(globalFilter.trim()) ||
     Boolean(activeFamilyFilter) ||
@@ -3506,7 +3442,9 @@ function FullAllProductsView() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-60">
             <DropdownMenuItem
-              onClick={() => setClassFilters([])}
+              onClick={() =>
+                table.getColumn("productClass")?.setFilterValue([])
+              }
               className="flex items-center justify-between"
             >
               <span>All Classes</span>
@@ -3528,7 +3466,7 @@ function FullAllProductsView() {
                     const next = isSelected
                       ? activeClassFilter.filter((v) => v !== option.value)
                       : [...activeClassFilter, option.value];
-                    setClassFilters(next);
+                    table.getColumn("productClass")?.setFilterValue(next);
                   }}
                   className="flex items-center justify-between"
                 >
@@ -3628,7 +3566,9 @@ function FullAllProductsView() {
               <DropdownMenuItem
                 key={key}
                 onClick={() =>
-                  setUsageFilter(activeUsageFilter === key ? "" : key)
+                  table
+                    .getColumn("productUsage")
+                    ?.setFilterValue(activeUsageFilter === key ? "" : key)
                 }
                 className="flex items-center justify-between"
               >
@@ -3697,7 +3637,9 @@ function FullAllProductsView() {
             </div>
             <div className="max-h-64 overflow-y-auto overflow-x-hidden py-1">
               <DropdownMenuItem
-                onClick={() => setFamilyFilter("")}
+                onClick={() =>
+                  table.getColumn("productFamilyFilter")?.setFilterValue("")
+                }
                 className="flex items-center justify-between"
               >
                 <span className="text-muted-foreground italic">
@@ -3725,9 +3667,11 @@ function FullAllProductsView() {
                   <DropdownMenuItem
                     key={family}
                     onClick={() =>
-                      setFamilyFilter(
-                        activeFamilyFilter === family ? "" : family,
-                      )
+                      table
+                        .getColumn("productFamilyFilter")
+                        ?.setFilterValue(
+                          activeFamilyFilter === family ? "" : family,
+                        )
                     }
                     className="flex items-center gap-2 w-full overflow-hidden"
                   >
@@ -3890,58 +3834,17 @@ function FullAllProductsView() {
                 <button
                   type="button"
                   onClick={() =>
-                    setClassFilters(activeClassFilter.filter((v) => v !== cls))
+                    table.getColumn("productFamilyFilter")?.setFilterValue("")
                   }
                   className="ml-0.5 hover:text-destructive transition-colors"
                 >
                   <X className="h-3 w-3" />
                 </button>
               </span>
-            );
-          })}
-          {activeFamilyFilter && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <Layers className="h-3 w-3" />
-              {activeFamilyFilter}
-              <button
-                type="button"
-                onClick={() => setFamilyFilter("")}
-                className="ml-0.5 hover:text-destructive transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {activeUsageFilter && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
-            >
-              {activeUsageFilter === "OUTDOOR" ? (
-                <Trees className="h-3 w-3" />
-              ) : activeUsageFilter === "INDOOR" ? (
-                <Home className="h-3 w-3" />
-              ) : (
-                <Sun className="h-3 w-3" />
-              )}
-              {activeUsageFilter.charAt(0).toUpperCase() +
-                activeUsageFilter.slice(1).toLowerCase()}
-              <button
-                type="button"
-                onClick={() => setUsageFilter("")}
-                className="ml-0.5 hover:opacity-60 transition-opacity"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {sortOption && sortOption !== "newest" && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
-              <SlidersHorizontal className="h-3 w-3" />
-              {sortLabel[sortOption]}
-              <button
-                type="button"
-                onClick={() => setSortOption(null)}
-                className="ml-0.5 hover:text-destructive transition-colors"
+            )}
+            {activeUsageFilter && (
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${activeUsageFilter === "OUTDOOR" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : activeUsageFilter === "INDOOR" ? "bg-sky-50 border-sky-200 text-sky-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
               >
                 {activeUsageFilter === "OUTDOOR" ? (
                   <Trees className="h-3 w-3" />
