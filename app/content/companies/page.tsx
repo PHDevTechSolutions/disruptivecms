@@ -85,7 +85,7 @@ type Company = {
 const WEBSITE_OPTIONS = [
   "Disruptive Solutions Inc",
   "Ecoshift Corporation",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
 ];
 
 export default function CompanyManager() {

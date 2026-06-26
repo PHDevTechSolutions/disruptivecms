@@ -47,6 +47,9 @@ import {
   Clock,
   ArrowUp,
   ArrowDown,
+  AlertCircle,
+  CheckCircle2,
+  KeyRound,
 } from "lucide-react";
 
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -107,6 +110,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { auth, db } from "@/lib/firebase";
 import { secondaryAuth } from "@/lib/firebase-secondary";
@@ -114,6 +118,8 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   signOut,
+  updatePassword,
+  signInWithEmailAndPassword,
 } from "firebase/auth";
 import {
   collection,
@@ -330,6 +336,88 @@ function CountPill({
   );
 }
 
+// ─── Password Input Component ─────────────────────────────────────────────────
+
+function PasswordInput({
+  id,
+  label,
+  value,
+  autoComplete,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  autoComplete: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="space-y-1.5">
+      <label
+        htmlFor={id}
+        className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+      >
+        {label}
+      </label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-9 rounded-none text-sm"
+          autoComplete={autoComplete}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((current) => !current)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          disabled={disabled}
+          tabIndex={-1}
+        >
+          {visible ? (
+            <EyeOff className="h-4 w-4" />
+          ) : (
+            <Eye className="h-4 w-4" />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Password Helper Functions ────────────────────────────────────────────────
+
+function passwordErrorMessage(code: string) {
+  switch (code) {
+    case "auth/weak-password":
+      return "New password is too weak.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please wait a few minutes and try again.";
+    case "auth/network-request-failed":
+      return "Network error. Please check your connection.";
+    default:
+      return "Password change failed. Please try again.";
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function getErrorCode(error: unknown) {
+  if (typeof error === "object" && error && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : "";
+  }
+  return "";
+}
+
 // ─── Edit User Dialog ─────────────────────────────────────────────────────────
 
 function EditUserDialog({
@@ -348,6 +436,12 @@ function EditUserDialog({
   const [status, setStatus] = useState<"active" | "inactive">("active");
   const [scopeAccess, setScopeAccess] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  // Password change state
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // Populate fields when dialog opens
   useEffect(() => {
@@ -361,6 +455,11 @@ function EditUserDialog({
           ? user.scopeAccess
           : getScopeAccessForRole(user.role || ""),
       );
+      // Reset password fields
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordError("");
+      setPasswordSuccess("");
     }
   }, [user, open]);
 
@@ -399,9 +498,86 @@ function EditUserDialog({
     }
   };
 
+  const validatePasswords = () => {
+    if (!newPassword || !confirmPassword) {
+      return "Please fill in all password fields.";
+    }
+    if (newPassword.length < 8) {
+      return "New password must be at least 8 characters.";
+    }
+    if (newPassword !== confirmPassword) {
+      return "New password and confirmation do not match.";
+    }
+    return "";
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    const validationError = validatePasswords();
+    if (validationError) {
+      setPasswordError(validationError);
+      return;
+    }
+
+    // Only allow password change for password provider accounts
+    if (user.provider !== "password") {
+      setPasswordError(
+        `Password change is not available for accounts using ${user.provider} authentication.`,
+      );
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await fetch("/api/admin/user/update-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.uid,
+          newPassword: newPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update password");
+      }
+
+      // Log the audit event
+      await logAuditEvent({
+        action: "update",
+        entityType: "user",
+        entityId: user.id,
+        entityName: user.fullName,
+        context: {
+          page: "/admin/users",
+          source: "all-users:edit-password",
+          collection: "adminaccount",
+        },
+      });
+
+      setPasswordSuccess("Password updated successfully.");
+      toast.success("Password updated successfully.");
+      // Reset fields
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: unknown) {
+      setPasswordError(
+        getErrorMessage(err, "Password change failed. Please try again."),
+      );
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-1">
             <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -416,83 +592,182 @@ function EditUserDialog({
           </div>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
-          {/* Full Name */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              Full Name
-            </label>
-            <Input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Full name"
-              className="h-9 text-sm"
-            />
-          </div>
+        <div className="space-y-6 py-2">
+          {/* Account Info Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Account Info
+              </span>
+            </div>
 
-          {/* Role — superadmin only */}
-          {isSuperAdmin && (
+            {/* Full Name */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                Role
+                Full Name
               </label>
-              <Select value={role} onValueChange={setRole}>
+              <Input
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Full name"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            {/* Role — superadmin only */}
+            {isSuperAdmin && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Role
+                </label>
+                <Select value={role} onValueChange={setRole}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROLE_CONFIG.map((r) => (
+                      <SelectItem key={r.value} value={r.value}>
+                        <span className="flex items-center gap-2">
+                          <span className={r.color}>{r.icon}</span>
+                          {r.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Scope Access — editable by superadmin, read-only for others */}
+            {role && (
+              <ScopeAccessSelector
+                role={role}
+                value={scopeAccess}
+                onChange={setScopeAccess}
+                isSuperAdmin={isSuperAdmin}
+              />
+            )}
+
+            {/* Status */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Status
+              </label>
+              <Select
+                value={status}
+                onValueChange={(v) => setStatus(v as "active" | "inactive")}
+              >
                 <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Select role" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_CONFIG.map((r) => (
-                    <SelectItem key={r.value} value={r.value}>
-                      <span className="flex items-center gap-2">
-                        <span className={r.color}>{r.icon}</span>
-                        {r.label}
-                      </span>
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-          )}
-
-          {/* Scope Access — editable by superadmin, read-only for others */}
-          {role && (
-            <ScopeAccessSelector
-              role={role}
-              value={scopeAccess}
-              onChange={setScopeAccess}
-              isSuperAdmin={isSuperAdmin}
-            />
-          )}
-
-          {/* Status */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              Status
-            </label>
-            <Select
-              value={status}
-              onValueChange={(v) => setStatus(v as "active" | "inactive")}
-            >
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
+
+          {/* Password Change Section (Super Admin Only) */}
+          {isSuperAdmin && (
+            <div className="space-y-4">
+              <Separator />
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Change Password
+                </span>
+              </div>
+
+              {user?.provider !== "password" ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Password change unavailable</AlertTitle>
+                  <AlertDescription>
+                    This account uses {user?.provider} authentication. Password
+                    change is not available.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <form onSubmit={handlePasswordChange} className="space-y-4">
+                  <PasswordInput
+                    id="edit-new-password"
+                    label="New Password"
+                    value={newPassword}
+                    onChange={(value) => {
+                      setNewPassword(value);
+                      setPasswordError("");
+                      setPasswordSuccess("");
+                    }}
+                    autoComplete="new-password"
+                    disabled={changingPassword}
+                  />
+                  <PasswordInput
+                    id="edit-confirm-password"
+                    label="Confirm New Password"
+                    value={confirmPassword}
+                    onChange={(value) => {
+                      setConfirmPassword(value);
+                      setPasswordError("");
+                      setPasswordSuccess("");
+                    }}
+                    autoComplete="new-password"
+                    disabled={changingPassword}
+                  />
+
+                  {passwordError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Password not updated</AlertTitle>
+                      <AlertDescription>{passwordError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {passwordSuccess && (
+                    <Alert>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <AlertTitle>Password updated</AlertTitle>
+                      <AlertDescription>{passwordSuccess}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  <Button
+                    type="submit"
+                    className="h-9 w-full rounded-none"
+                    disabled={changingPassword}
+                  >
+                    {changingPassword ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Updating...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="w-4 h-4 mr-2" />
+                        Update Password
+                      </>
+                    )}
+                  </Button>
+                </form>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={isSaving}
+            disabled={isSaving || changingPassword}
           >
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isSaving} className="gap-2">
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || changingPassword}
+            className="gap-2"
+          >
             {isSaving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (

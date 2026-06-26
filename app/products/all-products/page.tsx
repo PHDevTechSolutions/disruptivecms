@@ -1,22 +1,6 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// app/products/all-products/page.tsx  (REFACTORED)
-//
-// Changes from original:
-//  - Added ReadOnlyProductsView for roles with read:products only
-//    (office_sales, project_sales, director)
-//  - Read-only view: mobile-first, dark portal aesthetic, framer-motion
-//  - Read-only view: search, filters, product list, view/download TDS,
-//    bulk download TDS — NO checkboxes, NO write actions
-//  - All existing write/verify logic PRESERVED exactly
-//  - Render branching: canWrite → existing full UI | !canWrite → read-only view
-//
-// TS FIXES applied:
-//  1. listItemVariants ease array cast `as const` to satisfy Framer Motion Easing type
-//  2. activeFamilyFilter + activeUsageFilter moved AFTER useReactTable() declaration
-// ─────────────────────────────────────────────────────────────────────────────
-
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ProtectedLayout } from "@/components/layouts/protected-layout";
 import * as React from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -28,8 +12,10 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
   getSortedRowModel,
+  getFilteredRowModel,
   useReactTable,
   FilterFn,
+  ColumnFiltersState,
 } from "@tanstack/react-table";
 import {
   Pencil,
@@ -92,6 +78,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -391,9 +384,9 @@ const WEBSITE_OPTIONS = [
     transformNote: null,
   },
   {
-    id: "vah",
-    label: "Value Acquisitions Holdings",
-    value: "Value Acquisitions Holdings",
+    id: "buildchem",
+    label: "Buildchem Solutions Inc",
+    value: "Buildchem Solutions Inc",
     color: "bg-amber-50 border-amber-200 text-amber-700",
     activeColor: "bg-amber-100 border-amber-500 text-amber-800",
     dot: "bg-amber-500",
@@ -428,43 +421,43 @@ const PRODUCT_CLASS_OPTIONS: {
   activeColor: string;
   dot: string;
 }[] = [
-  {
-    value: "spf",
-    label: "SPF",
-    description: "Special product family items",
-    icon: <Sparkles className="w-4 h-4" />,
-    color: "bg-violet-50 border-violet-200 text-violet-700",
-    activeColor: "bg-violet-100 border-violet-500 text-violet-800",
-    dot: "bg-violet-500",
-  },
-  {
-    value: "standard",
-    label: "Standard",
-    description: "Regular inventory items",
-    icon: <Package className="w-4 h-4" />,
-    color: "bg-slate-50 border-slate-200 text-slate-700",
-    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
-    dot: "bg-slate-500",
-  },
-  {
-    value: "non-standard",
-    label: "Non-Standard",
-    description: "Custom or non-regular items",
-    icon: <CircleDashed className="w-4 h-4" />,
-    color: "bg-amber-50 border-amber-200 text-amber-700",
-    activeColor: "bg-amber-100 border-amber-500 text-amber-800",
-    dot: "bg-amber-500",
-  },
-  {
-    value: "usl",
-    label: "USL",
-    description: "Until Supply Lasts",
-    icon: <AlertCircle className="w-4 h-4" />,
-    color: "bg-rose-50 border-rose-200 text-rose-700",
-    activeColor: "bg-rose-100 border-rose-500 text-rose-800",
-    dot: "bg-rose-500",
-  },
-];
+    {
+      value: "spf",
+      label: "SPF",
+      description: "Special product family items",
+      icon: <Sparkles className="w-4 h-4" />,
+      color: "bg-violet-50 border-violet-200 text-violet-700",
+      activeColor: "bg-violet-100 border-violet-500 text-violet-800",
+      dot: "bg-violet-500",
+    },
+    {
+      value: "standard",
+      label: "Standard",
+      description: "Regular inventory items",
+      icon: <Package className="w-4 h-4" />,
+      color: "bg-slate-50 border-slate-200 text-slate-700",
+      activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+      dot: "bg-slate-500",
+    },
+    {
+      value: "non-standard",
+      label: "Non-Standard",
+      description: "Custom or non-regular items",
+      icon: <CircleDashed className="w-4 h-4" />,
+      color: "bg-amber-50 border-amber-200 text-amber-700",
+      activeColor: "bg-amber-100 border-amber-500 text-amber-800",
+      dot: "bg-amber-500",
+    },
+    {
+      value: "usl",
+      label: "USL",
+      description: "Unspecified or legacy items",
+      icon: <AlertCircle className="w-4 h-4" />,
+      color: "bg-rose-50 border-rose-200 text-rose-700",
+      activeColor: "bg-rose-100 border-rose-500 text-rose-800",
+      dot: "bg-rose-500",
+    },
+  ];
 
 const TDS_BRAND_OPTIONS: {
   value: "LIT" | "ECOSHIFT";
@@ -473,21 +466,21 @@ const TDS_BRAND_OPTIONS: {
   activeColor: string;
   dot: string;
 }[] = [
-  {
-    value: "LIT",
-    label: "LIT",
-    description: "LIT brand header & footer",
-    activeColor: "bg-slate-100 border-slate-500 text-slate-800",
-    dot: "bg-slate-500",
-  },
-  {
-    value: "ECOSHIFT",
-    label: "Ecoshift",
-    description: "Ecoshift brand header & footer",
-    activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
-    dot: "bg-emerald-500",
-  },
-];
+    {
+      value: "LIT",
+      label: "LIT",
+      description: "LIT brand header & footer",
+      activeColor: "bg-slate-100 border-slate-500 text-slate-800",
+      dot: "bg-slate-500",
+    },
+    {
+      value: "ECOSHIFT",
+      label: "Ecoshift",
+      description: "Ecoshift brand header & footer",
+      activeColor: "bg-emerald-100 border-emerald-500 text-emerald-800",
+      dot: "bg-emerald-500",
+    },
+  ];
 
 // ─── Custom filter (PRESERVED) ────────────────────────────────────────────────
 
@@ -498,6 +491,22 @@ const multiValueFilter: FilterFn<Product> = (row, columnId, filterValue) => {
     return value.some((v: string) => v.toLowerCase().includes(filter));
   return String(value).toLowerCase().includes(filter);
 };
+
+function formatTimestamp(ts: any): string {
+  if (!ts) return "—";
+  try {
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    if (isNaN(date.getTime())) return "—";
+
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+
+    return `${y}-${m}-${d}`;
+  } catch (e) {
+    return "—";
+  }
+}
 
 // ─── Badge components (PRESERVED) ────────────────────────────────────────────
 
@@ -736,15 +745,15 @@ function BulkGenerateTdsDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   jobs: TdsJob[];
-  onStart: (brand: "LIT" | "ECOSHIFT") => void;
+  onStart: (brand: "LIT" | "ECOSHIFT" | "PLAIN") => void;
   isRunning: boolean;
 }) {
   const [selectedBrand, setSelectedBrand] = React.useState<
-    "LIT" | "ECOSHIFT" | null
-  >(null);
+    "LIT" | "ECOSHIFT" | "PLAIN"
+  >("PLAIN");
 
   React.useEffect(() => {
-    if (open) setSelectedBrand(null);
+    if (open) setSelectedBrand("PLAIN");
   }, [open]);
 
   const total = jobs.length;
@@ -786,38 +795,33 @@ function BulkGenerateTdsDialog({
         </DialogHeader>
 
         {!isRunning && !isComplete && (
-          <div className="space-y-2.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Select Brand
-            </p>
-            {TDS_BRAND_OPTIONS.map((opt) => {
-              const isSelected = selectedBrand === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setSelectedBrand(opt.value)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all ${isSelected ? `${opt.activeColor} shadow-sm` : "border-border bg-background hover:border-muted-foreground/30 hover:bg-muted/30"}`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? opt.dot : "bg-muted-foreground/30"}`}
-                  />
-                  <span className="flex flex-col flex-1">
-                    <span className="text-sm font-semibold">{opt.label}</span>
-                    <span
-                      className={`text-[11px] ${isSelected ? "opacity-70" : "text-muted-foreground"}`}
-                    >
-                      {opt.description}
-                    </span>
-                  </span>
-                  <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all ${isSelected ? "opacity-100" : "opacity-0"}`}
-                  >
-                    <Check className="w-3 h-3" />
-                  </span>
-                </button>
-              );
-            })}
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Select Template
+              </p>
+              <Select
+                value={selectedBrand}
+                onValueChange={(v: any) => setSelectedBrand(v)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="No template (plain TDS)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PLAIN">No template (plain TDS)</SelectItem>
+                  <SelectItem value="LIT">LIT Template</SelectItem>
+                  <SelectItem value="ECOSHIFT">ECOSHIFT Template</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-lg bg-muted/50 p-3 border border-dashed">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {selectedBrand === "PLAIN"
+                  ? "Generated PDFs will contain core product data in a clean tabular format without brand headers or footers."
+                  : `Generated PDFs will include branded ${selectedBrand} header and footer images, while preserving all core TDS content.`}
+              </p>
+            </div>
           </div>
         )}
 
@@ -1120,9 +1124,28 @@ function AssignProductClassDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAssigning}>Cancel</Button>
-          <Button onClick={handleConfirm} disabled={!selectedClass || isAssigning} className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}>
-            {isAssigning ? <><Loader2 className="h-4 w-4 animate-spin" /> Assigning...</> : <><Tag className="h-4 w-4" /> Set as {selectedClass === "spf" ? "SPF" : "Standard"}</>}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isAssigning}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={!selectedClass || isAssigning}
+            className={`gap-2 ${selectedClass === "spf" ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}`}
+          >
+            {isAssigning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Assigning...
+              </>
+            ) : (
+              <>
+                <Tag className="h-4 w-4" /> Set as{" "}
+                {selectedClass === "spf" ? "SPF" : "Standard"}
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1193,10 +1216,9 @@ function ReadOnlyTdsButton({
       disabled={!hasTds}
       className={`
         shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all active:scale-95
-        ${
-          hasTds
-            ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
-            : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
+        ${hasTds
+          ? "bg-[#d11a2a]/10 border border-[#d11a2a]/30 text-[#d11a2a] hover:bg-[#d11a2a]/20"
+          : "bg-white/5 border border-white/10 text-gray-600 cursor-not-allowed"
         }
       `}
     >
@@ -1289,6 +1311,12 @@ function ReadOnlyProductCard({
               {family}
             </p>
           )}
+
+          {/* Created At */}
+          <p className="text-[8px] font-medium text-gray-600 mt-1 flex items-center gap-1">
+            <Clock size={8} />
+            {formatTimestamp(product.createdAt)}
+          </p>
         </div>
 
         {/* Right column: usage + class + action */}
@@ -1310,7 +1338,9 @@ function ReadOnlyProductCard({
               </span>
             )}
             {cls && (
-              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}>
+              <span
+                className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border ${cls === "spf" ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-white/5 text-gray-500 border-white/10"}`}
+              >
                 {cls === "spf" ? "SPF" : "Std"}
               </span>
             )}
@@ -1404,7 +1434,10 @@ function ReadOnlyFilterPanel({
                 Filter by Family
               </p>
               <button
-                onClick={() => { onFamilyChange(""); onClose(); }}
+                onClick={() => {
+                  onFamilyChange("");
+                  onClose();
+                }}
                 className="text-[9px] font-black uppercase text-gray-500 hover:text-white transition-colors"
               >
                 Clear Family
@@ -1461,6 +1494,49 @@ function ReadOnlyAllProductsView() {
     React.useState<Product | null>(null);
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
 
+  // ── URL Syncing (Persistence) ─────────────────────────────────────────────
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  React.useEffect(() => {
+    if (loading) return;
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (search) params.set("q", search);
+    else params.delete("q");
+
+    if (usageTab) params.set("usage", usageTab);
+    else params.delete("usage");
+
+    if (familyFilter) params.set("family", familyFilter);
+    else params.delete("family");
+
+    if (classFilters.length > 0) params.set("class", classFilters.join(","));
+    else params.delete("class");
+
+    const newQuery = params.toString();
+    if (newQuery !== searchParams.toString()) {
+      router.replace(`${pathname}?${newQuery}`, { scroll: false });
+    }
+  }, [search, usageTab, familyFilter, classFilters, loading]);
+
+  // Initial load from URL
+  React.useEffect(() => {
+    if (loading) return;
+    const q = searchParams.get("q");
+    if (q) setSearch(q);
+
+    const u = searchParams.get("usage") as UsageFilter;
+    if (u) setUsageTab(u);
+
+    const f = searchParams.get("family");
+    if (f) setFamilyFilter(f);
+
+    const c = searchParams.get("class");
+    if (c) setClassFilters(c.split(",") as any);
+  }, [loading]);
+
   React.useEffect(() => {
     const mergeAndSort = (a: Product[], b: Product[]): Product[] => {
       const seen = new Set<string>();
@@ -1509,17 +1585,33 @@ function ReadOnlyAllProductsView() {
     );
 
     const unsubA = onSnapshot(qAssigned, (snap) => {
-      assignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
+      assignedData = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as Product[];
       assignedReady = true;
       flush();
     });
-    const unsubU = onSnapshot(qUnassigned, (snap) => {
-      unassignedData = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[];
-      unassignedReady = true;
-      flush();
-    }, () => { unassignedReady = true; flush(); });
+    const unsubU = onSnapshot(
+      qUnassigned,
+      (snap) => {
+        unassignedData = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Product[];
+        unassignedReady = true;
+        flush();
+      },
+      () => {
+        unassignedReady = true;
+        flush();
+      },
+    );
 
-    return () => { unsubA(); unsubU(); };
+    return () => {
+      unsubA();
+      unsubU();
+    };
   }, []);
 
   const uniqueFamilies = React.useMemo(() => {
@@ -1626,11 +1718,10 @@ function ReadOnlyAllProductsView() {
                 key={tab.value || "all"}
                 type="button"
                 onClick={() => setUsageTab(tab.value as UsageFilter)}
-                className={`shrink-0 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${
-                  isActive
+                className={`shrink-0 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${isActive
                     ? "bg-[#d11a2a] text-white shadow-lg shadow-[#d11a2a]/20"
                     : "bg-white/5 border border-white/10 text-gray-500 hover:text-white hover:bg-white/10"
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>
@@ -1688,11 +1779,10 @@ function ReadOnlyAllProductsView() {
         <button
           type="button"
           onClick={() => setFilterPanelOpen(true)}
-          className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${
-            familyFilter || classFilters.length > 0
+          className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 ${familyFilter || classFilters.length > 0
               ? "bg-[#d11a2a]/10 border-[#d11a2a]/40 text-[#d11a2a]"
               : "bg-white/5 border-white/10 text-gray-500 hover:text-white"
-          }`}
+            }`}
         >
           <FilterIcon size={12} />
           {familyFilter || classFilters.length > 0
@@ -1809,11 +1899,10 @@ function ReadOnlyAllProductsView() {
               key={n}
               type="button"
               onClick={() => setCurrentPage(n)}
-              className={`w-8 h-8 rounded-xl text-[10px] font-black transition-all active:scale-95 ${
-                n === currentPage
+              className={`w-8 h-8 rounded-xl text-[10px] font-black transition-all active:scale-95 ${n === currentPage
                   ? "bg-[#d11a2a] text-white shadow-lg shadow-[#d11a2a]/20"
                   : "bg-white/5 border border-white/10 text-gray-500 hover:text-white"
-              }`}
+                }`}
             >
               {n}
             </button>
@@ -1846,7 +1935,7 @@ function ReadOnlyAllProductsView() {
                   active
                     ? "bg-[#d11a2a]/10 text-[#d11a2a]"
                     : "text-gray-600 hover:text-white"
-                }`}
+                  }`}
               >
                 <Icon size={18} />
                 <span className="text-[8px] font-black uppercase tracking-wider">
@@ -1915,6 +2004,9 @@ function FullAllProductsView() {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
+    [],
+  );
   const [rowSelection, setRowSelection] = React.useState({});
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [usageFilter, setUsageFilter] = React.useState("");
@@ -1941,6 +2033,83 @@ function FullAllProductsView() {
   const [isTdsDownloading, setIsTdsDownloading] = React.useState(false);
   const [sortOption, setSortOption] = React.useState<SortOption>(null);
   const [bulkDownloadTdsOpen, setBulkDownloadTdsOpen] = React.useState(false);
+
+  // ── URL Syncing (Persistence) ─────────────────────────────────────────────
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  React.useEffect(() => {
+    if (loading) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+
+    // Sync column filters to URL
+    columnFilters.forEach((f) => {
+      if (Array.isArray(f.value)) {
+        params.set(f.id, f.value.join(","));
+      } else if (f.value) {
+        params.set(f.id, String(f.value));
+      } else {
+        params.delete(f.id);
+      }
+    });
+
+    // Remove params for cleared filters
+    [
+      "productClass",
+      "productUsage",
+      "productFamilyFilter",
+    ].forEach((id) => {
+      if (!columnFilters.find((f) => f.id === id)) {
+        params.delete(id);
+      }
+    });
+
+    if (globalFilter) params.set("q", globalFilter);
+    else params.delete("q");
+
+    if (sortOption) params.set("sort", sortOption);
+    else params.delete("sort");
+
+    const newQuery = params.toString();
+    const currentQuery = searchParams.toString();
+
+    if (newQuery !== currentQuery) {
+      router.replace(`${pathname}?${newQuery}`, { scroll: false });
+    }
+  }, [columnFilters, globalFilter, sortOption, loading]);
+
+  // Initial load from URL
+  React.useEffect(() => {
+    if (loading) return;
+
+    const newFilters: ColumnFiltersState = [];
+    const q = searchParams.get("q");
+    if (q) setGlobalFilter(q);
+
+    const s = searchParams.get("sort") as SortOption;
+    if (s) setSortOption(s);
+
+    searchParams.forEach((value: string, key: string) => {
+      if (
+        [
+          "productClass",
+          "productUsage",
+          "productFamilyFilter",
+        ].includes(key)
+      ) {
+        if (key === "productClass") {
+          newFilters.push({ id: key, value: value.split(",") });
+        } else {
+          newFilters.push({ id: key, value });
+        }
+      }
+    });
+
+    if (newFilters.length > 0) setColumnFilters(newFilters);
+  }, [loading]);
+
   // ── Data Fetching ─────────────────────────────────────────────────────────
 
   React.useEffect(() => {
@@ -2268,13 +2437,24 @@ function FullAllProductsView() {
     const t = toast.loading(
       `${isRequestMode ? "Submitting" : "Setting"} ${count} product${count !== 1 ? "s" : ""} to "${label}"...`,
     );
-    let direct = 0, pending = 0, errors = 0;
-    await Promise.all(rows.map(async (product) => {
-      try {
-        const result = await submitProductSetClass({ product, productClass, originPage: "/products/all-products", source: "all-products:bulk-set-product-class" });
-        result.mode === "pending" ? pending++ : direct++;
-      } catch { errors++; }
-    }));
+    let direct = 0,
+      pending = 0,
+      errors = 0;
+    await Promise.all(
+      rows.map(async (product) => {
+        try {
+          const result = await submitProductSetClass({
+            product,
+            productClass,
+            originPage: "/products/all-products",
+            source: "all-products:bulk-set-product-class",
+          });
+          result.mode === "pending" ? pending++ : direct++;
+        } catch {
+          errors++;
+        }
+      }),
+    );
     if (errors === 0) {
       const parts: string[] = [];
       if (direct > 0) parts.push(`${direct} set to "${label}"`);
@@ -2300,7 +2480,7 @@ function FullAllProductsView() {
     setBulkTdsOpen(true);
   };
 
-  const handleStartBulkTds = async (brand: "LIT" | "ECOSHIFT") => {
+  const handleStartBulkTds = async (template: "LIT" | "ECOSHIFT" | "PLAIN") => {
     setIsTdsRunning(true);
     const productMap = new Map<string, Product>(
       table.getSelectedRowModel().rows.map((r) => [r.original.id, r.original]),
@@ -2336,6 +2516,12 @@ function FullAllProductsView() {
           }))
           .filter((group) => (group.specs ?? []).length > 0);
 
+        const brand = Array.isArray(product.brands)
+          ? (product.brands[0] ?? "")
+          : Array.isArray(product.brand)
+            ? ((product.brand as string[])[0] ?? "")
+            : ((product.brand as string) ?? "");
+
         const p = product as any;
 
         const tdsBlob = await generateTdsPdf({
@@ -2344,8 +2530,8 @@ function FullAllProductsView() {
           litItemCode: resolvedCodes.LIT,
           ecoItemCode: resolvedCodes.ECOSHIFT,
           technicalSpecs,
-          brand,
-          includeBrandAssets: false,
+          brand: template === "PLAIN" ? (brand as any) : template,
+          includeBrandAssets: template !== "PLAIN",
           mainImageUrl:
             product.mainImage ||
             (Array.isArray(product.rawImage)
@@ -2366,6 +2552,8 @@ function FullAllProductsView() {
           wiringLayoutUrl: p.wiringLayoutImage || undefined,
           terminalLayoutUrl: p.terminalLayoutImage || undefined,
           accessoriesImageUrl: p.accessoriesImage || undefined,
+          typeOfPlugUrl: p.typeOfPlugImage || undefined,
+          wiringConnectionUrl: p.wiringConnectionImage || undefined,
         });
 
         const primaryCode =
@@ -2396,10 +2584,10 @@ function FullAllProductsView() {
           prev.map((j) =>
             j.productId === job.productId
               ? {
-                  ...j,
-                  status: "error",
-                  error: err?.message ?? "Unknown error",
-                }
+                ...j,
+                status: "error",
+                error: err?.message ?? "Unknown error",
+              }
               : j,
           ),
         );
@@ -2419,7 +2607,7 @@ function FullAllProductsView() {
         bulk: true,
       },
       metadata: {
-        brand,
+        template,
         total: tdsJobs.length,
         productIds: tdsJobs.map((j) => j.productId),
       },
@@ -2833,16 +3021,19 @@ function FullAllProductsView() {
         <ProductClassBadge
           value={
             row.getValue("productClass") as
-              | "spf"
-              | "standard"
-              | "non-standard"
-              | "usl"
-              | ""
+            | "spf"
+            | "standard"
+            | "non-standard"
+            | "usl"
+            | ""
           }
         />
       ),
       filterFn: (row, _, filterValue) => {
-        if (!filterValue || (Array.isArray(filterValue) && filterValue.length === 0))
+        if (
+          !filterValue ||
+          (Array.isArray(filterValue) && filterValue.length === 0)
+        )
           return true;
         const val = row.getValue("productClass") as string;
         if (Array.isArray(filterValue)) {
@@ -2922,6 +3113,21 @@ function FullAllProductsView() {
         );
       },
       filterFn: multiValueFilter,
+    },
+    {
+      accessorKey: "createdAt",
+      header: () => (
+        <div className="text-xs font-medium flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          Created At
+        </div>
+      ),
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {formatTimestamp(row.original.createdAt)}
+        </span>
+      ),
+      enableHiding: true,
     },
     {
       id: "actions",
@@ -3013,28 +3219,33 @@ function FullAllProductsView() {
     data: sortedData,
     columns,
     onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
-    state: { sorting, columnVisibility, rowSelection },
+    state: { sorting, columnVisibility, rowSelection, columnFilters },
     filterFns: { multiValue: multiValueFilter },
   });
 
   // FIX 2: These two derivations now appear AFTER `table` is initialised above,
   // eliminating TS2448 ("used before its declaration") and TS2454 ("used before assigned").
-  const activeFamilyFilter = familyFilter;
-  const activeUsageFilter = usageFilter;
-  const activeClassFilter = classFilters;
+  const activeFamilyFilter =
+    (table.getColumn("productFamilyFilter")?.getFilterValue() as string) ?? "";
+  const activeUsageFilter =
+    (table.getColumn("productUsage")?.getFilterValue() as string) ?? "";
+  const activeClassFilter =
+    (table.getColumn("productClass")?.getFilterValue() as string[]) ?? [];
 
   const selectedCount = Object.keys(rowSelection).length;
   const totalCount = filteredData.length;
   const isFiltered =
     Boolean(globalFilter.trim()) ||
-    Boolean(familyFilter) ||
-    Boolean(usageFilter) ||
-    classFilters.length > 0 ||
+    Boolean(activeFamilyFilter) ||
+    Boolean(activeUsageFilter) ||
+    Boolean(activeClassFilter.length > 0) ||
     sortOption === "recent-12h";
 
   const renderEditMode = () => (
@@ -3096,7 +3307,7 @@ function FullAllProductsView() {
           >
             <Download className="h-4 w-4" /> Bulk Download TDS
           </Button>
-          <BulkUploader onUploadComplete={() => {}} />
+          <BulkUploader onUploadComplete={() => { }} />
           {userCanWrite && (
             <Button
               onClick={() => {
@@ -3287,8 +3498,8 @@ function FullAllProductsView() {
                 ? "Product Class"
                 : activeClassFilter.length === 1
                   ? PRODUCT_CLASS_OPTIONS.find(
-                      (o) => o.value === activeClassFilter[0],
-                    )?.label
+                    (o) => o.value === activeClassFilter[0],
+                  )?.label
                   : `${activeClassFilter.length} Classes`}
               <ChevronDown className="h-4 w-4" />
             </Button>
@@ -3324,11 +3535,11 @@ function FullAllProductsView() {
                   <span className="flex items-center gap-2">
                     {React.isValidElement(option.icon)
                       ? React.cloneElement(
-                          option.icon as React.ReactElement<any>,
-                          {
-                            className: "w-3.5 h-3.5",
-                          },
-                        )
+                        option.icon as React.ReactElement<any>,
+                        {
+                          className: "w-3.5 h-3.5",
+                        },
+                      )
                       : null}{" "}
                     {option.label}
                   </span>
@@ -3373,14 +3584,16 @@ function FullAllProductsView() {
               )}
               {activeUsageFilter
                 ? activeUsageFilter.charAt(0).toUpperCase() +
-                  activeUsageFilter.slice(1).toLowerCase()
+                activeUsageFilter.slice(1).toLowerCase()
                 : "Usage"}
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem
-              onClick={() => setUsageFilter("")}
+              onClick={() =>
+                table.getColumn("productUsage")?.setFilterValue("")
+              }
               className="flex items-center justify-between"
             >
               <span>All Usage</span>
@@ -3435,6 +3648,8 @@ function FullAllProductsView() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Brand filter */}
 
         {/* Product Family filter */}
         <DropdownMenu
@@ -3636,28 +3851,48 @@ function FullAllProductsView() {
         activeUsageFilter ||
         activeClassFilter.length > 0 ||
         (sortOption && sortOption !== "newest")) && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted-foreground">Active:</span>
-          {activeClassFilter.map((cls) => {
-            const option = PRODUCT_CLASS_OPTIONS.find((o) => o.value === cls);
-            if (!option) return null;
-            return (
-              <span
-                key={cls}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${option.color}`}
-              >
-                {React.isValidElement(option.icon)
-                  ? React.cloneElement(option.icon as React.ReactElement<any>, {
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground">Active:</span>
+            {activeClassFilter.map((cls) => {
+              const option = PRODUCT_CLASS_OPTIONS.find((o) => o.value === cls);
+              if (!option) return null;
+              return (
+                <span
+                  key={cls}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${option.color}`}
+                >
+                  {React.isValidElement(option.icon)
+                    ? React.cloneElement(option.icon as React.ReactElement<any>, {
                       className: "h-3 w-3",
                     })
-                  : null}
-                {option.label}
+                    : null}
+                  {option.label}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      table
+                        .getColumn("productClass")
+                        ?.setFilterValue(
+                          activeClassFilter.filter((v) => v !== cls),
+                        )
+                    }
+                    className="ml-0.5 hover:opacity-60 transition-opacity"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+            {activeFamilyFilter && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+                <Layers className="h-3 w-3" />
+                {activeFamilyFilter}
                 <button
                   type="button"
                   onClick={() =>
                     setClassFilters(activeClassFilter.filter((v) => v !== cls))
                   }
-                  className="ml-0.5 hover:opacity-60 transition-opacity"
+                  className="ml-0.5 hover:text-destructive transition-colors"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -3708,12 +3943,41 @@ function FullAllProductsView() {
                 onClick={() => setSortOption(null)}
                 className="ml-0.5 hover:text-destructive transition-colors"
               >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-        </div>
-      )}
+                {activeUsageFilter === "OUTDOOR" ? (
+                  <Trees className="h-3 w-3" />
+                ) : activeUsageFilter === "INDOOR" ? (
+                  <Home className="h-3 w-3" />
+                ) : (
+                  <Sun className="h-3 w-3" />
+                )}
+                {activeUsageFilter.charAt(0).toUpperCase() +
+                  activeUsageFilter.slice(1).toLowerCase()}
+                <button
+                  type="button"
+                  onClick={() =>
+                    table.getColumn("productUsage")?.setFilterValue("")
+                  }
+                  className="ml-0.5 hover:opacity-60 transition-opacity"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {sortOption && sortOption !== "newest" && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
+                <SlidersHorizontal className="h-3 w-3" />
+                {sortLabel[sortOption]}
+                <button
+                  type="button"
+                  onClick={() => setSortOption(null)}
+                  className="ml-0.5 hover:text-destructive transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
 
       {/* Table */}
       <div className="rounded-lg border">
@@ -3726,9 +3990,9 @@ function FullAllProductsView() {
                     {header.isPlaceholder
                       ? null
                       : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
                   </TableHead>
                 ))}
               </TableRow>

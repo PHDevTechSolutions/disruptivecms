@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -27,6 +27,10 @@ import { auth } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { toast } from "sonner";
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function NavUser({
   user,
 }: {
@@ -39,6 +43,8 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar();
   const router = useRouter();
+  const pathname = usePathname();
+  const isProfileActive = pathname === "/profile";
 
   const handleLogout = async () => {
     const logoutToast = toast.loading("Signing out...");
@@ -58,10 +64,10 @@ export function NavUser({
       });
 
       router.replace("/auth/login");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast.error("Logout failed", {
         id: logoutToast,
-        description: error.message || "An error occurred during logout",
+        description: getErrorMessage(error, "An error occurred during logout"),
       });
     }
   };
@@ -155,7 +161,12 @@ export function NavUser({
             <DropdownMenuSeparator />
 
             {/* Profile Option */}
-            <DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => router.push("/profile")}
+              className={
+                isProfileActive ? "bg-accent text-accent-foreground" : undefined
+              }
+            >
               <UserIcon className="mr-2 h-4 w-4" />
               My Profile
             </DropdownMenuItem>

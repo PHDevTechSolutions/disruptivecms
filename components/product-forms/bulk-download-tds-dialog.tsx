@@ -79,6 +79,7 @@ interface ProductItem {
   terminalLayoutImage?: string;
   accessoriesImage?: string;
   typeOfPlugImage?: string;
+  wiringConnectionImage?: string;
 }
 
 interface FolderState {
@@ -419,6 +420,7 @@ export function BulkDownloadTdsDialog({ open, onOpenChange }: Props) {
           terminalLayoutUrl: product.terminalLayoutImage || undefined,
           accessoriesImageUrl: product.accessoriesImage || undefined,
           typeOfPlugUrl: product.typeOfPlugImage || undefined,
+          wiringConnectionUrl: product.wiringConnectionImage || undefined,
         });
         return URL.createObjectURL(blob);
       };

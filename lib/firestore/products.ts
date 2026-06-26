@@ -44,6 +44,7 @@ export type ProductListItem = ProductRecord & {
   mainImage: string;
   tdsFileUrl: string;
   rawImage: string[] | string;
+  wiringConnectionImage: string;
   createdAt: unknown;
 };
 
@@ -67,7 +68,7 @@ export type ProductsPageParams = {
   createdAfter?: Date;
 };
 
-function toListItem(id: string, data: Record<string, unknown>): ProductListItem {
+export function toListItem(id: string, data: Record<string, unknown>): ProductListItem {
   const name = String((data.name ?? data.itemDescription ?? "") as string);
   const price =
     typeof data.salePrice === "number"
@@ -97,6 +98,7 @@ function toListItem(id: string, data: Record<string, unknown>): ProductListItem 
     mainImage: String((data.mainImage ?? "") as string),
     tdsFileUrl: String((data.tdsFileUrl ?? "") as string),
     rawImage: (data.rawImage as string[] | string | undefined) ?? [],
+    wiringConnectionImage: String((data.wiringConnectionImage ?? "") as string),
     createdAt: data.createdAt,
   };
 }

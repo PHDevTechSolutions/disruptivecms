@@ -1538,6 +1538,7 @@ export default function BulkUploader({
           terminalLayoutImage,
           accessoriesImage,
           typeOfPlugImage,
+          wiringConnectionImage,
           ...galleryUploaded
         ] = await uploadManyUrls(
           [
@@ -1554,6 +1555,7 @@ export default function BulkUploader({
             p.terminalLayoutUrl,
             p.accessoriesImageUrl,
             p.typeOfPlugUrl,
+            p.wiringConnectionUrl,
             ...p.galleryImageUrls,
           ],
           (m) => addLog("info", m),
@@ -1609,6 +1611,7 @@ export default function BulkUploader({
           terminalLayoutImage: terminalLayoutImage || "",
           accessoriesImage: accessoriesImage || "",
           typeOfPlugImage: typeOfPlugImage || "",
+          wiringConnectionImage: wiringConnectionImage || "",
           brand: p.brand,
           productFamily: p.productFamily,
           productUsage: p.productUsage,
@@ -1661,6 +1664,7 @@ export default function BulkUploader({
               typeOfPlugUrl: typeOfPlugImage || undefined,
               terminalLayoutUrl: terminalLayoutImage || undefined,
               accessoriesImageUrl: accessoriesImage || undefined,
+              wiringConnectionUrl: wiringConnectionImage || undefined,
             });
 
             const primaryCode = getFilledItemCodes(p.itemCodes)[0]?.code || p.itemDescription;

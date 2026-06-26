@@ -84,15 +84,6 @@ const allNavItems = {
       { title: "Projects", url: "/content/projects" },
     ],
   },
-  settings: {
-    title: "Settings",
-    url: "#",
-    icon: <Settings />,
-    items: [
-      { title: "All Users", url: "/admin/register" },
-      { title: "Change Password", url: "#" },
-    ],
-  },
   "recycle-bin": {
     title: "Admin",
     url: "/admin",

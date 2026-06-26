@@ -833,20 +833,20 @@ const PRODUCT_CLASS_OPTIONS: {
 const WEBSITE_OPTIONS = [
   "Ecoshift Corporation",
   "Disruptive Solutions Inc",
-  "Value Acquisitions Holdings",
+  "Buildchem Solutions Inc",
   "Taskflow",
 ];
 
 const WEBSITE_PRODUCT_PATH: Record<string, string> = {
   "Ecoshift Corporation": "/products",
   "Disruptive Solutions Inc.": "/products",
-  "Value Acquisitions Holdings": "/solutions",
+  "Buildchem Solutions Inc": "/solutions",
 };
 
 const WEBSITE_DOMAINS: Record<string, string> = {
   "Ecoshift Corporation": "https://ecoshift-website.vercel.app",
   "Disruptive Solutions Inc.": "https://disruptive-solutions-inc.vercel.app",
-  "Value Acquisitions Holdings": "https://vah.com.ph",
+  "Buildchem Solutions Inc": "https://buildchemsolutions.com.ph",
 };
 
 const PRODUCT_USAGE_OPTIONS = ["INDOOR", "OUTDOOR", "SOLAR"] as const;
@@ -1132,6 +1132,7 @@ export default function AddNewProduct({
       editData.wiringLayoutImage,
       editData.terminalLayoutImage,
       editData.accessoriesImage,
+      editData.typeOfPlugImage,
       editData.wiringConnectionImage,
     ].some(Boolean);
     if (hasTechDrawings) setTechDrawingsOpen(true);
@@ -2543,6 +2544,8 @@ export default function AddNewProduct({
                           wiringLayoutImage || existingWiringLayoutImage,
                           terminalLayoutImage || existingTerminalLayoutImage,
                           accessoriesImage || existingAccessoriesImage,
+                          typeOfPlugImage || existingTypeOfPlugImage,
+                          wiringConnectionImage || existingWiringConnectionImage,
                         ].filter(Boolean).length;
                         return filledCount > 0 ? (
                           <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
