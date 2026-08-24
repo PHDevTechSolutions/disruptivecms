@@ -6,7 +6,7 @@ import { RouteProtection } from "@/components/route-protection";
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <RouteProtection requiredRoutes={["/admin"]}>
-      {children}
+      {children} {/* children */}
     </RouteProtection>
   );
 }
